@@ -226,18 +226,23 @@ export function DriverMoneyPanel({
               <ul className="grid gap-1.5">
                 {ACTIVATION_ROWS.map(([step, label]) => {
                   const done = activation.steps[step] === true;
+                  // A step names the card shown here, so a card changed since the page loaded is
+                  // refused (card_changed). With no card there is nothing to record against.
+                  const shown = activation.card;
                   return (
                     <li key={step} className="flex flex-wrap items-center gap-2 text-body text-foreground">
                       <span>{label}</span>
                       <span className="text-muted-foreground">{done ? "Done" : "Not done"}</span>
-                      {canAdmin && !done ? (
+                      {canAdmin && !done && shown ? (
                         <Button
                           variant="outline"
                           size="sm"
                           pending={pending === `step:${step}`}
                           pendingLabel="Saving"
                           disabled={busy}
-                          onClick={() => run(`step:${step}`, `${base}/activation-steps`, { step }, `Recorded: ${label.toLowerCase()}.`)}
+                          onClick={() =>
+                            run(`step:${step}`, `${base}/activation-steps`, { step, cardId: shown.id }, `Recorded: ${label.toLowerCase()}.`)
+                          }
                         >
                           Record
                         </Button>

@@ -294,7 +294,9 @@ describe("DriverMoneyPanel", () => {
       render(<DriverMoneyPanel identity={identity} canAdmin timezone="UTC" send={send} onDone={onDone} activation={checklist} />);
       fireEvent.click(screen.getAllByRole("button", { name: "Record" })[0]);
       await waitFor(() => expect(screen.getByText("Recorded: zero test sent.")).toBeTruthy());
-      expect(calls).toEqual([{ path: `/api/drivers/${DRIVER}/activation-steps`, body: { step: "zero_test_sent" } }]);
+      expect(calls).toEqual([
+        { path: `/api/drivers/${DRIVER}/activation-steps`, body: { step: "zero_test_sent", cardId: DEFAULT_CARD } },
+      ]);
       expect(onDone).toHaveBeenCalledTimes(1);
     });
 
@@ -319,6 +321,27 @@ describe("DriverMoneyPanel", () => {
       await waitFor(() =>
         expect(screen.getByText("Send the zero-dollar test to the card and record it before arming.")).toBeTruthy(),
       );
+    });
+
+    it("shows a step refused for a changed card as its fixed sentence, and offers no Record with no card", async () => {
+      render(
+        <DriverMoneyPanel identity={identity} canAdmin timezone="UTC" send={sender({ ok: false, error: "card_changed" }).send} activation={checklist} />,
+      );
+      fireEvent.click(screen.getAllByRole("button", { name: "Record" })[0]);
+      await waitFor(() =>
+        expect(screen.getByText("The driver's card changed since this page loaded. Reload and check the new card.")).toBeTruthy(),
+      );
+      cleanup();
+      const noCard: ActivationChecklist = {
+        card: null,
+        steps: { identity_confirmed: false, zero_test_sent: false, hand_load_acknowledged: false },
+        identity: "no_card",
+        openHandLoads: 0,
+        blockers: ["identity_confirm", "activate_without_zero_test", "activate_after_hand_load"],
+      };
+      render(<DriverMoneyPanel identity={identity} canAdmin timezone="UTC" send={sender().send} activation={noCard} />);
+      expect(rowOf("Zero test sent").textContent).toBe("Zero test sentNot done");
+      expect(screen.queryByRole("button", { name: "Record" })).toBeNull();
     });
 
     it("shows staff the steps but no Record button", () => {

@@ -41,8 +41,9 @@ const makeAdmin = (f: Fixture) =>
     ]),
   );
 
-const record = (f: Fixture, step: ActivationStep, driverId: string = f.driverId, session: Session = f.session) =>
-  recordActivationStep(session, driverId, { step }, deps());
+// A step on the card the page would show: the driver's default card, unless the test names another.
+const record = async (f: Fixture, step: ActivationStep, driverId: string = f.driverId, cardId?: string) =>
+  recordActivationStep(f.session, driverId, { step, cardId: cardId ?? (await cardOf(f, driverId))?.id ?? randomUUID() }, deps());
 
 const arm = (f: Fixture, driverId: string = f.driverId, note: string | null = null) =>
   armDriver(f.session, driverId, { armed: true, note }, deps());
@@ -369,6 +370,14 @@ describe("arming with the activation checklist", () => {
       ]),
     );
     const two = await addCard(admin, A, A.driverId);
+    // A page loaded before the change still shows card one: its step is refused and writes nothing.
+    expect(await record(A, "zero_test_sent", A.driverId, one.id)).toEqual({ ok: false, category: "card_changed", retryable: false });
+    expect(await record(A, "identity_confirmed", A.driverId, one.id.toUpperCase())).toEqual({
+      ok: false,
+      category: "bad_request",
+      retryable: false,
+    });
+    expect((await stepRows(A)).filter((r) => r.card_id === two)).toEqual([]);
     expect(await arm(A)).toEqual({ ok: false, category: "identity_confirm", retryable: false });
     expect((await stepRows(A)).map((r) => r.card_id)).toEqual([one.id, one.id, one.id]);
     await recordAll(A);

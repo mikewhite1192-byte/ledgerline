@@ -142,6 +142,7 @@ export type ActivationRefusal =
   | "not_found"
   | "driver_inactive"
   | "no_card"
+  | "card_changed"
   | "identity_mismatch"
   | "hand_load_open";
 
@@ -155,7 +156,9 @@ const refuse = (category: ActivationRefusal): ActivationResult => ({ ok: false, 
 
 // An admin records one step on the driver's default active card. One tenant transaction with the
 // driver row locked FOR UPDATE (the lock arming and the status change take). Each step has its own
-// code check first, and a refusal writes nothing:
+// code check first, and a refusal writes nothing. The step names the card the page showed: when the
+// driver's default card is another one now (an admin changed it since the page loaded), the step is
+// card_changed and nothing is written, so a step is never recorded for a card nobody looked at.
 //   identity_confirmed: a statement that names someone else is identity_mismatch (the fix is the
 //     card or the statement, not the click); a card with no statement row yet records, with the
 //     person's note.
@@ -167,12 +170,14 @@ const refuse = (category: ActivationRefusal): ActivationResult => ({ ok: false, 
 export async function recordActivationStep(
   session: Session,
   driverId: string,
-  change: { step: string; note?: string | null },
+  change: { step: string; cardId: string; note?: string | null },
   deps: { db?: TenantDb; clock?: () => Date; newId?: () => string } = {},
 ): Promise<ActivationResult> {
   // Asked here as well as on the route, so a caller that skips it is still refused.
   if (!activationOn()) return refuse("disabled");
-  if (!isCanonicalUuid(driverId) || !isActivationStep(change.step)) return refuse("bad_request");
+  if (!isCanonicalUuid(driverId) || !isActivationStep(change.step) || !isCanonicalUuid(change.cardId)) {
+    return refuse("bad_request");
+  }
   const step = change.step;
   const note = typeof change.note === "string" && change.note.trim().length > 0 ? change.note.trim() : null;
   if (note !== null && note.length > NOTE_MAX) return refuse("bad_request");
@@ -192,6 +197,8 @@ export async function recordActivationStep(
     if (rows[0].active_to !== null) return refuse("driver_inactive");
     const before = await readActivationChecklist(q, driverId);
     if (before.card === null) return refuse("no_card");
+    // A whole-value compare of canonical ids, under the driver lock.
+    if (before.card.id !== change.cardId) return refuse("card_changed");
     if (step === "identity_confirmed" && before.identity === "mismatch") return refuse("identity_mismatch");
     if (step === "hand_load_acknowledged" && before.openHandLoads !== 0) return refuse("hand_load_open");
     const written = await q.execute(

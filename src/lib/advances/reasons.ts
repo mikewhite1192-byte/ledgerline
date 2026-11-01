@@ -219,9 +219,10 @@ const PANEL_SENTENCES: Readonly<Record<string, string>> = {
   identity_confirm: "Confirm this driver's identity against the card on file before arming.",
   activate_without_zero_test: "Send the zero-dollar test to the card and record it before arming.",
   activate_after_hand_load:
-    "A load on this driver's card has no record behind it. Rule on it, then acknowledge the card's loads before arming.",
+    "Acknowledge the card's loads before arming; a load with no record behind it needs a ruling first.",
   identity_mismatch: "The card statement names someone else. Fix the card on file before confirming.",
   hand_load_open: "A load on this driver's card still waits for a ruling.",
+  card_changed: "The driver's card changed since this page loaded. Reload and check the new card.",
   no_card: "Add an active card first; the checklist is about that card.",
   unauthenticated: OUTCOME_SENTENCES.unauthenticated,
   forbidden: OUTCOME_SENTENCES.forbidden,

@@ -468,7 +468,7 @@ describe("activation steps", () => {
   });
 
   it("refuses a cross-site post before the session", async () => {
-    const res = await record({ step: "zero_test_sent" }, { id: DRIVER }, "cross-site");
+    const res = await record({ step: "zero_test_sent", cardId: CARD }, { id: DRIVER }, "cross-site");
     expect(res.status).toBe(403);
     expect(await res.json()).toEqual({ error: "forbidden", retryable: false });
     expect(mocks.getSession).not.toHaveBeenCalled();
@@ -478,7 +478,7 @@ describe("activation steps", () => {
     mocks.getSession.mockResolvedValue(null);
     for (const on of [true, false]) {
       flags.activationChecklist.enabled = on;
-      const res = await record({ step: "zero_test_sent" });
+      const res = await record({ step: "zero_test_sent", cardId: CARD });
       expect(res.status).toBe(401);
       expect(await res.json()).toEqual({ error: "unauthenticated", retryable: false });
     }
@@ -488,7 +488,7 @@ describe("activation steps", () => {
   it("refuses a demo visitor at the staff check, before the switch", async () => {
     mocks.staffGate.mockResolvedValue(NextResponse.json({ error: "judge", retryable: false }, { status: 403 }));
     flags.activationChecklist.enabled = false;
-    const res = await record({ step: "zero_test_sent" });
+    const res = await record({ step: "zero_test_sent", cardId: CARD });
     expect(res.status).toBe(403);
     expect(await res.json()).toEqual({ error: "judge", retryable: false });
     expect(mocks.recordActivationStep).not.toHaveBeenCalled();
@@ -505,20 +505,24 @@ describe("activation steps", () => {
 
   it("refuses while advances are off", async () => {
     flags.advancesEnabled = false;
-    const res = await record({ step: "zero_test_sent" });
+    const res = await record({ step: "zero_test_sent", cardId: CARD });
     expect(res.status).toBe(403);
     expect(await res.json()).toEqual({ error: "disabled", retryable: false });
     expect(mocks.recordActivationStep).not.toHaveBeenCalled();
   });
 
-  it("refuses a malformed driver id and a body that is not exactly one step", async () => {
-    expect((await record({ step: "zero_test_sent" }, { id: "nope" })).status).toBe(400);
+  it("refuses a malformed driver id and a body that is not exactly one step on one card", async () => {
+    expect((await record({ step: "zero_test_sent", cardId: CARD }, { id: "nope" })).status).toBe(400);
     for (const body of [
-      { step: "armed" },
-      { step: "zero_test_sent " },
+      { step: "armed", cardId: CARD },
+      { step: "zero_test_sent ", cardId: CARD },
       {},
-      { step: "zero_test_sent", note: "x".repeat(241) },
-      { step: "zero_test_sent", extra: 1 },
+      { step: "zero_test_sent" },
+      { step: "zero_test_sent", cardId: "nope" },
+      { step: "zero_test_sent", cardId: `${CARD} ` },
+      { step: "zero_test_sent", cardId: 7 },
+      { step: "zero_test_sent", cardId: CARD, note: "x".repeat(241) },
+      { step: "zero_test_sent", cardId: CARD, extra: 1 },
       "{not json",
     ]) {
       const res = await record(body);
@@ -528,14 +532,15 @@ describe("activation steps", () => {
     expect(mocks.recordActivationStep).not.toHaveBeenCalled();
   });
 
-  it("runs the service with the lower-case id and the parsed body", async () => {
-    const res = await record({ step: "zero_test_sent" }, { id: DRIVER.toUpperCase() });
+  it("runs the service with the lower-case ids and the parsed body", async () => {
+    const res = await record({ step: "zero_test_sent", cardId: CARD }, { id: DRIVER.toUpperCase() });
     expect(res.status).toBe(200);
     expect(await res.json()).toEqual({ ok: true, changed: true, checklist: CHECKLIST });
-    expect(mocks.recordActivationStep).toHaveBeenCalledWith(SESSION, DRIVER, { step: "zero_test_sent", note: null });
-    await record({ step: "identity_confirmed", note: "Checked the license" });
+    expect(mocks.recordActivationStep).toHaveBeenCalledWith(SESSION, DRIVER, { step: "zero_test_sent", cardId: CARD, note: null });
+    await record({ step: "identity_confirmed", cardId: CARD.toUpperCase(), note: "Checked the license" });
     expect(mocks.recordActivationStep).toHaveBeenLastCalledWith(SESSION, DRIVER, {
       step: "identity_confirmed",
+      cardId: CARD,
       note: "Checked the license",
     });
   });
@@ -550,15 +555,16 @@ describe("activation steps", () => {
       ["no_card", 409],
       ["identity_mismatch", 409],
       ["hand_load_open", 409],
+      ["card_changed", 409],
     ] as const) {
       mocks.recordActivationStep.mockResolvedValueOnce({ ok: false, category, retryable: false });
-      const res = await record({ step: "hand_load_acknowledged" });
+      const res = await record({ step: "hand_load_acknowledged", cardId: CARD });
       expect(res.status, category).toBe(status);
       expect(await res.json()).toEqual({ error: category, retryable: false });
     }
     const errorLog = vi.spyOn(console, "error").mockImplementation(() => {});
     mocks.recordActivationStep.mockRejectedValueOnce(new Error("insert failed secret_detail"));
-    const res = await record({ step: "zero_test_sent" });
+    const res = await record({ step: "zero_test_sent", cardId: CARD });
     expect(res.status).toBe(503);
     const text = await res.text();
     expect(JSON.parse(text)).toEqual({ error: "unavailable", retryable: true });

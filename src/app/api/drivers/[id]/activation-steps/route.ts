@@ -7,15 +7,20 @@ import { staffGate } from "@/lib/auth/staff-gate";
 import { isCrossSite } from "@/lib/http/same-site";
 import { isUuid } from "@/lib/uuid";
 
-// POST { step, note? }: an admin records one activation step on the driver's default card
-// (src/lib/advances/activation.ts): identity confirmed, zero test sent or loads acknowledged. The
-// same step again is no change. The checklist's switch is asked here once the caller is known to be
+// POST { step, cardId, note? }: an admin records one activation step on the driver's default card
+// (src/lib/advances/activation.ts): identity confirmed, zero test sent or loads acknowledged. cardId
+// is the card the page showed; another default card now is card_changed. The same step again is no
+// change. The checklist's switch is asked here once the caller is known to be
 // staff, so a signed-out caller learns nothing of it, and again by the service; off, the answer is
 // 404. Nothing is paid or sent. Categories only.
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
 
-const Body = z.strictObject({ step: z.enum(ACTIVATION_STEPS), note: z.string().max(240).optional() });
+const Body = z.strictObject({
+  step: z.enum(ACTIVATION_STEPS),
+  cardId: z.string().refine(isUuid),
+  note: z.string().max(240).optional(),
+});
 
 // 404, not the 403 the advances switch answers: an unreleased route stays hidden, as the named
 // lines route does.
@@ -41,7 +46,11 @@ export async function POST(request: Request, { params }: { params: Promise<{ id:
     return refuse("bad_request");
   }
   try {
-    const result = await recordActivationStep(session, id.toLowerCase(), { step: body.step, note: body.note ?? null });
+    const result = await recordActivationStep(session, id.toLowerCase(), {
+      step: body.step,
+      cardId: body.cardId.toLowerCase(),
+      note: body.note ?? null,
+    });
     if (result.ok) return reply(result, 200);
     if (result.category === "disabled") return switchedOff();
     return refuse(result.category, result.retryable);
