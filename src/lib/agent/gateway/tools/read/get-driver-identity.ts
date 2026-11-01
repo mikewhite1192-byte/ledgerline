@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { activationOn, readActivationChecklist } from "../../../../advances/activation";
 import { readDriverIdentity } from "../../../../advances/identity";
 import { defineTool } from "../../types";
 import { idField } from "../../validate";
@@ -18,6 +19,10 @@ export const getDriverIdentity = defineTool({
   run: async (q, _ctx, a) => {
     const identity = await readDriverIdentity(q, a.driverId);
     if (!identity) throw new Error("driver vanished after the ref check");
+    // While the activation checklist is on, what an arm would be refused with right now: which step
+    // is missing, whether the statement names someone else, and the loads still waiting for a
+    // ruling. Read only: no tool records a step or arms a driver. null while off (not checked).
+    const activation = activationOn() ? await readActivationChecklist(q, a.driverId) : null;
     // Last four digits and portal placeholders only; a card's token is never read here.
     return {
       result: {
@@ -37,6 +42,7 @@ export const getDriverIdentity = defineTool({
             testMode: c.testMode,
           })),
         },
+        activation,
       },
     };
   },

@@ -169,7 +169,14 @@ describe("deleteTenantRows", () => {
   });
 
   it("never deletes from the arming log or the phone line's calls, which the app role may only add to", async () => {
-    expect([...APP_KEEPS_TABLES]).toEqual(["driver_arm_events", "driver_status_events", "calls", "call_segments", "call_turns"]);
+    expect([...APP_KEEPS_TABLES]).toEqual([
+      "driver_arm_events",
+      "driver_status_events",
+      "driver_activation_steps",
+      "calls",
+      "call_segments",
+      "call_turns",
+    ]);
     const { q, seen } = fakeQ(() => 0);
     await deleteTenantRows(q);
     for (const table of APP_KEEPS_TABLES) {

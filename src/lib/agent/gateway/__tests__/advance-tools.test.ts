@@ -1,4 +1,7 @@
-import { describe, expect, it } from "vitest";
+import { readdirSync, readFileSync } from "node:fs";
+import { join } from "node:path";
+import { afterEach, describe, expect, it } from "vitest";
+import { flags } from "../../../../config/flags";
 import type { AiResult } from "../../../ai";
 import { readAdvanceInput } from "../../../data/read";
 import { advanceEligibility } from "../../../rules-engine";
@@ -69,6 +72,30 @@ describe("get_driver_identity", () => {
   it("refuses a driver that is not on file before running", async () => {
     const { out } = await run("get_driver_identity", { driverId: OTHER_ID });
     expect(out).toMatchObject({ decision: "blocked" });
+  });
+});
+
+describe("the activation checklist and the agent", () => {
+  const saved = flags.activationChecklist.enabled;
+  afterEach(() => {
+    flags.activationChecklist.enabled = saved;
+  });
+
+  it("gives no checklist while the switch is off", async () => {
+    flags.activationChecklist.enabled = false;
+    const { out } = await run("get_driver_identity", { driverId: hero.id }, "auditor");
+    expect(out).toMatchObject({ decision: "allowed" });
+    expect((out.result as { activation: unknown }).activation).toBeNull();
+  });
+
+  it("has no tool that arms a driver or records a step: the checklist is read only", () => {
+    const dir = join(__dirname, "..", "tools");
+    const files = readdirSync(dir, { recursive: true, encoding: "utf8" }).filter((f) => f.endsWith(".ts"));
+    expect(files.length).toBeGreaterThan(0);
+    for (const f of files) {
+      const text = readFileSync(join(dir, f), "utf8");
+      expect(text, f).not.toMatch(/advances\/arming|armDriver|recordActivationStep/);
+    }
   });
 });
 
