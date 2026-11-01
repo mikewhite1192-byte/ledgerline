@@ -154,6 +154,7 @@ const SUBJECT_TABLES: readonly SubjectTable[] = [
   "customer_payments",
   "money_codes",
   "escrow_releases",
+  "card_pullbacks",
 ];
 
 // Every row for one subject, oldest first: the ledger card for an advance, settlement, invoice,

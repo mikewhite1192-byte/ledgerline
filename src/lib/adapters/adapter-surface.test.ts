@@ -3,7 +3,7 @@ import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import { createQboAdapter } from "./accounting/qbo/adapter";
 import { createFactoringSim } from "./factoring/sim";
-import { createFuelCardSimAdapter } from "./payment/fuel-card-sim";
+import { createCardPuller, createFuelCardSimAdapter } from "./payment/fuel-card-sim";
 import { createMockPaymentAdapter } from "./payment/mock";
 import { createStripeTestAdapter } from "./payment/stripe-test";
 import { tmsSource } from "./tms-source";
@@ -78,6 +78,16 @@ describe("adapter surface: nothing can send an invoice or an email", () => {
       .filter(([, v]) => typeof v === "function")
       .map(([k]) => k);
     expect(methods).toContain("submitInvoice");
+    expect(methods.filter(forbidden)).toEqual([]);
+  });
+
+  // A pull back off a fuel card is its own capability: exactly these members, none of them a send.
+  it("the card puller declares and has exactly ready, pullBack and readBackPull", () => {
+    expect(declared("CardPuller")).toEqual(["system", "ready", "pullBack", "readBackPull"]);
+    const methods = [...membersOf(createCardPuller({ log: () => {} }))]
+      .filter(([, v]) => typeof v === "function")
+      .map(([k]) => k);
+    expect(methods.sort()).toEqual(["pullBack", "readBackPull", "ready"]);
     expect(methods.filter(forbidden)).toEqual([]);
   });
 

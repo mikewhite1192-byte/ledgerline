@@ -708,6 +708,18 @@ describe("the demo reset", () => {
         [randomUUID(), flowProposal, departed.id],
       ),
     );
+    // A card pull-back on the flow's proposal that ended failed before any ledger row (0080): the
+    // app role cannot delete it, so only the function clears it, before the proposal it names.
+    await app.withTenant(tenantId, (q) =>
+      q.execute(
+        `INSERT INTO card_pullbacks (id, tenant_id, driver_id, card_id, proposal_id, advance_id, reason, requested_cents,
+           balance_cents, pull_cents, shortfall_cents, status)
+         SELECT CAST($1 AS uuid), current_tenant_id(), c.driver_id, c.id, CAST($2 AS uuid), NULL, 'breakdown', 30000,
+           20000, 20000, 10000, 'failed'
+           FROM driver_cards c WHERE c.tenant_id = current_tenant_id() ORDER BY c.id LIMIT 1`,
+        [randomUUID(), flowProposal],
+      ),
+    );
     // A deficit a card load ruling booked on the flow's proposal (0078): the app role cannot
     // delete it, so only the function clears it, before the proposal it names.
     await app.withTenant(tenantId, (q) =>
@@ -760,6 +772,7 @@ describe("the demo reset", () => {
       const preview = await app.withTenant(A, (q) => previewDemoReset(q, BR));
       expect(preview.refusals).toEqual([]);
       expect(pick(preview.current, CLEARED_TABLES)).toEqual({
+        card_pullbacks: 1,
         escrow_releases: 1,
         money_actions: 3,
         ratecon_reads: 1,
@@ -804,6 +817,7 @@ describe("the demo reset", () => {
       expect(report.before).toEqual(preview.current);
       expect(portalA.loads.length).toBeGreaterThan(0);
       expect(report.cleared).toEqual({
+        card_pullbacks: 1,
         escrow_releases: 1,
         money_actions: 3,
         ratecon_reads: 1,

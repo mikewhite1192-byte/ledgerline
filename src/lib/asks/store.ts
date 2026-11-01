@@ -7,6 +7,7 @@ import { autopilotSub } from "../autopilot/session";
 import { isServiceSub } from "../sweep/service-session";
 import { clockText } from "../tms/clocks";
 import { isUuid } from "../uuid";
+import { isPullbackReason, pullbackReasonWords } from "../pullbacks/words";
 import { askWords, cleanName, isAskedKind, toldWords, type AskFacts } from "./words";
 
 // The agent's questions and told lines (agent_asks, 0072), each inside a tenant transaction the
@@ -80,6 +81,24 @@ async function dispatchPickupOf(q: Queryable, eventId: string | null, loadId: st
   return clockText(e.at, e.timezone);
 }
 
+// A pull-back card's line from its stored args, null when any part does not read back whole.
+function pullOf(args: Record<string, unknown>): AskFacts["pull"] {
+  const last4 = typeof args.cardLast4 === "string" && /^\d{4}$/.test(args.cardLast4) ? args.cardLast4 : null;
+  const pull = wholeOr(args.pullCents);
+  const short = wholeOr(args.shortfallCents);
+  if (last4 === null || pull === null || short === null || pull < 0 || short < 0 || !isPullbackReason(args.reason)) {
+    return null;
+  }
+  const words = pullbackReasonWords(args.reason);
+  return {
+    last4,
+    reason: words.charAt(0).toLowerCase() + words.slice(1),
+    pullCents: pull,
+    shortfallCents: short,
+    onAdvance: uuidOr(args.advanceId) !== null,
+  };
+}
+
 // The names a sentence uses, read from the records the proposal names: its driver (the subject,
 // or the args' driverId) and its load (the subject, or the args' loadId), with the load's driver
 // and customer.
@@ -108,6 +127,7 @@ async function factsOf(q: Queryable, p: ProposalRow): Promise<AskFacts> {
     percent: wholeOr(args.percent) ?? wholeOr(args.advancePercent),
     stage,
     dispatchPickup: pickup,
+    ...(p.kind === "card_pullback" ? { pull: pullOf(args) } : {}),
   };
 }
 

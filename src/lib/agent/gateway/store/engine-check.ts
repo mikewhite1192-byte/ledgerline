@@ -20,7 +20,9 @@ import { impactOf, PROPOSAL_TITLES } from "./proposals";
 // the money code rules run again on the stored evidence and must allow exactly its amount. An
 // escrow release stays unavailable: its amount is the driver's stored balance, which its precheck
 // reads again. A card load ruling stays unavailable too: its amount is the statement load's own
-// cents, which its precheck and executor read again, and a named person always rules on it.
+// cents, which its precheck and executor read again, and a named person always rules on it. A card
+// pull-back stays unavailable: its numbers are the card's balance from our records, which its
+// precheck and executor plan again and compare whole.
 
 export type EngineCheck = "matched" | "mismatch" | "unavailable";
 export type EngineCheckResult = { check: EngineCheck; engineCents: number | null };

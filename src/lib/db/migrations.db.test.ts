@@ -79,6 +79,8 @@ describe("migrations", () => {
         "money_actions_money_code_subject_pairing",
         // 0069's: an escrow release is paired with its escrow_releases subject.
         "money_actions_escrow_subject_pairing",
+        // 0080's: a card pull-back is paired with its card_pullbacks subject.
+        "money_actions_pullback_subject_pairing",
       ].sort(),
     );
     // The three unnamed subject pairings it keeps are the advance, settlement and customer payment

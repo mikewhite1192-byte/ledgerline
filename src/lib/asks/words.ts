@@ -13,6 +13,7 @@ export const ASKED_KINDS = [
   "pay_correction",
   "load_move",
   "card_load_ruling",
+  "card_pullback",
 ] as const;
 
 export type AskedKind = (typeof ASKED_KINDS)[number];
@@ -37,6 +38,10 @@ export type AskFacts = {
   // For an advance drafted at pickup when the dispatch feed moved the load: the pickup's wall time
   // in the carrier's zone ("9:20 AM"), read from the move itself.
   dispatchPickup?: string | null;
+  // For a card pull-back: the card's last four, the reason in words, and the engine's numbers from
+  // the card's args. onAdvance says what the card cannot give back stays owed on the advance (A6)
+  // rather than booked as owed by itself (A7).
+  pull?: { last4: string; reason: string; pullCents: number; shortfallCents: number; onAdvance: boolean } | null;
 };
 
 // For a told line: the owner's own Auto limit for one item, in cents, when the decision read one.
@@ -62,6 +67,7 @@ const KIND_WORDS: Readonly<Record<string, string>> = {
   escrow_release: "an escrow release",
   load_move: "a load update",
   card_load_ruling: "a card load ruling",
+  card_pullback: "a card pull-back",
 };
 
 const WORD = /^[a-z][a-z_]{1,39}$/;
@@ -146,6 +152,21 @@ export function askWords(f: AskFacts): string {
       const stage = stageWords(f.stage);
       if (f.loadNumber && stage) return fit(`Should I mark load ${f.loadNumber} ${stage}?`);
       if (f.loadNumber) return fit(`Should I update load ${f.loadNumber}?`);
+      break;
+    }
+    case "card_pullback": {
+      const pull = f.pull;
+      if (f.driverName && pull) {
+        const head = `Pull ${money(pull.pullCents)} back off ${f.driverName}'s fuel card ending ${pull.last4} (${pull.reason}).`;
+        const left = f.amountCents - pull.pullCents;
+        const rest =
+          left <= 0
+            ? ""
+            : pull.onAdvance
+              ? ` The other ${money(left)} asked for is more than the card holds and stays owed on the advance.`
+              : ` The other ${money(pull.shortfallCents)} asked for is more than the card holds and would be booked as owed.`;
+        return fit(`${head}${rest} Yes pulls it in test mode.`);
+      }
       break;
     }
     case "card_load_ruling":

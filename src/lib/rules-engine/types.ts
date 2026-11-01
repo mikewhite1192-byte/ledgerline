@@ -112,6 +112,8 @@ export const TABLES = [
   "vendor_bills",
   "card_transactions",
   "pinned_rates",
+  // A driver's named deficit (0078), so a recovery line or a card can cite it.
+  "driver_deficits",
 ] as const;
 export type TableName = (typeof TABLES)[number];
 

@@ -123,6 +123,7 @@ const SUBJECT_LOCK_SQL: Readonly<Record<SubjectTable, string>> = {
   customer_payments: lockSql("customer_payments", "customer_id", null),
   money_codes: lockSql("money_codes", "driver_id", "status"),
   escrow_releases: lockSql("escrow_releases", "driver_id", "status"),
+  card_pullbacks: lockSql("card_pullbacks", "driver_id", "status"),
 };
 
 function lockSql(table: string, counterparty: string, status: string | null): string {

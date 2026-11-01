@@ -9,6 +9,7 @@ import { formatInstant, formatLocalDate } from "@/lib/format/dates";
 import { sourceLabel } from "@/lib/format/labels";
 import { formatCents } from "@/lib/format/money";
 import { isRuleKey } from "@/lib/pay-rules/rules";
+import { PULL_FOR_PERSON } from "@/lib/pullbacks/words";
 import {
   AUDIT_LINES,
   CONCERNS_QUESTION,
@@ -167,6 +168,17 @@ const KIND_COPY: Readonly<Record<string, KindCopy>> = {
         : `Book this ${amount} card load as money the driver owes?`,
     next: () => "Books the load as money the driver owes. Nothing is paid or sent.",
   },
+  card_pullback: {
+    noun: "card pull-back",
+    // The engine's planned pull when the stored plan reads back whole; otherwise only the ask's
+    // ceiling, since the card may hold less.
+    ask: (p, amount) =>
+      p.pull
+        ? `Pull ${formatCents(p.pull.pullCents)} back off the driver's fuel card ending ${p.pull.last4}?`
+        : `Pull up to ${amount} back off the driver's fuel card?`,
+    next: () =>
+      "Pulls it back off the card in test mode. What the card cannot give back on a breakdown is booked as money the driver owes.",
+  },
 };
 
 export function kindCopy(kind: string): KindCopy {
@@ -226,6 +238,19 @@ export function cardLoadDetail(m: ProposalView["cardLoad"]): string | undefined 
   }
   const who = m.driverCode ? ` Driver ${m.driverCode}'s card.` : "";
   return `Card ending ${m.last4}, loaded ${day}, with no payment record.${who}`;
+}
+
+// A card pull-back's line, every figure from the engine's plan stored on the proposal: what the
+// card holds of the amount asked for, and where the rest goes.
+export function pullDetail(pull: ProposalView["pull"], amountCents: number): string | undefined {
+  if (!pull) return undefined;
+  const asked = formatCents(amountCents);
+  const left = amountCents - pull.pullCents;
+  if (left <= 0) return `Card ending ${pull.last4} holds the whole ${asked} asked for.`;
+  const holds = `Card ending ${pull.last4} holds ${formatCents(pull.pullCents)} of the ${asked} asked for.`;
+  return pull.onAdvance
+    ? `${holds} The other ${formatCents(left)} stays owed on the advance and is recovered from pay.`
+    : `${holds} The other ${formatCents(pull.shortfallCents)} is booked as money the driver owes.`;
 }
 
 // Hours and minutes, as the card says a stop's time: 420 is "7 h 00 min".
@@ -449,6 +474,9 @@ export function proposalCardFrom(
     ...(p.kind === "advance_payout" && p.load ? { detail: advanceLoadDetail(p.load, p.amountCents) } : {}),
     ...(p.kind === "card_match" && p.cardMatch ? { detail: cardMatchDetail(p.cardMatch) } : {}),
     ...(p.kind === "card_load_ruling" && p.cardLoad ? { detail: cardLoadDetail(p.cardLoad) } : {}),
+    ...(p.kind === "card_pullback" && p.pull ? { detail: pullDetail(p.pull, p.amountCents) } : {}),
+    // A pull marked unknown is a person's to settle, never checked again on its own.
+    ...(p.kind === "card_pullback" && p.pullForPerson ? { statusNotes: { unknown: { text: PULL_FOR_PERSON } } } : {}),
     confirmQuestion,
     confirmNoun: copy.noun,
     ...(confirmNext ? { confirmNext } : {}),

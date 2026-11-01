@@ -852,6 +852,18 @@ export type Flags = {
   // releases or approves a parked advance. startDate (YYYY-MM-DD, the carrier's zone): a proposal
   // made before it takes the old fail path. Each path asks enabled itself.
   advanceParking: { enabled: boolean; startDate: string };
+  // The card pull-back (docs: RECOVERY, 0080): taking back a paid advance, or money loaded onto the
+  // card of a driver whose truck broke down before the trip, pulls it back off the fuel card in test
+  // mode once a person approves a card_pullback card. The rules engine sizes the pull from our own
+  // records (src/lib/rules-engine/pullback.ts): confirmed loads and hand loads on the card, less
+  // its fuel and earlier pulls, shown as the balance as of the newest statement day. A breakdown
+  // pull the card cannot cover books the rest as a named deficit; a take-back the card cannot cover
+  // stays owed on the advance. Staff approve up to approverRole.adminAboveCents, an admin above;
+  // never the autopilot's. Needs payoutsEnabled and advanceTakeback.enabled too. startDate
+  // (YYYY-MM-DD, the carrier's zone): a card made before it is refused. Each path asks enabled
+  // itself: the propose tool, the take-back, the gate, the executor, the ledger hooks, the
+  // simulated card provider and the Check route.
+  cardPullback: { enabled: boolean; startDate: string };
 };
 
 // One kind's ceiling over the owner's autopilot limits: one item, and the carrier's local day.
@@ -1125,6 +1137,8 @@ export const flags: Flags = {
   // On by the owner's call (D-071, 2026-10-31). Parking moves no money; a release pays through the
   // usual ledger and payout switches.
   advanceParking: { enabled: true, startDate: "2026-11-02" },
+  // Off until its own one-line enable PR. A pull is an outside write, in test mode only.
+  cardPullback: { enabled: false, startDate: "2026-11-02" },
 };
 
 applyLocalOverrides(flags);

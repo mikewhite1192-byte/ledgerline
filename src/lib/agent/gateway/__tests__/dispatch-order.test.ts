@@ -423,7 +423,7 @@ describe("callTool dispatch order", () => {
     // Every registered tool, the switched-off ones included. The detention switch is put back by
     // the afterEach above; the report, IFTA quarter, year-end 1099, trust meter, invoicing, invoice review, customer payments,
     // collections, Cash Friday, factoring, profit brief, quarter review, pay rule change, money code,
-    // carrier memory, fuel rates, escrow release, card load ruling and dispatch mirror switches after this test. remember_note outside a chat turn writes nothing and says so.
+    // carrier memory, fuel rates, escrow release, card load ruling, card pull-back and dispatch mirror switches after this test. remember_note outside a chat turn writes nothing and says so.
     flags.detentionEnabled = true;
     flags.reportsEnabled = true;
     flags.iftaEnabled = true;
@@ -444,6 +444,7 @@ describe("callTool dispatch order", () => {
     flags.quarterReviewEnabled = true;
     flags.escrowRelease.enabled = true;
     flags.cardLoadRuling.enabled = true;
+    flags.cardPullback.enabled = true;
     const tmsSyncWas = flags.tmsSync.enabled;
     flags.tmsSync.enabled = true;
     onTestFinished(() => {
@@ -467,6 +468,7 @@ describe("callTool dispatch order", () => {
       flags.quarterReviewEnabled = false;
       flags.escrowRelease.enabled = false;
       flags.cardLoadRuling.enabled = false;
+      flags.cardPullback.enabled = false;
     });
     // The second check's read of the office's notes about the driver: none on file. The card
     // loads read: no loads on the statement in the window.
@@ -518,6 +520,12 @@ describe("callTool dispatch order", () => {
       // propose_escrow_release: the release switch is on but not armed, and the sample driver is
       // still active, so the engine refuses before a draft (escrow.db.test.ts runs it end to end).
       if (name === "propose_escrow_release") {
+        expect(out, name).toMatchObject({ decision: "blocked", reason: "engine_refused" });
+        continue;
+      }
+      // propose_card_pullback: the sample call comes before the switch's start date, so the
+      // engine refuses before a draft (pullbacks.db.test.ts runs it end to end).
+      if (name === "propose_card_pullback") {
         expect(out, name).toMatchObject({ decision: "blocked", reason: "engine_refused" });
         continue;
       }

@@ -44,6 +44,22 @@ describe("askWords", () => {
     expect(isAskedKind("card_match")).toBe(false);
   });
 
+  it("says a card pull-back's card, reason and what the card cannot give back", () => {
+    const pull = { last4: "4417", reason: "truck broke down before the trip", pullCents: 30_000, shortfallCents: 10_000, onAdvance: false };
+    const of = (extra: Partial<AskFacts>) => askWords({ ...FULL, kind: "card_pullback", amountCents: 40_000, pull, ...extra });
+    expect(of({})).toBe(
+      "Pull $300.00 back off Dana Reyes's fuel card ending 4417 (truck broke down before the trip). The other $100.00 asked for is more than the card holds and would be booked as owed. Yes pulls it in test mode.",
+    );
+    expect(of({ pull: { ...pull, reason: "duplicate advance", shortfallCents: 0, onAdvance: true } })).toBe(
+      "Pull $300.00 back off Dana Reyes's fuel card ending 4417 (duplicate advance). The other $100.00 asked for is more than the card holds and stays owed on the advance. Yes pulls it in test mode.",
+    );
+    expect(of({ pull: { ...pull, pullCents: 40_000, shortfallCents: 0 } })).toBe(
+      "Pull $400.00 back off Dana Reyes's fuel card ending 4417 (truck broke down before the trip). Yes pulls it in test mode.",
+    );
+    expect(of({ pull: null })).toBe("I drafted a card pull-back for Dana Reyes, $400.00. Approve?");
+    expect(of({ driverName: null })).toBe("I drafted a card pull-back for load BR-1042, $400.00. Approve?");
+  });
+
   it("says the dispatch pickup time and the engine's amount when the feed moved the load, and only a clean wall time", () => {
     const of = (extra: Partial<AskFacts>) => askWords({ ...FULL, ...extra });
     expect(of({ dispatchPickup: "9:20 AM" })).toBe(

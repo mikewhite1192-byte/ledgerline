@@ -120,6 +120,8 @@ const KEPT_OFF = [
   "factoring.requirePacket",
   // The eval script spends model cents on the developer's ledger; the owner turns it on in its own PR.
   "evalRun.enabled",
+  // The card pull-back ships off; its own one-line enable PR turns it on.
+  "cardPullback.enabled",
 ] as const;
 
 // The on/off switches in flags.ts, by path: every top-level boolean and every boolean inside a
@@ -347,6 +349,15 @@ describe("flags", () => {
     expect(LOCAL_OFF_ONLY as readonly string[]).toContain("advanceParking.enabled");
   });
 
+  it("ships the card pull-back off, with a start date, never a kind the autopilot may approve", () => {
+    expect(flags.cardPullback).toEqual({ enabled: false, startDate: "2026-11-02" });
+    expect(isLocalDate(flags.cardPullback.startDate)).toBe(true);
+    // A pull is always a named person's: never a kind the autopilot may approve.
+    expect(Object.keys(flags.autopilot.kinds)).not.toContain("card_pullback");
+    // Listed ahead of its release, so the demo-path run keeps it off once it ships on.
+    expect(LOCAL_OFF_ONLY as readonly string[]).toContain("cardPullback.enabled");
+  });
+
   it("ships load movement from driver evidence on, with a start date", () => {
     expect(flags.loadMovement).toEqual({ enabled: true, startDate: "2026-10-30" });
     expect(isLocalDate(flags.loadMovement.startDate)).toBe(true);
@@ -415,6 +426,7 @@ describe("flags", () => {
       "cardLoadRuling.enabled",
       "tmsFinalizeInvoice.enabled",
       "advanceParking.enabled",
+      "cardPullback.enabled",
     ];
     const offOnly = LOCAL_OFF_ONLY as readonly string[];
     expect(KEPT_OFF.filter((k) => offOnly.includes(k))).toEqual(KEPT_OFF.filter((k) => armedAhead.includes(k)));

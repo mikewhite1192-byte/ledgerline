@@ -120,4 +120,34 @@ describe("Take back on the advance page", () => {
     expect(alert.textContent).not.toContain("network");
     expect(alert.textContent?.length).toBeGreaterThan(0);
   });
+  it("with card pull-backs on, says the take-back made a card to approve, or that one is waiting", async () => {
+    const fetch = answer(200, { ok: true, changed: true, proposalId: "33333333-3333-4333-8333-333333333333" });
+    render(<TakeBack advanceId={ADVANCE} offered paid pulls stillOwedCents={20_500} />);
+    fireEvent.click(screen.getByRole("button", { name: "Take back" }));
+    expect(screen.getByText(/Pulls it back off the card in test mode once approved\./)).toBeTruthy();
+    fireEvent.change(screen.getByLabelText("Reason"), { target: { value: "duplicate" } });
+    fireEvent.click(screen.getByRole("button", { name: "Record take-back" }));
+    expect((await screen.findByRole("status")).textContent).toBe(
+      "Made a card to pull up to $205.00 back off the card. Approve it on this page; it pulls it back in test mode.",
+    );
+    expect(sentBody(fetch)).toEqual({ amountCents: 20_500, reason: "duplicate" });
+    cleanup();
+    answer(200, { ok: true, changed: false, proposalId: "33333333-3333-4333-8333-333333333333" });
+    render(<TakeBack advanceId={ADVANCE} offered paid pulls stillOwedCents={20_500} />);
+    fireEvent.click(screen.getByRole("button", { name: "Take back" }));
+    fireEvent.change(screen.getByLabelText("Reason"), { target: { value: "duplicate" } });
+    fireEvent.click(screen.getByRole("button", { name: "Record take-back" }));
+    expect((await screen.findByRole("status")).textContent).toBe(
+      "A card to pull this back is already waiting for approval. Nothing changed.",
+    );
+  });
+
+  it("shows a pull-back refusal as its own fixed sentence", async () => {
+    answer(409, { error: "nothing_to_pull" });
+    render(<TakeBack advanceId={ADVANCE} offered paid pulls stillOwedCents={20_500} />);
+    fireEvent.click(screen.getByRole("button", { name: "Take back" }));
+    fireEvent.change(screen.getByLabelText("Reason"), { target: { value: "duplicate" } });
+    fireEvent.click(screen.getByRole("button", { name: "Record take-back" }));
+    expect((await screen.findByRole("alert")).textContent).toBe("The card holds nothing to pull back, by our records.");
+  });
 });

@@ -158,6 +158,11 @@ export type ProposalView = {
   cardMatch?: CardMatchView | null;
   // Set on a card_load_ruling only, when its stored args read back whole.
   cardLoad?: CardLoadView | null;
+  // Set on a card_pullback only, when its stored args read back whole.
+  pull?: PullView | null;
+  // Set on a card_pullback only: true when its pull is marked unknown (money moved but its record
+  // could not be finished), so a person settles it.
+  pullForPerson?: boolean;
   // Set on an advance_payout only: its advance parked after the approval, with the reason; whether
   // the parking switch lets a press release it now; whether only an admin may. Null otherwise.
   parked?: { reason: ParkReason; on: boolean; adminOnly: boolean } | null;
@@ -173,6 +178,16 @@ export type CardLoadView = {
   last4: string;
   postedOn: string;
   driverCode: string | null;
+};
+
+// A card pull-back's numbers, the engine's plan stored on the proposal: the card by its last four
+// digits, what the approval pulls, and on a breakdown what is booked as owed. onAdvance: a
+// take-back, where what the card cannot give back stays owed on the advance.
+export type PullView = {
+  last4: string;
+  pullCents: number;
+  shortfallCents: number;
+  onAdvance: boolean;
 };
 
 export type CardMatchView = {

@@ -25,7 +25,11 @@ import {
 } from "../../rules-engine";
 import { loadCandidates } from "../../documents/candidates";
 import { matchDocument, RATE_FILL_STATUSES } from "../../documents/match";
-import { isWithin, localDateOf } from "../../time/local-date";
+import { isLocalDate, isWithin, localDateOf } from "../../time/local-date";
+import { planPull } from "../../pullbacks/facts";
+import { pullSources } from "../../pullbacks/propose";
+import { pullGate, pullbackOn } from "../../pullbacks/switches";
+import type { PullbackReason } from "../../pullbacks/words";
 import { readDocumentForInput } from "./store/document-reads";
 import { optionReasons } from "../../cash/args";
 import { liveReleaseOf, readDriverEscrow, readDriverReleases, releaseFactRefusal } from "../../escrow/read";
@@ -574,5 +578,60 @@ export async function escrowReleaseLimit(
     exceptions: [],
     reasons: [],
     sources: [{ table: "drivers", id: args.driverId }],
+  };
+}
+
+export type CardPullbackLimitArgs = {
+  driverId: string;
+  amountCents: number;
+  reason: PullbackReason;
+  advanceId?: string;
+};
+
+// A card pull-back (S6a): both switches on and past the start date on the carrier's local date
+// of this call, an amount within the take-back cap (the cap is the limit, and an amount over it is
+// amount_over_limit), then the engine's plan from the card's own records: the driver and advance on
+// file, the advance paid and not taken back, an active card, something on it to pull. A refusal is
+// the plan's category, never a trimmed amount.
+export async function cardPullbackLimit(
+  q: Queryable,
+  ctx: GatewayContext,
+  args: CardPullbackLimitArgs,
+): Promise<LimitResult> {
+  const capCents = flags.advanceTakeback?.maxCents;
+  if (!pullbackOn() || !Number.isSafeInteger(capCents) || capCents <= 0) return unavailable(args.amountCents);
+  const named = (category: string): LimitResult => {
+    const r = refused("engine_refused", capCents, args.amountCents);
+    return r.ok ? r : { ...r, category };
+  };
+  let today: string;
+  try {
+    today = localDateOf(ctx.now.toISOString(), ctx.timeZone);
+  } catch {
+    return unavailable(args.amountCents);
+  }
+  if (!isLocalDate(today)) return unavailable(args.amountCents);
+  const gate = pullGate(today);
+  if (gate) return named(gate);
+  if (args.amountCents > capCents) return refused("amount_over_limit", capCents, args.amountCents);
+  let facts: Awaited<ReturnType<typeof planPull>>;
+  try {
+    facts = await planPull(
+      q,
+      { driverId: args.driverId, advanceId: args.advanceId ?? null, reason: args.reason, requestedCents: args.amountCents },
+      capCents,
+      ctx.now,
+    );
+  } catch {
+    return unavailable(args.amountCents);
+  }
+  if (!facts.ok) return named(facts.refusal);
+  return {
+    ok: true,
+    limitCents: cents(args.amountCents),
+    requestedCents: cents(args.amountCents),
+    exceptions: [],
+    reasons: [],
+    sources: pullSources(facts.plan),
   };
 }

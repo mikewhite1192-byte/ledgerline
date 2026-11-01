@@ -28,6 +28,7 @@ export const PROPOSAL_TITLES: Readonly<Record<ProposalKind, string>> = {
   escrow_release: "Release driver escrow",
   load_move: "Move a load",
   card_load_ruling: "Rule on an unexplained card load",
+  card_pullback: "Pull money back off a fuel card",
 };
 
 const CATEGORY = /^[a-z_]{2,40}$/;
@@ -81,6 +82,9 @@ export function impactOf(kind: ProposalKind, amountCents: number) {
   // A card load ruling books what a driver owes on a load the card provider already made; nothing
   // moves. The amount is the load's, so the approval gate weighs it like a card match.
   if (kind === "card_load_ruling") return { amountCents, direction: "none" } as const;
+  // A pull-back brings money back off a driver's fuel card. The amount is what was asked for, so
+  // the approval gate's admin line weighs the whole ask.
+  if (kind === "card_pullback") return { amountCents, direction: "in" } as const;
   // A pay rule change's amount is the engine's signed change to last settled week's total net pay:
   // more pay is money out, less pay money kept in, none when no one's pay changes.
   if (kind === "pay_rule_change") {

@@ -2,11 +2,18 @@ import { flags } from "../../config/flags";
 import type { PayoutRail } from "../money/types";
 import { createQboAdapter } from "./accounting/qbo/adapter";
 import { createFactoringSim } from "./factoring/sim";
-import { createFuelCardSimAdapter, createMoneyCodeIssuer } from "./payment/fuel-card-sim";
+import { createCardPuller, createFuelCardSimAdapter, createMoneyCodeIssuer } from "./payment/fuel-card-sim";
 import { createMockPaymentAdapter, type MockPaymentAdapter } from "./payment/mock";
 import { createStripeTestAdapter } from "./payment/stripe-test";
 import { dbTmsAdapter } from "./tms/db";
-import type { AccountingAdapter, FactoringAdapter, MoneyCodeIssuer, PaymentAdapter, TmsAdapter } from "./types";
+import type {
+  AccountingAdapter,
+  CardPuller,
+  FactoringAdapter,
+  MoneyCodeIssuer,
+  PaymentAdapter,
+  TmsAdapter,
+} from "./types";
 
 export type * from "./types";
 
@@ -17,6 +24,7 @@ let mock: MockPaymentAdapter | undefined;
 let stripe: PaymentAdapter | undefined;
 let fuelCard: PaymentAdapter | undefined;
 let moneyCodes: MoneyCodeIssuer | undefined;
+let puller: CardPuller | undefined;
 let qbo: AccountingAdapter | undefined;
 let factoring: FactoringAdapter | undefined;
 
@@ -42,6 +50,12 @@ export function factoringAdapter(): FactoringAdapter {
 // payoutsEnabled and the moneyCodes switches, so choosing it here issues nothing.
 export function moneyCodeIssuer(): MoneyCodeIssuer {
   return (moneyCodes ??= createMoneyCodeIssuer());
+}
+
+// Pull-backs off a fuel card come from the same simulated provider. Its calls re-check
+// payoutsEnabled and the cardPullback switch, so choosing it here pulls nothing.
+export function cardPuller(): CardPuller {
+  return (puller ??= createCardPuller());
 }
 
 export function accountingAdapter(): AccountingAdapter {
