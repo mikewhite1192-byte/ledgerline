@@ -88,9 +88,10 @@ function steadyOf(deps: AdvanceDeps): () => number {
 // In the reserve transaction: the advance becomes approved, naming the member whose approval
 // reserved it, records the fuel card this attempt pays (every new attempt records its own), and
 // the proposal records its first ledger row. The card must still be one of the driver's active
-// cards and the driver must still be armed to receive money, asked here because this is the
-// transaction the payout is reserved in. Must change the advance or throw; a throw rolls the
-// reservation back.
+// cards, the driver must still be armed to receive money, and the advance's load must not be
+// cancelled, asked here because this is the transaction the payout is reserved in (a new attempt
+// only: a row already reserved goes on and is read back by its key). Must change the advance or
+// throw; a throw rolls the reservation back.
 async function onPayoutReserved(q: Queryable, action: MoneyAction, cardId: string | null): Promise<void> {
   if (!isCanonicalUuid(cardId)) throw new MoneyError("validation");
   const changed = await q.execute(
@@ -106,7 +107,10 @@ async function onPayoutReserved(q: Queryable, action: MoneyAction, cardId: strin
                        AND c.driver_id = advances.driver_id AND c.status = 'active')
         AND EXISTS (SELECT 1 FROM drivers d
                      WHERE d.tenant_id = current_tenant_id() AND d.id = advances.driver_id
-                       AND d.money_armed)`,
+                       AND d.money_armed)
+        AND NOT EXISTS (SELECT 1 FROM loads l
+                         WHERE l.tenant_id = current_tenant_id() AND l.id = advances.load_id
+                           AND l.status = 'cancelled')`,
     [action.subjectId, action.approverMembershipId, action.createdAt, cardId],
   );
   if (changed !== 1) throw new MoneyError("validation");
@@ -809,6 +813,9 @@ export async function retryAdvancePayout(
         throw new Stop("attempts_exhausted");
       }
       if (needsAdmin(advance.amountCents, role)) throw new Stop("role");
+      // A load cancelled since: never paid on by a retry (the reserve refuses it too, in the
+      // transaction that reserves the row).
+      if (await loadCancelled(q, advance.loadId)) throw new Stop("stale");
       const zone = await readTenantZone(q);
       const refusal = payoutGate(advance.amountCents, localDateOf(now.toISOString(), zone));
       if (refusal) throw new Stop(refusal);

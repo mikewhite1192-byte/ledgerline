@@ -1456,6 +1456,22 @@ describe("the advance flow", () => {
       expect(mock.sendCount).toBe(0);
     });
 
+    it("refuses as stale a retry of a failed payout once its load is cancelled, sending nothing", async () => {
+      const mine = await loadOf("L-1");
+      const id = await addProposal({ loadId: mine, amountCents: 10_000 });
+      mock.failNext("rate_limited");
+      expect(await approve(id)).toEqual({ ok: false, category: "payout_failed", retryable: true });
+      const [adv] = await flowAdvances();
+      expect(await advanceRow(adv.id)).toMatchObject({ status: "approved", load_id: mine });
+      await admin.withTenant(A.tenantId, (q) =>
+        q.execute("UPDATE loads SET status = 'cancelled' WHERE tenant_id = current_tenant_id() AND id = CAST($1 AS uuid)", [mine]),
+      );
+      expect(await retryAdvancePayout(A.session, adv.id, deps())).toMatchObject({ ok: false, category: "stale" });
+      expect(await ledger()).toEqual([expect.objectContaining({ state: "failed", attempt: 1 })]);
+      expect(await advanceRow(adv.id)).toMatchObject({ status: "approved" });
+      expect(mock.sendCount).toBe(1);
+    });
+
     it("gives the desk the driver's loads of the last 45 days in the carrier's zone, and the engine's suggestion", async () => {
       const mine = await loadOf("L-1");
       const loads = (at: string, as: Fixture = A) => app.withTenant(as.tenantId, (q) => readDeskLoads(q, A.driverId, new Date(at)));
