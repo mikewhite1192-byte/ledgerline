@@ -436,7 +436,7 @@ export function deskHandlers(deps: HandlerDeps = {}): Handlers {
   // MORNING DIGEST: the carrier's 06:00 line (src/lib/digest/write.ts re-checks the switch and the
   // start date, and a digest already stored for the date covers it with no second model call).
   const digest: Handler = {
-    switchOn: () => flags.morningDigest.enabled === true,
+    switchOn: () => flags.morningDigest.enabled === true && flags.aiEnabled === true,
     needsMs: 25_000,
     async run(session, event, ctx) {
       const periodDate = event.eventKey.startsWith("digest:") ? event.eventKey.slice("digest:".length) : "";

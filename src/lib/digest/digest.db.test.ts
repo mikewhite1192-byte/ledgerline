@@ -495,6 +495,11 @@ describe("the desk's digest", () => {
     const handler = deskHandlers({ db: app, complete: model.complete }).digest;
     const ctx = { deadlineMs: now + 25_000, clock };
     expect(await handler.run(c.service, event(PERIOD), ctx)).toEqual({ outcome: "skipped", detail: { category: "before_start" } });
+    // With the model switched off the desk never wakes it either.
+    const aiWas = flags.aiEnabled;
+    flags.aiEnabled = false;
+    expect(handler.switchOn()).toBe(false);
+    flags.aiEnabled = aiWas;
     flags.morningDigest = { ...flags.morningDigest, enabled: false, startDate: START };
     expect(handler.switchOn()).toBe(false);
     expect(await handler.run(c.service, event(PERIOD), ctx)).toEqual({ outcome: "skipped", detail: { category: "switched_off" } });

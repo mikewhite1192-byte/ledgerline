@@ -24,9 +24,10 @@
 --    to open, done or void, and agent_asks_guard (0072) lets any row move open to done.
 -- 7. agent_asks_one_digest: one digest per carrier per local date, the dedupe key.
 --
--- Every check here is added NOT VALID, so this file reads and changes no rows while it holds the
--- ALTER TABLE lock, and that lock is gone once this file's transaction commits. A NOT VALID check is
--- still enforced on every insert and update from that commit on. 0082_morning_digest_validate.sql,
+-- Every check here is added NOT VALID, so this file changes no rows and checks none of them while
+-- it holds the ALTER TABLE lock (the unique index still reads the table once, which is small), and
+-- that lock is gone once this file's transaction commits. A NOT VALID check is still enforced on
+-- every insert and update from that commit on. 0082_morning_digest_validate.sql,
 -- which the runner applies right after this one in its own transaction, validates all four.
 --
 -- No row is dropped or changed here. Grants (0072 grants INSERT on the whole table), row security
