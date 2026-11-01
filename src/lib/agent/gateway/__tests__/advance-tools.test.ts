@@ -81,11 +81,14 @@ describe("the activation checklist and the agent", () => {
     flags.activationChecklist.enabled = saved;
   });
 
-  it("gives no checklist while the switch is off", async () => {
-    flags.activationChecklist.enabled = false;
-    const { out } = await run("get_driver_identity", { driverId: hero.id }, "auditor");
-    expect(out).toMatchObject({ decision: "allowed" });
-    expect((out.result as { activation: unknown }).activation).toBeNull();
+  it("gives no checklist key while the switch is off, nor to an armed driver while it is on", async () => {
+    expect(hero.money_armed).toBe(true);
+    for (const on of [false, true]) {
+      flags.activationChecklist.enabled = on;
+      const { out } = await run("get_driver_identity", { driverId: hero.id }, "auditor");
+      expect(out).toMatchObject({ decision: "allowed" });
+      expect(Object.keys(out.result as object), String(on)).toEqual(["driver"]);
+    }
   });
 
   it("has no tool that arms a driver or records a step: the checklist is read only", () => {

@@ -17,6 +17,8 @@ export const runtime = "nodejs";
 
 const Body = z.strictObject({ step: z.enum(ACTIVATION_STEPS), note: z.string().max(240).optional() });
 
+// 404, not the 403 the advances switch answers: an unreleased route stays hidden, as the named
+// lines route does.
 const switchedOff = () => reply({ error: "disabled", retryable: false }, 404);
 
 export async function POST(request: Request, { params }: { params: Promise<{ id: string }> }) {

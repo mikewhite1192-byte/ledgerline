@@ -426,5 +426,12 @@ describe("arming with the activation checklist", () => {
     expect(JSON.stringify(out.result)).not.toContain((await cardOf(A)).token);
     // The read writes nothing.
     expect(await stepRows(A)).toHaveLength(1);
+    // An armed, paying driver and a driver with a last day on file get no checklist at all.
+    const armed = await app.withTenant(A.tenantId, (q) =>
+      getDriverIdentity.run(q, ctx, { driverId: A.otherDriverId }, { screen: null, limit: null } as never),
+    );
+    expect(Object.keys(armed.result as object)).toEqual(["driver"]);
+    expect(await setDriverStatus(A.session, A.driverId, { active: false }, deps())).toMatchObject({ ok: true, changed: true });
+    expect(Object.keys((await read()).result as object)).toEqual(["driver"]);
   });
 });
