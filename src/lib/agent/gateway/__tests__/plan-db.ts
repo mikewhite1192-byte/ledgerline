@@ -9,6 +9,7 @@ import {
   MONEY_CODE_DRIVER_SQL,
   MONEY_CODE_LOAD_SQL,
   MONEY_CODES_SQL,
+  NO_LIVE_PULL,
   PAID_WHERE,
   PURCHASED_BETWEEN,
   QUEUE_CHILDREN,
@@ -351,6 +352,8 @@ function filterRows(rows: TenantRows, all: Row[], where: string | undefined, par
   if (where === undefined) return all;
   const col = BY_COLUMN.exec(where);
   if (col) return all.filter((r) => r[col[1]] === params[0]);
+  // The pay run's advances read: a seed plan has no card pull-backs, so none is held back.
+  if (where === `driver_id = CAST($1 AS uuid) AND ${NO_LIVE_PULL}`) return all.filter((r) => r.driver_id === params[0]);
   if (where === BY_DRIVER_LOADS) {
     const loadIds = new Set(rows.loads.filter((l) => l.driver_id === params[0]).map((l) => l.id));
     return all.filter((r) => loadIds.has(r.load_id as string));

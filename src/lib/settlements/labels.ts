@@ -14,6 +14,7 @@ export const PARK_LABELS: Readonly<Record<ParkReason, string>> = {
   source_changed: "A load behind a pay line is no longer delivered in this week",
   advance_overrecovered: "An advance would be taken back for more than is owed",
   schedule_inactive: "A deduction schedule is no longer active this week",
+  deficit_overrecovered: "Money the driver owes would be taken back for more than is owed",
 };
 
 export function parkLabel(reason: string | null | undefined): string {

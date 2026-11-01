@@ -176,6 +176,7 @@ function preview(id: string, linehaul: number): SettlementInput {
     items: [],
     schedules: [],
     advances: [],
+    deficits: [],
     escrowBalanceCents: c(0),
   };
 }

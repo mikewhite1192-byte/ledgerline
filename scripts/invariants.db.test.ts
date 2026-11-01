@@ -734,6 +734,24 @@ describe("the money invariants on a real database", { timeout: 60_000 }, () => {
       );
     });
 
+    it("catches a carrier whose deficits say more was recovered than its paid deficit lines took", async () => {
+      const c = carriers[1];
+      const d = randomUUID();
+      await planted(
+        "I1",
+        () =>
+          sql(
+            `INSERT INTO driver_deficits (id, tenant_id, driver_id, amount_cents, note, source_kind, source_id, named_by,
+               recovered_cents)
+             VALUES (CAST($1 AS uuid), CAST($2 AS uuid), CAST($3 AS uuid), 5000, 'Card load with no payment record.',
+               'ruling', CAST($4 AS uuid), CAST($5 AS uuid), 1)`,
+            [d, c.id, c.driver, randomUUID(), c.membership],
+          ),
+        () => sql("DELETE FROM driver_deficits WHERE id = CAST($1 AS uuid)", [d]),
+        { deficit_recovery_off: 1 },
+      );
+    });
+
     it("catches a confirmed payout one cent more than the week's net", async () => {
       const c = carriers[0];
       const action = randomUUID();

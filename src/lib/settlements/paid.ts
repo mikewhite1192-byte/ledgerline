@@ -4,7 +4,7 @@ import { addDays, type LocalDate } from "../time/local-date";
 // The writes a paid settlement makes, worked out from its paystub lines alone (pure). The seed's
 // history (applyHistory) and the live booking (bookPaidSettlement) both call this, so the two
 // cannot drift: the settlement's escrow columns, the escrow delta on the driver, each recovery on
-// its advance, every pay item a line cites stamped with the settlement, and the shortfall carried
+// its advance, each deficit recovery on its deficit, every pay item a line cites stamped with the settlement, and the shortfall carried
 // into the next week as a carried_shortfall item.
 //
 // The lines are the source of truth on purpose. A live booking happens after the approval, when
@@ -40,6 +40,8 @@ export type PaidWrites = {
   escrowDeltaCents: Cents;
   // One per advance_recovery line, in line order.
   recoveries: { advanceId: string; cents: Cents }[];
+  // One per deficit_recovery line, in line order (0080).
+  deficitSettlements: { deficitId: string; cents: Cents }[];
   // Every pay item a line cites, once each, in line order.
   stampItemIds: string[];
   carried: CarriedItem | null;
@@ -71,6 +73,17 @@ export function paidWritesOf(input: {
     recoveries.push({ advanceId: advances[0].id, cents: taken });
   }
 
+  const deficitSettlements: PaidWrites["deficitSettlements"] = [];
+  for (const l of input.lines) {
+    if (l.kind !== "deficit_recovery") continue;
+    if (l.sources.length !== 1 || l.sources[0].table !== "driver_deficits") {
+      throw new RangeError("a deficit recovery line cites exactly one deficit");
+    }
+    const taken = sub(0, l.amountCents);
+    if (taken <= 0) throw new RangeError("a deficit recovery line takes money back");
+    deficitSettlements.push({ deficitId: l.sources[0].id, cents: taken });
+  }
+
   const stamp: string[] = [];
   const seen = new Set<string>();
   for (const l of input.lines) {
@@ -91,6 +104,7 @@ export function paidWritesOf(input: {
     },
     escrowDeltaCents: withheld,
     recoveries,
+    deficitSettlements,
     stampItemIds: stamp,
     carried:
       input.carryForwardCents > 0

@@ -1,9 +1,11 @@
 import {
+  deficitOwedCents,
   isDelivered,
   outstandingCents,
   scheduleActive,
   sub,
   type AdvanceRecord,
+  type DeficitRecord,
   type LoadRecord,
   type PayItemRecord,
   type Period,
@@ -32,6 +34,7 @@ export const SOURCE_PROBLEMS = [
   "source_changed",
   "advance_overrecovered",
   "schedule_inactive",
+  "deficit_overrecovered",
 ] as const;
 export type SourceProblemCategory = (typeof SOURCE_PROBLEMS)[number];
 
@@ -163,6 +166,7 @@ export type SourceRow =
   | { table: "pay_items"; record: PayItemRecord }
   | { table: "advances"; record: AdvanceRecord }
   | { table: "deduction_schedules"; record: ScheduleRecord }
+  | { table: "driver_deficits"; record: DeficitRecord }
   | { table: "other" };
 
 // Keyed `${table}:${id}`. The server fills it for every cited record; a key it lacks counts as
@@ -192,12 +196,14 @@ export function checkLineSources(
     seen.add(k);
     problems.push({ category, source: { table: source.table, id: source.id } });
   };
-  // What the lines take from each advance, so two lines on one advance are checked together.
+  // What the lines take from each advance and each deficit, so two lines on one record are checked
+  // together.
   const taken = new Map<string, number>();
   for (const l of lines) {
-    if (l.kind !== "advance_recovery") continue;
+    const table = l.kind === "advance_recovery" ? "advances" : l.kind === "deficit_recovery" ? "driver_deficits" : null;
+    if (table === null) continue;
     for (const s of l.sources) {
-      if (s.table !== "advances") continue;
+      if (s.table !== table) continue;
       taken.set(rowKey(s), (taken.get(rowKey(s)) ?? 0) + sub(0, l.amountCents));
     }
   }
@@ -222,6 +228,8 @@ export function checkLineSources(
         }
       } else if (row.table === "deduction_schedules") {
         if (!scheduleActive(row.record, period)) add("schedule_inactive", s);
+      } else if (row.table === "driver_deficits") {
+        if (deficitOwedCents(row.record) < (taken.get(rowKey(s)) ?? 0)) add("deficit_overrecovered", s);
       }
     }
   }

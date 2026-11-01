@@ -1,3 +1,4 @@
+import { flags, type Flags } from "../../config/flags";
 import {
   cents,
   ConfigError,
@@ -11,6 +12,8 @@ import {
   type CheckInput,
   type CustomerPaymentRecord,
   type CustomerRecord,
+  type DeficitRecord,
+  type DeficitSource,
   type DriverDayRecord,
   type DriverRecord,
   type FuelPurchaseRecord,
@@ -217,6 +220,40 @@ export function advanceOf(r: AdvanceRow): AdvanceRecord {
   };
 }
 
+// One driver_deficits row as the settlement input reads it (0078, 0080). Not a seeded table: the
+// seed writes no deficits, so a demo week recovers none. created_on is created_at as the tenant's
+// own date, worked out by the reader in the tenant's zone.
+export type DeficitRow = {
+  id: string;
+  driver_id: string;
+  amount_cents: number;
+  recovered_cents: number;
+  created_at: string;
+  created_on: LocalDate;
+  source_kind: DeficitSource;
+  note: string;
+};
+
+export function deficitOf(r: DeficitRow): DeficitRecord {
+  return {
+    id: r.id,
+    driverId: r.driver_id,
+    amountCents: c(r.amount_cents),
+    recoveredCents: c(r.recovered_cents),
+    createdAt: r.created_at,
+    createdOn: r.created_on,
+    sourceKind: r.source_kind,
+    note: r.note,
+  };
+}
+
+// Whether a pay period takes deficits back: only while deficit recovery is on, and only for a
+// period ending on or after its start date (the carrier's dates), so turning it on never rewrites
+// an older stub.
+export function deficitRecoveryApplies(period: Period, f: Pick<Flags, "deficitRecovery"> = flags): boolean {
+  return f.deficitRecovery.enabled === true && period.end >= f.deficitRecovery.startDate;
+}
+
 export function periodOf(r: SettlementPeriodRow): SettlementPeriodRecord {
   return { id: r.id, periodStart: r.period_start, periodEnd: r.period_end, status: r.status };
 }
@@ -327,7 +364,12 @@ export function checkInputOf(
 }
 
 // One driver's settlement for one period, under the version that period runs on, from the
-// escrow balance the driver holds now.
+// escrow balance the driver holds now. The driver's deficits count only while deficit recovery
+// applies to the period (deficitRecoveryApplies); otherwise the input carries none. Rows without
+// driver_deficits (the seed's plan) carry none either. A what-if preview that calls this on
+// readTenantRows (Cash Friday, the sweep's plan, a pay rule change, the seed summary) carries no
+// deficits and no live card pull hold (NO_LIVE_PULL, read.ts), so once deficit recovery is on a
+// preview's net can differ from the pay run's (readSettlementInput).
 export function settlementInputOf(
   rows: Pick<
     TenantRows,
@@ -340,7 +382,7 @@ export function settlementInputOf(
     | "pay_items"
     | "deduction_schedules"
     | "advances"
-  >,
+  > & { driver_deficits?: readonly DeficitRow[] },
   driverId: string,
   period: Period,
 ): SettlementInput {
@@ -361,6 +403,9 @@ export function settlementInputOf(
     items: rows.pay_items.filter((i) => i.driver_id === driverId).map(payItemOf),
     schedules: rows.deduction_schedules.filter((x) => x.driver_id === driverId).map(scheduleOf),
     advances: rows.advances.filter((a) => a.driver_id === driverId).map(advanceOf),
+    deficits: deficitRecoveryApplies(period)
+      ? (rows.driver_deficits ?? []).filter((d) => d.driver_id === driverId).map(deficitOf)
+      : [],
     escrowBalanceCents: c(driver.escrow_balance_cents),
   };
 }

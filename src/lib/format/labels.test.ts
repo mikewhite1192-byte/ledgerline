@@ -66,9 +66,10 @@ describe("statusLabel", () => {
 
 describe("lineKindLabel", () => {
   it("gives every pay line kind a plain label", () => {
-    expect(KNOWN_LINE_KINDS).toHaveLength(10);
+    expect(KNOWN_LINE_KINDS).toHaveLength(11);
     for (const k of KNOWN_LINE_KINDS) expect(lineKindLabel(k)).toMatch(plain);
     expect(lineKindLabel("advance_recovery")).toBe("Advance repaid");
+    expect(lineKindLabel("deficit_recovery")).toBe("Deficit repaid");
     expect(lineKindLabel("new_kind")).toBe("New kind");
   });
 });
@@ -95,7 +96,7 @@ describe("the rules engine's vocabularies", () => {
       ...engine.INVOICE_STATUSES,
       ...exported,
     ];
-    expect(engine.LINE_KINDS).toHaveLength(10);
+    expect(engine.LINE_KINDS).toHaveLength(11);
     for (const s of statuses) expect(KNOWN_STATUSES).toContain(s);
     for (const k of engine.LINE_KINDS) expect(KNOWN_LINE_KINDS).toContain(k);
   });
