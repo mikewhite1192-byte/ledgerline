@@ -17,7 +17,7 @@ import { tenantLock } from "./stored";
 // Dedupe key: UNIQUE (tenant_id, period_start) with ON CONFLICT DO NOTHING, under the per-tenant
 // advisory lock pay_week_roll for the caller's transaction.
 
-export type RollReason = "switched_off" | "week_exists" | "before_first_version" | "no_pay_config";
+export type RollReason = "switched_off" | "week_exists" | "before_first_version" | "no_pay_config" | "week_shape";
 
 export type RollResult = { opened: boolean; periodStart: LocalDate | null; reason?: RollReason };
 
@@ -38,8 +38,8 @@ export function weekToOpen(args: {
 }
 
 // SQL, inside the caller's tenant transaction. Reads its own switch. Never throws for a carrier
-// with no pay config (returns reason "no_pay_config"); a database error propagates and fails the
-// caller's transaction (fail closed).
+// with no pay config (reason "no_pay_config") or pay rules whose versions do not line up (reason
+// "week_shape"); a database error propagates and fails the caller's transaction (fail closed).
 export async function rollPayWeek(q: Queryable, now: Date): Promise<RollResult> {
   if (!flags.payWeekRoll.enabled) return { opened: false, periodStart: null, reason: "switched_off" };
   await tenantLock(q, "pay_week_roll");
@@ -51,7 +51,9 @@ export async function rollPayWeek(q: Queryable, now: Date): Promise<RollResult> 
   try {
     [first] = sortVersions(await readTable(q, "pay_configs"));
   } catch (e) {
-    if (e instanceof ConfigError) return { opened: false, periodStart: null, reason: "no_pay_config" };
+    if (e instanceof ConfigError) {
+      return { opened: false, periodStart: null, reason: e.message === "no_pay_config" ? "no_pay_config" : "week_shape" };
+    }
     throw e;
   }
   const holding = periodContaining(today, first.week_start_dow);
