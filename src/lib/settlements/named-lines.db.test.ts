@@ -442,6 +442,25 @@ describe("named stub lines against a seeded database", () => {
     expect(findContradictions([line], own, stub.id)).toEqual([]);
   });
 
+  it("reports not_rerun when the run's cap leaves the stub's driver out, and the stub takes no line", async () => {
+    const s = await stubOf(LUMPER.driverId);
+    const card = await openCard(s.id);
+    flags.settlementLimits.driversPerRun = 0;
+    try {
+      expect(await name(lumperBody(), s.id)).toEqual({ ok: false, category: "not_rerun", retryable: false });
+    } finally {
+      flags.settlementLimits.driversPerRun = saved.settlementLimits.driversPerRun;
+    }
+    // The item stays for the next run to adopt (the next case's run does); the stub and card are as they were.
+    expect(await namedItems()).toEqual([
+      { id: expect.any(String), amount_cents: String(LUMPER.cents), entered_by: staffId, settlement_id: null },
+    ]);
+    const lines = await app.withTenant(T, (q) => readStoredLines(q, s.id));
+    expect(lines.filter((l) => l.enteredBy)).toEqual([]);
+    expect(await stubOf(LUMPER.driverId)).toEqual(s);
+    expect((await openCard(s.id)).id).toBe(card.id);
+  }, 60_000);
+
   it("adds a named reimbursement for a lumper the driver paid: one item, one named line, the gross up, a new card", async () => {
     const before = await stubOf(LUMPER.driverId);
     const oldCard = await openCard(before.id);
