@@ -24,7 +24,8 @@ import { readApprovalBreaks, readDeskLog, readDeskPanel } from "./view";
 // this file's carriers are made, and they are removed after.
 
 const START_DATE = "2026-01-05";
-// Tuesday Jan 6, 2026, 09:00 in Chicago: the sweep and collections are due, the cash check is not.
+// Tuesday Jan 6, 2026, 09:00 in Chicago: the sweep, collections and the morning digest are due, the
+// cash check is not.
 const T0 = Date.parse("2026-01-06T15:00:00.000Z");
 const saved = structuredClone(flags.deskLoop);
 
@@ -164,11 +165,17 @@ describe("one wake", () => {
     const first = await wake(c, recording(calls));
     expect(first).toMatchObject({ ok: true, status: "done", reason: "no_work" });
     expect(calls.map((x) => x.key).sort()).toEqual(
-      ["collections:2026-01-06", "sweep:2026-01-06", eventKey("customer_payment", p1), eventKey("customer_payment", p2)].sort(),
+      [
+        "collections:2026-01-06",
+        "digest:2026-01-06",
+        "sweep:2026-01-06",
+        eventKey("customer_payment", p1),
+        eventKey("customer_payment", p2),
+      ].sort(),
     );
-    expect(first.ok && first.counts).toEqual({ seen: 4, claimed: 4, done: 4, carried: 0, skipped: 0, failed: 0, left: 0 });
+    expect(first.ok && first.counts).toEqual({ seen: 5, claimed: 5, done: 5, carried: 0, skipped: 0, failed: 0, left: 0 });
     const lines = await linesOf(c);
-    expect(lines.filter((l) => l.kind === "done")).toHaveLength(4);
+    expect(lines.filter((l) => l.kind === "done")).toHaveLength(5);
     expect(lines.find((l) => l.event_key === eventKey("customer_payment", p1) && l.kind === "seen")).toMatchObject({
       subject_table: "customer_payments",
       subject_id: p1,
@@ -182,10 +189,10 @@ describe("one wake", () => {
     now += 15 * 60_000;
     const second = await wake(c, recording(calls));
     expect(second).toMatchObject({ ok: true, status: "done", reason: "no_work" });
-    expect(calls).toHaveLength(4);
+    expect(calls).toHaveLength(5);
     now = Date.parse("2026-01-06T16:30:00.000Z");
     await wake(c, recording(calls));
-    expect(calls.map((x) => x.key).slice(4)).toEqual([eventKey("customer_payment", later)]);
+    expect(calls.map((x) => x.key).slice(5)).toEqual([eventKey("customer_payment", later)]);
     expect((await loopRow(c)).watermarks.customer_payments).toBe("2026-01-06T16:00:00.000Z");
     expect((await loopRow(c)).running_since).toBe("2026-01-06T15:00:00.000Z");
   });
@@ -205,10 +212,10 @@ describe("one wake", () => {
     now = T0;
     const unarmed = await wake(c, recording(calls));
     expect(calls).toEqual([]);
-    expect(unarmed.ok && unarmed.counts).toMatchObject({ seen: 2, skipped: 2, claimed: 0 });
+    expect(unarmed.ok && unarmed.counts).toMatchObject({ seen: 3, skipped: 3, claimed: 0 });
     expect((await loopRow(c)).running_since).toBeNull();
     const skipped = (await linesOf(c)).filter((l) => l.kind === "skipped");
-    expect(skipped.map((l) => l.detail)).toEqual([{ category: "unarmed" }, { category: "unarmed" }]);
+    expect(skipped.map((l) => l.detail)).toEqual([{ category: "unarmed" }, { category: "unarmed" }, { category: "unarmed" }]);
   });
 
   it("starts at the carrier's own midnight on the start date, not UTC's", async () => {
@@ -502,17 +509,17 @@ describe("the panel", () => {
     const panel = await readDeskPanel(c.service, { db: app });
     expect(panel).toMatchObject({
       runningSince: "2026-01-06T15:00:00.000Z",
-      eventsHandled: 3,
-      problemsFound: 3,
+      eventsHandled: 4,
+      problemsFound: 4,
       toolCalls: 0,
       proposalsWaiting: 0,
       approvalBreaks: 0,
       left: 0,
     });
-    expect(panel.lastWake).toMatchObject({ at: "2026-01-06T15:00:00.000Z", handled: 3, skipped: 0 });
+    expect(panel.lastWake).toMatchObject({ at: "2026-01-06T15:00:00.000Z", handled: 4, skipped: 0 });
     const log = await readDeskLog(c.service, 5, { db: app });
     expect(log).toHaveLength(5);
-    expect(log[0]).toMatchObject({ kind: "sleep", category: "no_work", found: 3 });
+    expect(log[0]).toMatchObject({ kind: "sleep", category: "no_work", found: 4 });
 
     const broken: TenantDb = {
       withTenant: async () => {

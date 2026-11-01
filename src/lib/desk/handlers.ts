@@ -9,6 +9,7 @@ import { runAudit } from "../agent/auditor/run";
 import { runAutopilot } from "../autopilot/run";
 import { runCashCheck } from "../cash/check";
 import { draftCollections } from "../collections/draft";
+import { writeDigest, type CompleteFn } from "../digest/write";
 import { handOffMessage, sortMessage } from "../inbound/pipeline";
 import { moveFromDocument, moveFromMessage, moveFromTmsEvent, type MessageTable, type MoveOutcome } from "../loads/movement";
 import { advanceCardCheck, startCardCheck, statementVerdict } from "../recon/run";
@@ -21,7 +22,8 @@ import type { OpenEvent } from "./log";
 
 // What each piece of work is handed to: the entry an existing button already calls, run as the
 // carrier's service login. The loop adds nothing to what those entries may do: each re-checks its
-// own switch and caps, and none moves money. The loop itself makes no model call.
+// own switch and caps, and none moves money. The loop itself makes no model call (the morning
+// digest's one call is made by its own entry, src/lib/digest/write.ts, through src/lib/ai).
 
 export type Outcome = "done" | "running" | "skipped" | "failed";
 export type HandlerOutcome = { outcome: Outcome; detail: LineDetail };
@@ -68,7 +70,8 @@ function sumOf(...values: unknown[]): number | undefined {
   return total;
 }
 
-export type HandlerDeps = { db?: TenantDb; newId?: () => string };
+// complete: the digest's model call, for tests; src/lib/ai's complete() when absent.
+export type HandlerDeps = { db?: TenantDb; newId?: () => string; complete?: CompleteFn };
 
 // The finished card check that started at or after a card row was written already covers it.
 const COVERING_CHECK_SQL = `SELECT CAST(r.id AS text) AS id FROM card_recon_runs r
@@ -430,6 +433,29 @@ export function deskHandlers(deps: HandlerDeps = {}): Handlers {
     },
   };
 
+  // MORNING DIGEST: the carrier's 06:00 line (src/lib/digest/write.ts re-checks the switch and the
+  // start date, and a digest already stored for the date covers it with no second model call).
+  const digest: Handler = {
+    switchOn: () => flags.morningDigest.enabled === true,
+    needsMs: 25_000,
+    async run(session, event, ctx) {
+      const periodDate = event.eventKey.startsWith("digest:") ? event.eventKey.slice("digest:".length) : "";
+      const r = await writeDigest(session, periodDate, {
+        db: db(),
+        clock: ctx.clock,
+        newId,
+        ...(deps.complete ? { complete: deps.complete } : {}),
+      });
+      if (r.kind === "skipped") return skipped(r.category);
+      if (r.kind === "failed") return failed(r.category);
+      return done({
+        ...(r.found === undefined ? {} : { found: r.found }),
+        ...(r.cents === undefined ? {} : { cents: r.cents }),
+        category: r.category,
+      });
+    },
+  };
+
   return {
     card_transaction: cardTransaction,
     inbound_message: inboundMessage,
@@ -443,5 +469,6 @@ export function deskHandlers(deps: HandlerDeps = {}): Handlers {
     document,
     load_event: loadEvent,
     tms_event: tmsEvent,
+    digest,
   };
 }
