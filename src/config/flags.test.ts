@@ -117,6 +117,9 @@ const RELEASED_ON = [
   // Released by the owner (D-071, 2026-11-01): one short model-written digest per carrier each
   // morning, capped per call. It sends nothing and moves no money.
   "morningDigest.enabled",
+  // Released by the owner (D-071, 2026-11-01): staff put a named line citing one record on a draft
+  // stub, and a line that contradicts its record parks the stub. A person still approves it.
+  "namedLines.enabled",
 ] as const;
 
 // What stays off, each waiting on a missing piece or an outside send the owner has not released.
@@ -136,8 +139,6 @@ const KEPT_OFF = [
   "cardPullback.enabled",
   // The dispatch webhook ships off; its own one-line enable PR turns it on once the key is stored.
   "tmsHook.enabled",
-  // Named stub lines ship off; their own one-line enable PR turns them on.
-  "namedLines.enabled",
   // The activation checklist ships off; its own one-line enable PR turns it on.
   "activationChecklist.enabled",
 ] as const;
