@@ -1462,6 +1462,8 @@ describe("the advance flow", () => {
     });
 
     it("records a take-back on a paid advance once, lowers what is owed, and sends nothing to the card", async () => {
+      // With the card pull-back off it records only; the pull-back db tests cover it with the pull on.
+      flags.cardPullback.enabled = false;
       flags.advanceTakeback = { enabled: true, maxCents: 100_000 };
       const id = await addProposal();
       expect(await approve(id)).toMatchObject({ ok: true, status: "done" });
@@ -1589,6 +1591,8 @@ describe("the advance flow", () => {
     });
 
     it("asks its own switch, the admin line, the reason and the carrier before recording anything", async () => {
+      // With the card pull-back off it records only; the pull-back db tests cover it with the pull on.
+      flags.cardPullback.enabled = false;
       const id = await addProposal();
       expect(await approve(id)).toMatchObject({ ok: true, status: "done" });
       const [adv] = await flowAdvances();
