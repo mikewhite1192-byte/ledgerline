@@ -62,6 +62,9 @@ type Fake = DeskStore & {
   failState: boolean;
   clockStarts: string[];
   stateSince: string[];
+  synced: { token: string; nowIso: string; deadlineMs: number }[];
+  failSync: boolean;
+  order: string[];
 };
 
 function fakeStore(): Fake {
@@ -75,6 +78,9 @@ function fakeStore(): Fake {
     failState: false,
     clockStarts: [],
     stateSince: [],
+    synced: [],
+    failSync: false,
+    order: [],
     async claim(input) {
       if (fake.lease && fake.lease.until >= input.nowIso) return null;
       fake.lease = { token: input.token, until: input.leaseUntilIso };
@@ -92,7 +98,13 @@ function fakeStore(): Fake {
       fake.lines.push(structuredClone(line));
       return true;
     },
+    async sync(input) {
+      fake.order.push("sync");
+      if (fake.failSync) throw new Error("connection reset by 10.0.0.12");
+      fake.synced.push(input);
+    },
     async discover(input) {
+      fake.order.push("discover");
       fake.discovered.push(input);
       let n = 0;
       for (const e of fake.pending) {
@@ -173,6 +185,7 @@ describe("wakeDesk", () => {
     await expect(wake(handlersWith(async () => done()))).resolves.toEqual({ ok: false, category: "disabled" });
     expect(claim).not.toHaveBeenCalled();
     expect(store.lines).toEqual([]);
+    expect(store.synced).toEqual([]);
   });
 
   it("refuses a wake id that is not a uuid, and limits that are not whole and positive", async () => {
@@ -230,6 +243,7 @@ describe("wakeDesk", () => {
     expect(store.lines).toEqual([]);
     expect(run).not.toHaveBeenCalled();
     expect(store.lease?.token).toBe(uuid(7777));
+    expect(store.synced).toEqual([]);
   });
 
   it("unarmed, writes what it would do as skipped lines and runs nothing", async () => {
@@ -489,6 +503,35 @@ describe("wakeDesk", () => {
     expect(store.discovered[0].budget).toBe(1);
   });
 
+  it("mirrors the dispatch system on every wake, before discovery, even once the day's share is used", async () => {
+    flags.deskLoop.limits.eventsPerDay = 5;
+    store.seenToday = 5;
+    store.pending = [{ eventKey: cardKey(1), source: "card_transaction" }];
+    const out = await wake(handlersWith(async () => done()));
+    // The lease's own token, and the slice's deadline (20 s), which comes before the route's (25 s).
+    expect(store.synced).toEqual([{ token: uuid(1), nowIso: new Date(START).toISOString(), deadlineMs: START + 20_000 }]);
+    expect(store.discovered).toEqual([]);
+    expect(ofKind("seen")).toEqual([]);
+    expect(out).toMatchObject({ ok: true, status: "done", reason: "events_per_day" });
+    store.order = [];
+    store.seenToday = 4;
+    await wake(handlersWith(async () => done()), uuid(8888));
+    expect(store.order).toEqual(["sync", "discover"]);
+  });
+
+  it("logs a sync that throws, by name only, and still discovers, sleeps and gives the lease back", async () => {
+    store.failSync = true;
+    store.pending = [{ eventKey: cardKey(1), source: "card_transaction" }];
+    const out = await wake(handlersWith(vi.fn(async () => done())));
+    expect(logs.filter((l) => l.includes("desk tms sync"))).toEqual([`desk tms sync tenant=${TENANT} wake=${WAKE} failed=error`]);
+    expect(logs.join("\n")).not.toContain("10.0.0.12");
+    expect(store.lines.some((l) => JSON.stringify(l).includes("10.0.0.12"))).toBe(false);
+    expect(store.discovered).toHaveLength(1);
+    expect(ofKind("sleep")).toHaveLength(1);
+    expect(store.lease).toBeNull();
+    expect(out).toMatchObject({ ok: true, status: "done" });
+  });
+
   it("stops at the slice's deadline, and starts later work only when its time fits", async () => {
     store.pending = [1, 2].map((n) => ({ eventKey: cardKey(n), source: "card_transaction" as const }));
     const run = vi.fn<Run>(async () => {
@@ -553,5 +596,6 @@ describe("wakeDesk", () => {
     vi.spyOn(store, "claim").mockRejectedValueOnce(new Error("timeout"));
     await expect(wake(handlersWith(async () => done()))).resolves.toEqual({ ok: false, category: "unavailable" });
     expect(store.lines).toEqual([]);
+    expect(store.synced).toEqual([]);
   });
 });
