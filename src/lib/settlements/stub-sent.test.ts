@@ -75,8 +75,8 @@ describe("markStubSent before any database work", () => {
     }
   });
 
-  it("ships off", () => {
-    expect(saved.stubSent.enabled).toBe(false);
+  it("ships on (released by the owner, D-071)", () => {
+    expect(saved.stubSent.enabled).toBe(true);
   });
 });
 
