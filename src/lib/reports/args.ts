@@ -7,6 +7,8 @@ import { isReportName, REPORT_FORMATS, type ReportFormat, type ReportName } from
 // carrier's time zone; ids are uuids, lowercased.
 
 export const MAX_MARGIN_DAYS = 92;
+// The driver insights window: at most a year and a day (366 days, so a leap year fits).
+export const MAX_INSIGHT_DAYS = 366;
 
 const DATE = /^\d{4}-\d{2}-\d{2}$/;
 const dateArg = () => z.string().regex(DATE).refine(isLocalDate, { message: "not a calendar date" });
@@ -37,6 +39,21 @@ const marginArgs = z
     { message: "the window must run forward and cover at most 92 days", path: ["periodEnd"] },
   );
 
+// Either end may be left out (the report fills the 28 days ending today); when both are given the
+// window must run forward and cover at most 366 days. A one-sided window is checked by the report.
+const insightArgs = z
+  .strictObject({ from: dateArg().optional(), to: dateArg().optional() })
+  .refine(
+    (a) => {
+      if (a.from === undefined || a.to === undefined) return true;
+      // A bad date is already reported on its own field.
+      if (!isLocalDate(a.from) || !isLocalDate(a.to)) return true;
+      const days = daysBetween(a.from, a.to);
+      return days >= 0 && days < MAX_INSIGHT_DAYS;
+    },
+    { message: "the window must run forward and cover at most 366 days", path: ["to"] },
+  );
+
 export const REPORT_ARGS = {
   ar_aging: z.strictObject({ asOf: dateArg().optional() }),
   driver_pay_summary: z.strictObject({
@@ -52,6 +69,8 @@ export const REPORT_ARGS = {
   year_end_contractors: z.strictObject({ year: yearArg().optional(), driverId: idArg().optional() }),
   // Any date inside the last pay week wanted; default today in the carrier's time zone.
   trust_meter: z.strictObject({ asOf: dateArg().optional() }),
+  // The window of paid paystubs and delivered loads; default the 28 days ending today.
+  driver_insights: insightArgs,
 } as const satisfies Record<ReportName, z.ZodType>;
 
 export type ReportArgs = { [K in ReportName]: z.infer<(typeof REPORT_ARGS)[K]> };

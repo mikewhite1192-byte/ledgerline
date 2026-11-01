@@ -1,6 +1,7 @@
 import type { Param } from "../../../db";
 import { QUARTER_DETENTION_SQL, QUARTER_PROPOSALS_SQL, QUARTER_RECOVERY_SQL } from "../../../briefs/quarter-figures";
 import { chargeArgsOf, detentionChargeOf } from "../../../data/detention-charge";
+import { DEFICITS_SQL, INSIGHT_WHERE } from "../../../data/driver-insights";
 import {
   ESCROW_LINES,
   LOAD_NUMBERS_FIRST,
@@ -216,6 +217,8 @@ export function planDb(plan: CarrierPlan, extra?: Handler): FakeDb {
     if (sql.startsWith(FACTORING_REQUESTS_SQL)) return [];
     // The loads an approved invoice card wrote an invoice for. The plan holds no cards, so this
     // answers from a proposals list a test adds, or none: every seeded invoice is history.
+    // The driver insights' deficits (data/driver-insights.ts): a seed plan books none.
+    if (sql === DEFICITS_SQL) return [];
     if (sql === QUEUE_CARD_LOADS_SQL) {
       const cards = (tables.proposals ?? []).filter(
         (r) =>
@@ -385,6 +388,27 @@ function filterRows(rows: TenantRows, all: Row[], where: string | undefined, par
   if (where === PURCHASED_BETWEEN) {
     const [start, end] = params as string[];
     return all.filter((r) => typeof r.purchased_on === "string" && r.purchased_on >= start && r.purchased_on <= end);
+  }
+  // The driver insights' window reads (data/driver-insights.ts): the pay weeks ending in the window,
+  // their paid stubs and those stubs' fuel lines, the loads delivered in it, the advances owed on.
+  if ((Object.values(INSIGHT_WHERE) as string[]).includes(where)) {
+    if (where === INSIGHT_WHERE.advances) {
+      if (params.length !== 0) throw new Error("unexpected advances parameters");
+      return all.filter((r) => r.status === "approved" || r.status === "paid");
+    }
+    if (params.length !== 2) throw new Error("unexpected insight window parameters");
+    const [start, end] = params as string[];
+    const between = (d: unknown) => typeof d === "string" && d >= start && d <= end;
+    if (where === INSIGHT_WHERE.loads) {
+      return all.filter((r) => (r.status === "delivered" || r.status === "invoiced") && between(r.delivered_on));
+    }
+    const periods = new Set(rows.settlement_periods.filter((p) => between(p.period_end)).map((p) => p.id));
+    if (where === INSIGHT_WHERE.settlement_periods) return all.filter((r) => periods.has(r.id as string));
+    const paid = new Set(
+      rows.settlements.filter((st) => st.status === "paid" && periods.has(st.period_id)).map((st) => st.id),
+    );
+    if (where === INSIGHT_WHERE.settlements) return all.filter((r) => paid.has(r.id as string));
+    return all.filter((r) => r.kind === "fuel" && paid.has(r.settlement_id as string));
   }
   const paidWhere = [PAID_WHERE.all, PAID_WHERE.oneDriver].find((w) => Object.values(w).includes(where));
   if (paidWhere) {

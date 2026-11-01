@@ -200,7 +200,7 @@ export type Flags = {
     // At most 400,000: the byte_length CHECK in migration 0052 refuses a larger card.
     maxPngBytes: number;
   };
-  // The eight report tools in the chat and the report download route. Off: the agent is not
+  // The nine report tools in the chat and the report download route. Off: the agent is not
   // offered them, a call to one is refused as an unknown tool, and the route answers 404.
   reportsEnabled: boolean;
   // The IFTA quarter report (report_ifta_quarter and /api/reports/ifta_quarter): per-state miles

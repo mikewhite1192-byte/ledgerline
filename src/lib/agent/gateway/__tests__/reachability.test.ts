@@ -150,9 +150,9 @@ describe("reachability", () => {
   it("(e) with the report switch off, refuses and logs every report tool as unknown, for every role", async () => {
     flags.reportsEnabled = false;
     const reports = TOOLS.filter((t) => t.name.startsWith("report_"));
-    // The five reports, the IFTA quarter, the year-end 1099 and the trust meter, whose own switches
-    // are on here: the report switch wins.
-    expect(reports).toHaveLength(8);
+    // The five reports, the IFTA quarter, the year-end 1099, the trust meter and the driver insights,
+    // the three with their own switches on here: the report switch wins.
+    expect(reports).toHaveLength(9);
     for (const role of AGENT_ROLES) {
       expect(toolsFor(role).map((t) => t.name).filter((n) => n.startsWith("report_")), role).toEqual([]);
       for (const tool of reports) {

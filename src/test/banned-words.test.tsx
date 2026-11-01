@@ -409,6 +409,11 @@ vi.mock("@/lib/seed/reset", async (importOriginal) => ({
   demoCarrierOf: async () => DEMO_CARRIERS[0],
   previewDemoReset: async () => get("demoPreview"),
 }));
+vi.mock("@/lib/data/driver-insights", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("@/lib/data/driver-insights")>()),
+  readDriverInsightInput: async () => get("driverInsightInput"),
+  readCardedDrivers: async () => new Set(get<string[]>("cardedDrivers")),
+}));
 vi.mock("@/lib/settlements/views", async (importOriginal) => ({
   ...(await importOriginal<typeof import("@/lib/settlements/views")>()),
   readSettlementsView: async () => get("settlementsView"),
@@ -531,6 +536,8 @@ function defaults(): Record<string, unknown> {
     voiceList: fx.VOICE_LIST,
     voiceDetail: fx.VOICE_DETAIL,
     settlementsView: fx.SETTLEMENTS_VIEW,
+    driverInsightInput: fx.DRIVER_INSIGHT_INPUT,
+    cardedDrivers: fx.CARDED_DRIVER_IDS,
     settlementRecord: fx.SETTLEMENT_RECORD,
     driverRecord: fx.DRIVER_RECORD,
     batchRecord: fx.BATCH_RECORD,
@@ -1597,6 +1604,38 @@ const PAGES: PageCase[] = [
       load: async () => (await import("@/app/records/vendor_bills/[id]/page")).default({ params: p({ id: b.id }) }),
       shows: b.billRef,
     })),
+  },
+  {
+    file: "drivers/page.tsx",
+    variants: [
+      {
+        name: "active drivers",
+        setup: () => onDay("2026-11-02T15:00:00.000Z"),
+        load: async () => (await import("@/app/drivers/page")).default(sp()),
+        shows: ["Rosa Delgado", "No card", "top net Rosa Delgado (BR-D07) $2,225.00"],
+      },
+      {
+        name: "departed, by owed, last 90 days",
+        setup: () => onDay("2026-11-02T15:00:00.000Z"),
+        load: async () => (await import("@/app/drivers/page")).default(sp({ status: "departed", sort: "owed", days: "90" })),
+        shows: ["Lena Ortiz", "Departed", "Last 90 days"],
+      },
+      {
+        name: "search with no match",
+        setup: () => onDay("2026-11-02T15:00:00.000Z"),
+        load: async () => (await import("@/app/drivers/page")).default(sp({ q: "nobody" })),
+        shows: "No driver matches that search",
+      },
+      {
+        name: "no drivers yet",
+        setup: () => {
+          onDay("2026-11-02T15:00:00.000Z");
+          state.fx.driverInsightInput = { ...fx.DRIVER_INSIGHT_INPUT, drivers: [], periods: [], settlements: [], lines: [], loads: [], advances: [], deficits: [] };
+        },
+        load: async () => (await import("@/app/drivers/page")).default(sp()),
+        shows: "no paid paystubs, deliveries or amounts owed yet",
+      },
+    ],
   },
   {
     file: "settlements/page.tsx",

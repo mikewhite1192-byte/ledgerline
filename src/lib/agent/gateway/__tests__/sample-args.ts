@@ -123,6 +123,7 @@ export function sampleArgs(plan: CarrierPlan): Record<string, Record<string, unk
     report_ifta_quarter: { asOf: "2026-11-02" },
     report_year_end_contractors: { year: "2026" },
     report_trust_meter: { asOf: "2026-11-02" },
+    report_driver_insights: { from: "2026-10-06", to: "2026-11-02" },
     get_driver_identity: { driverId: hero.id },
     get_advance_headroom: { driverId: hero.id, amountCents: 10_000 },
     get_card_breaks: { status: "open", limit: 10 },

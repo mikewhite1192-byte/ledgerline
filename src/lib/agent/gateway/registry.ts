@@ -44,6 +44,7 @@ import { getVoiceNote } from "./tools/read/get-voice-note";
 import { reportAdvancesOutstanding } from "./tools/read/report-advances-outstanding";
 import { reportArAging } from "./tools/read/report-ar-aging";
 import { reportCashNeeded } from "./tools/read/report-cash-needed";
+import { reportDriverInsights } from "./tools/read/report-driver-insights";
 import { reportDriverPaySummary } from "./tools/read/report-driver-pay-summary";
 import { reportIftaQuarter } from "./tools/read/report-ifta-quarter";
 import { reportMarginPerLoad } from "./tools/read/report-margin-per-load";
@@ -98,6 +99,7 @@ const TOOLS: readonly AnyToolDef[] = [
   reportIftaQuarter,
   reportYearEndContractors,
   reportTrustMeter,
+  reportDriverInsights,
   getInboundMessage,
   getInvoiceQueue,
   getInvoiceReview,

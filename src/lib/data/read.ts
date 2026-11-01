@@ -430,12 +430,13 @@ export class ReadLimitError extends Error {
 // month's tables (a load, under 1 KB as JSON) stays far under the Data API's 1 MiB response cap;
 // the bound (100,000 rows of one table in one month) stops a runaway read.
 export type Paging = { pageSize: number; maxPages: number };
-const DELIVERED_PAGING: Paging = { pageSize: 200, maxPages: 500 };
+export const DELIVERED_PAGING: Paging = { pageSize: 200, maxPages: 500 };
 
 // readWhere in pages, keyed on the table's uuid primary key (its first column, the one selectSql
 // orders by): every matching row once, in the order one unpaged read gives. A page shorter than
-// the page size ends the read, so an exact multiple ends with one empty page.
-async function readWherePaged<K extends TenantTable>(
+// the page size ends the read, so an exact multiple ends with one empty page. `where` is SQL
+// written in this repo, never input; values travel as parameters.
+export async function readWherePaged<K extends TenantTable>(
   q: Queryable,
   table: K,
   where: string,
@@ -473,7 +474,7 @@ async function readWherePaged<K extends TenantTable>(
 // through the same delivered-date filter on loads, so a month's read never pulls the rest of the
 // tenant's history, and each table is read in pages, because the Data API ends a statement whose
 // result passes 1 MiB.
-const DELIVERED_BETWEEN = "delivered_on BETWEEN CAST($1 AS date) AND CAST($2 AS date)";
+export const DELIVERED_BETWEEN = "delivered_on BETWEEN CAST($1 AS date) AND CAST($2 AS date)";
 const DELIVERED_LOADS =
   "load_id IN (SELECT id FROM loads" +
   ` WHERE tenant_id = current_tenant_id() AND ${DELIVERED_BETWEEN})`;
