@@ -45,6 +45,7 @@ export const DIGEST_RULES = [
   "Rules:",
   `- Three to five plain sentences, at most ${DIGEST_ASK_CHARS} characters in all.`,
   "- Open with what needs a person, then what happened yesterday, then the billing lines.",
+  '- Every fact marked (needs a person) that is above 0 or reads "not read" goes in the digest with its tag.',
   "- Never write ordinal or counting words such as first, second, single or couple.",
   "- Use only the facts in the list. Never add, subtract, round or estimate. If a number is not in",
   "  the list, do not write it.",
@@ -65,7 +66,7 @@ export function factsText(facts: readonly DigestFact[]): string {
     if (typeof f.value === "string") return f.value;
     return f.kind === "cents" ? formatCents(f.value) : String(f.value);
   };
-  return facts.map((f) => `[${f.key}] ${f.label}: ${valueText(f)}`).join("\n");
+  return facts.map((f) => `[${f.key}] ${f.label}${f.needsPerson ? " (needs a person)" : ""}: ${valueText(f)}`).join("\n");
 }
 
 export function digestRequest(facts: readonly DigestFact[], traceId: string): AiRequest {
@@ -114,6 +115,13 @@ export async function draftDigest(
   if (result.status !== "ok") return fallback("model_incomplete", cents);
   const checked = verifyBrief(result.text, facts);
   if (!checked.ok) return fallback(`check_${checked.category}`, cents);
+  // Every fact that needs a person and is above 0 or not read must be cited, so a draft can never
+  // leave one out; the code-written line always names them.
+  const cited = new Set(checked.verification.cited);
+  const left = facts.some(
+    (f) => f.needsPerson && (!f.known || (typeof f.value === "number" && f.value > 0)) && !cited.has(f.key),
+  );
+  if (left) return fallback("check_incomplete", cents);
   const plain = briefPlainText(checked.text).trim();
   if (plain.length === 0 || plain.length > DIGEST_TEXT_MAX) return fallback("check_too_long", cents);
   return { text: plain, category: "drafted", ...(cents === undefined ? {} : { cents }) };

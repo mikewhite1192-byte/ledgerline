@@ -91,7 +91,8 @@ describe("the facts", () => {
   it("gives the model one fact a line with its tag and money in dollars", () => {
     const text = factsText(factsFor(WEDNESDAY));
     expect(text.split("\n")).toHaveLength(16);
-    expect(text).toContain("[f2] Card check differences waiting for a person: 2");
+    expect(text).toContain("[f2] Card check differences waiting for a person (needs a person): 2");
+    expect(text).toContain("[f3] Trips cancelled yesterday: 1");
     expect(text).toContain("[f5] Hand loads yesterday, total: $150.00");
     expect(text).toContain("[f16] FYI: past due balance: $1,200.00");
   });
@@ -200,6 +201,17 @@ describe("the draft", () => {
     expect(d).toMatchObject({ text: words, category: "check_unknown_tag" });
   });
 
+  it("lands the words line on a draft that leaves out a fact that needs a person", async () => {
+    const d = await draftDigest(facts, replying(JSON.stringify({ text: "2 [f2] card breaks wait for you." })), SESSION, "t");
+    expect(d).toMatchObject({ text: words, category: "check_incomplete" });
+  });
+
+  it("lands the words line on a draft that leaves out a fact that was not read", async () => {
+    const unread = numberFacts(factIdsFor(WEDNESDAY), { ...DAILY, send: undefined });
+    const d = await draftDigest(unread, replying(JSON.stringify({ text: DRAFT.replace("2 [f12] invoices to send", "invoices to send") })), SESSION, "t");
+    expect(d).toMatchObject({ text: digestWords(unread), category: "check_incomplete" });
+  });
+
   it("lands the words line on a reply that is not the format", async () => {
     const d = await draftDigest(facts, replying("not json"), SESSION, "t");
     expect(d).toMatchObject({ text: words, category: "check_format" });
@@ -211,7 +223,7 @@ describe("the draft", () => {
   });
 
   it("lands the words line on a reply over 400 characters", async () => {
-    const long = `${"2 [f2] card breaks wait for you. ".repeat(16)}`.trim();
+    const long = `${DRAFT} ${DRAFT}`;
     const d = await draftDigest(facts, replying(JSON.stringify({ text: long })), SESSION, "t");
     expect(d).toMatchObject({ text: words, category: "check_too_long" });
   });

@@ -28,6 +28,8 @@ const START_DATE = "2026-01-05";
 // cash check is not.
 const T0 = Date.parse("2026-01-06T15:00:00.000Z");
 const saved = structuredClone(flags.deskLoop);
+const savedDigest = { ...flags.morningDigest };
+const savedAi = flags.aiEnabled;
 
 let admin: Db;
 let app: Db;
@@ -142,6 +144,9 @@ beforeEach(() => {
   flags.deskLoop.armed = true;
   flags.deskLoop.startDate = START_DATE;
   Object.assign(flags.deskLoop.limits, saved.limits);
+  // The digest's period is found only while the digest is on.
+  flags.morningDigest.enabled = true;
+  flags.aiEnabled = true;
   now = T0;
   logs.length = 0;
 });
@@ -151,6 +156,8 @@ afterEach(() => {
   flags.deskLoop.armed = saved.armed;
   flags.deskLoop.startDate = saved.startDate;
   Object.assign(flags.deskLoop.limits, saved.limits);
+  Object.assign(flags.morningDigest, savedDigest);
+  flags.aiEnabled = savedAi;
 });
 
 describe("one wake", () => {
@@ -195,6 +202,20 @@ describe("one wake", () => {
     expect(calls.map((x) => x.key).slice(5)).toEqual([eventKey("customer_payment", later)]);
     expect((await loopRow(c)).watermarks.customer_payments).toBe("2026-01-06T16:00:00.000Z");
     expect((await loopRow(c)).running_since).toBe("2026-01-06T15:00:00.000Z");
+  });
+
+  it("finds no digest period while the digest is off, so turning it on later that morning finds the day's", async () => {
+    const c = await carrier("desk-digest-off");
+    const calls: Call[] = [];
+    flags.morningDigest.enabled = false;
+    await wake(c, recording(calls));
+    expect(calls.map((x) => x.key).sort()).toEqual(["collections:2026-01-06", "sweep:2026-01-06"]);
+    expect((await linesOf(c)).filter((l) => l.event_key === "digest:2026-01-06")).toEqual([]);
+
+    flags.morningDigest.enabled = true;
+    now += 60 * 60_000;
+    await wake(c, recording(calls));
+    expect(calls.map((x) => x.key).slice(2)).toEqual(["digest:2026-01-06"]);
   });
 
   it("finds nothing before the start date, and starts no clock while unarmed", async () => {
