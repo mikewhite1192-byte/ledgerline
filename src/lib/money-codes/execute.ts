@@ -267,13 +267,6 @@ async function onCodeReserved(q: Queryable, action: MoneyAction, nowIso: string)
     [action.subjectId, action.id],
   );
   if (changed !== 1) throw new MoneyError("validation");
-  // Read without a lock, as the advance's reserve hook does. This transaction holds the code and
-  // then takes the proposal, while a status change holds the driver and a new code's approval holds
-  // its proposal before the driver, so waiting on the driver here could close a cycle. Anything
-  // but ok (inactive, not armed, no such driver) refuses.
-  const zone = await readTenantZone(q);
-  const state = await readDriverMoneyState(q, action.counterpartyId, localDateOf(nowIso, zone), false);
-  if (state !== "ok") throw new MoneyError("validation");
   if (action.proposalId) {
     await q.execute(
       `UPDATE proposals SET money_action_id = CAST($2 AS uuid), updated_at = now()
@@ -281,6 +274,13 @@ async function onCodeReserved(q: Queryable, action: MoneyAction, nowIso: string)
       [action.proposalId, action.id],
     );
   }
+  // The driver is locked last: code, then proposal, then driver. A settle takes this code first,
+  // a new code's approval takes its proposal before the driver, and a status change or arming
+  // holds only the driver, so no order here closes a cycle; a deactivation or disarm in flight is
+  // waited on and then seen. Anything but ok (inactive, not armed, no such driver) refuses.
+  const zone = await readTenantZone(q);
+  const state = await readDriverMoneyState(q, action.counterpartyId, localDateOf(nowIso, zone), true);
+  if (state !== "ok") throw new MoneyError("validation");
 }
 
 const PROVIDER_REF = /^fcs_code_[0-9a-f]{24}$/;
