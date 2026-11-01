@@ -871,7 +871,8 @@ export type Flags = {
   // the deficit for the next week. The engine reads no switch: the settlement input carries the
   // deficits only while enabled is on (src/lib/data/read.ts), and booking a paid stub that holds
   // deficit lines is refused while it is off (src/lib/settlements/book.ts), so a flip never
-  // half-books. startDate (YYYY-MM-DD, the carrier's zone): a period ending before it recovers
+  // half-books: a stub approved while it was on and booked after a flip to off waits not_booked
+  // until the switch is back on. startDate (YYYY-MM-DD, the carrier's zone): a period ending before it recovers
   // nothing, so turning it on never rewrites an old stub. The agent reads deficits with
   // get_driver_deficits only while it is on.
   deficitRecovery: { enabled: boolean; startDate: string };

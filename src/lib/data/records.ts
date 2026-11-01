@@ -366,7 +366,10 @@ export function checkInputOf(
 // One driver's settlement for one period, under the version that period runs on, from the
 // escrow balance the driver holds now. The driver's deficits count only while deficit recovery
 // applies to the period (deficitRecoveryApplies); otherwise the input carries none. Rows without
-// driver_deficits (the seed's plan) carry none either.
+// driver_deficits (the seed's plan) carry none either. A what-if preview that calls this on
+// readTenantRows (Cash Friday, the sweep's plan, a pay rule change, the seed summary) carries no
+// deficits and no live card pull hold (NO_LIVE_PULL, read.ts), so once deficit recovery is on a
+// preview's net can differ from the pay run's (readSettlementInput).
 export function settlementInputOf(
   rows: Pick<
     TenantRows,

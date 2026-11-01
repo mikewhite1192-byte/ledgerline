@@ -109,6 +109,10 @@ async function readRows<K extends TenantTable>(
   return rows as TenantRows[K];
 }
 
+// Every tenant table, whole. driver_deficits is not one of them and no live card pull is held
+// back, so a preview settled from these rows recovers no deficits and may count an advance a
+// pull is taking back: its net can differ from the pay run's (readSettlementInput) once deficit
+// recovery is on.
 export async function readTenantRows(q: Queryable): Promise<TenantRows> {
   const out: Partial<Record<TenantTable, unknown>> = {};
   for (const table of TENANT_TABLES) out[table] = await readTable(q, table);

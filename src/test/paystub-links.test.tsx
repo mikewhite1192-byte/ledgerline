@@ -127,4 +127,16 @@ describe("every paystub line in the demo links to a page that exists", () => {
     expect(expected.filter((h) => !shown.includes(h)), "a line's record shows without its link").toEqual([]);
     expect(shown.map(pageProblem).filter((p) => p !== null)).toEqual([]);
   });
+
+  it("a deficit recovery line shows as plain text, since a driver deficit has no record page", () => {
+    const deficit: SourceRef = { table: "driver_deficits", id: "00000000-0000-4000-8000-0000000000d1" };
+    expect(hrefOrNull(recordHref, deficit)).toBeNull();
+    const label = "Owed: Card 4417 load with no payment record";
+    const line: PaystubLine = { seq: 1, kind: "deficit_recovery", label, amountCents: -4_000, sources: [deficit] };
+    const { container, getByText } = render(<Paystub {...PAYSTUB} lines={[line]} exceptions={[]} />);
+    const shown = getByText(label);
+    expect(shown.tagName).toBe("SPAN");
+    expect(shown.closest("a")).toBeNull();
+    expect([...container.querySelectorAll("a[href]")].filter((a) => (a.getAttribute("href") ?? "").startsWith("/records/"))).toEqual([]);
+  });
 });

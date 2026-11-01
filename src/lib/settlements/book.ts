@@ -1,7 +1,7 @@
 import { randomUUID } from "node:crypto";
 import { flags } from "../../config/flags";
 import type { Queryable } from "../db";
-import { readTenant } from "../data/read";
+import { NO_LIVE_PULL, readTenant } from "../data/read";
 import { cents } from "../rules-engine";
 import { isUuid } from "../uuid";
 import { paidWritesOf } from "./paid";
@@ -80,11 +80,13 @@ export async function bookPaidSettlement(q: Queryable, settlementId: string, now
   }
 
   for (const r of writes.recoveries) {
-    // The advances CHECK (recovered <= amount + fee) refuses an over-recovery whole.
+    // The advances CHECK (recovered <= amount + fee) refuses an over-recovery whole. An advance a
+    // card pull-back is taking back right now (NO_LIVE_PULL) changes no row, so the booking waits
+    // not_booked until the pull settles, and the pull's own write is never left without room.
     const moved = await q.execute(
       `UPDATE advances SET recovered_cents = recovered_cents + $2
         WHERE tenant_id = current_tenant_id() AND id = CAST($1 AS uuid)
-          AND driver_id = CAST($3 AS uuid) AND status = 'paid'`,
+          AND driver_id = CAST($3 AS uuid) AND status = 'paid' AND ${NO_LIVE_PULL}`,
       [r.advanceId, r.cents, stored.driverId],
     );
     if (moved !== 1) throw new Error("an advance recovery found no paid advance");
@@ -92,7 +94,10 @@ export async function bookPaidSettlement(q: Queryable, settlementId: string, now
 
   for (const d of writes.deficitSettlements) {
     // The 0080 CHECKs refuse an over-recovery whole (recovered never above the amount, settled only
-    // when whole); a deficit settled by another stub or not this driver's changes no row.
+    // when whole); a deficit settled by another stub or not this driver's changes no row. Two
+    // weeks approved before either books can both take the same part: after its payout went out,
+    // the second booking is refused (driver_deficits_recovered_within, or no open deficit once the
+    // first settled it) and waits not_booked for a person to settle.
     const moved = await q.execute(
       `UPDATE driver_deficits
           SET recovered_cents = recovered_cents + $2,

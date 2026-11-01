@@ -2,7 +2,7 @@ import { randomUUID } from "node:crypto";
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from "vitest";
 import { flags } from "../../config/flags";
 import { dedupeKey } from "../agent/gateway/store/proposals";
-import { getDriverDeficits } from "../agent/gateway/tools/read/get-driver-deficits";
+import { DEFICIT_LIMIT, getDriverDeficits } from "../agent/gateway/tools/read/get-driver-deficits";
 import { readAdvanceInput, readSettlementInput } from "../data/read";
 import { createPgDb } from "../db/pg";
 import { adminUrl, appUrl } from "../db/test-urls";
@@ -15,8 +15,9 @@ import { bookPaidSettlement } from "./book";
 // once it is whole; a line that finds no open deficit of that driver rolls the whole booking back;
 // a stub with a deficit line waits while the switch is off and writes nothing; a pay run for a week
 // that ends before the switch's start date reads no deficits. The pay run also leaves out an
-// advance with a card pull-back still in flight. The deficits read shows one driver's deficits,
-// open and settled, to its own carrier only. Every tenant made here is removed after each test.
+// advance with a card pull-back still in flight, and a stub that recovers one waits unbooked. The deficits read shows one driver's deficits,
+// open and settled, to its own carrier only, with what is owed summed over all of them however many
+// it lists. Every tenant made here is removed after each test.
 
 const saved = structuredClone(flags);
 // Monday November 2, 2026, 10:00 in Chicago (the fixture carrier's zone), the switch's start day.
@@ -349,6 +350,34 @@ describe("deficit recovery on pay day", () => {
     expect((await app.withTenant(B.tenantId, (q) => readSettlementInput(q, B.driverId, pB))).advances).toEqual([]);
   });
 
+  it("leaves a stub that recovers an advance with a card pull-back still in flight unbooked, writing nothing", async () => {
+    const config = await payConfig(A);
+    const held = await paidAdvance(A, 20_000);
+    const recovered = async () =>
+      (
+        await admin.withTenant(A.tenantId, (q) =>
+          q.query<{ n: string }>(
+            "SELECT CAST(recovered_cents AS text) AS n FROM advances WHERE tenant_id = current_tenant_id() AND id = CAST($1 AS uuid)",
+            [held],
+          ),
+        )
+      )[0]?.n;
+    const s = await stub(A, await period(A, "2026-11-02"), config, [["advance_recovery", -5_000, [{ table: "advances", id: held }]]]);
+    const pull = await addPull(A, held, "issuing");
+    await expect(book(s)).rejects.toThrow("an advance recovery found no paid advance");
+    expect(await stubStatus(s)).toBe("approved");
+    expect(await recovered()).toBe("0");
+    await setPull(pull, "unknown");
+    await expect(book(s)).rejects.toThrow("an advance recovery found no paid advance");
+    expect(await stubStatus(s)).toBe("approved");
+    expect(await recovered()).toBe("0");
+    // Once the pull is no longer live (it failed, taking nothing), the same stub books.
+    await setPull(pull, "failed");
+    expect(await book(s)).toBe(true);
+    expect(await stubStatus(s)).toBe("paid");
+    expect(await recovered()).toBe("5000");
+  });
+
   it("shows one driver's deficits, open and settled, to its own carrier only", async () => {
     const config = await payConfig(A);
     const older = await addDeficit(A, 3_000, { createdAt: "2026-10-30T15:00:00Z", note: "Card 4417 pull-back short" });
@@ -360,6 +389,7 @@ describe("deficit recovery on pay day", () => {
     expect(out.result).toEqual({
       driverId: A.driverId,
       owedCents: 3_500,
+      truncated: false,
       rows: [
         {
           id: older,
@@ -388,10 +418,47 @@ describe("deficit recovery on pay day", () => {
       ],
     });
     const fromB = await app.withTenant(B.tenantId, (q) => getDriverDeficits.run(q, ctx(B), { driverId: A.driverId }, EXTRAS));
-    expect(fromB.result).toEqual({ driverId: A.driverId, owedCents: 0, rows: [] });
+    expect(fromB.result).toEqual({ driverId: A.driverId, owedCents: 0, truncated: false, rows: [] });
     flags.deficitRecovery.enabled = false;
     await expect(
       app.withTenant(A.tenantId, (q) => getDriverDeficits.run(q, ctx(A), { driverId: A.driverId }, EXTRAS)),
     ).rejects.toThrow("switched off");
+  });
+
+  it("sums what is owed over every deficit, and says so when the list shows only the oldest ones", async () => {
+    // n deficits of one dollar each for DRV-1, a minute apart, after the ones already there.
+    const many = (n: number, from: number) =>
+      admin.withTenant(A.tenantId, (q) =>
+        q.execute(
+          `INSERT INTO driver_deficits (id, tenant_id, driver_id, amount_cents, note, source_kind, source_id, named_by,
+             created_at)
+           SELECT gen_random_uuid(), current_tenant_id(), CAST($1 AS uuid), 100, 'Card 4417 load with no payment record',
+                  'ruling', gen_random_uuid(), CAST($2 AS uuid),
+                  CAST('2026-11-02T15:00:00Z' AS timestamptz) + make_interval(mins => i)
+             FROM generate_series($3::int, $3::int + $4::int - 1) AS i`,
+          [A.driverId, A.memberId, from, n],
+        ),
+      );
+    const read = async () =>
+      (await app.withTenant(A.tenantId, (q) => getDriverDeficits.run(q, ctx(A), { driverId: A.driverId }, EXTRAS))).result as {
+        owedCents: number;
+        truncated: boolean;
+        rows: unknown[];
+      };
+    await many(DEFICIT_LIMIT, 0);
+    const full = await read();
+    expect({ owed: full.owedCents, truncated: full.truncated, shown: full.rows.length }).toEqual({
+      owed: DEFICIT_LIMIT * 100,
+      truncated: false,
+      shown: DEFICIT_LIMIT,
+    });
+    // One more, the newest: the list still shows the oldest DEFICIT_LIMIT, and the total counts it.
+    await many(1, DEFICIT_LIMIT);
+    const over = await read();
+    expect({ owed: over.owedCents, truncated: over.truncated, shown: over.rows.length }).toEqual({
+      owed: (DEFICIT_LIMIT + 1) * 100,
+      truncated: true,
+      shown: DEFICIT_LIMIT,
+    });
   });
 });
