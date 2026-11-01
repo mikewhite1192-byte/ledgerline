@@ -78,6 +78,7 @@ function argsFor(plan: CarrierPlan): Record<ReportName, Record<string, string>> 
     ifta_quarter: { asOf: ANCHOR },
     year_end_contractors: { year: ANCHOR.slice(0, 4) },
     trust_meter: { asOf: ANCHOR },
+    driver_insights: { from: "2026-10-06", to: ANCHOR },
   };
 }
 

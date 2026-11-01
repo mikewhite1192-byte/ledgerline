@@ -1,7 +1,7 @@
 import { NextResponse } from "next/server";
 import { flags } from "@/config/flags";
 import { getSession } from "@/lib/auth/session";
-import { parseReportQuery } from "@/lib/reports/args";
+import { parseReportQuery, ReportArgsError } from "@/lib/reports/args";
 import { reportCsv } from "@/lib/reports/csv";
 import { reportForSession } from "@/lib/reports/for-session";
 import { reportSwitchOn } from "@/lib/reports/switch";
@@ -43,6 +43,8 @@ export async function GET(request: Request, { params }: { params: Promise<{ name
     });
   } catch (err) {
     if (err instanceof Error && err.name === "ForbiddenError") return reply({ error: "forbidden" }, 403);
+    // Args the report refused against the carrier's today, before any read: refused like a bad query.
+    if (err instanceof ReportArgsError) return reply({ error: "bad_request" }, 400);
     console.error("report failed:", err instanceof Error ? err.name : "unknown");
     return reply({ error: "unavailable" }, 503);
   }

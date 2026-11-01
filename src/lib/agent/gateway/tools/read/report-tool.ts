@@ -1,5 +1,5 @@
 import type { z } from "zod";
-import { REPORT_ARGS, type ReportRequest } from "../../../../reports/args";
+import { REPORT_ARGS, ReportArgsError, type ReportRequest } from "../../../../reports/args";
 import { computeReport } from "../../../../reports/run";
 import { ReportsOffError, reportSwitchOn } from "../../../../reports/switch";
 import { REPORT_ROW_CAP, reportToolName, type ReportName, type ReportResult } from "../../../../reports/types";
@@ -61,7 +61,16 @@ export function reportTool(
     run: async (q, ctx, a) => {
       if (!reportSwitchOn(name)) throw new ReportsOffError();
       const request = { name, args: a } as ReportRequest;
-      return { result: fitResult(await computeReport(q, request, { now: ctx.now, timeZone: ctx.timeZone })) };
+      try {
+        return { result: fitResult(await computeReport(q, request, { now: ctx.now, timeZone: ctx.timeZone })) };
+      } catch (err) {
+        // Args the report refused against today, before any read: the same answer the schema's
+        // own refusal gives, a field path and a code, never the text.
+        if (err instanceof ReportArgsError) {
+          return { result: { error: "invalid_args", fieldErrors: [{ path: err.path, code: "custom" }] } };
+        }
+        throw err;
+      }
     },
   });
 }

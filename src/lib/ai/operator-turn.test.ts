@@ -215,7 +215,7 @@ describe("the operator's turn through the wrapper", () => {
     expect(refused).toEqual([
       expect.stringMatching(
         new RegExp(
-          `^ai: spark muse-spark-1\\.3 text ${OPERATOR_CALL.purpose} refused too_expensive reserve=2\\d\\.\\d{4}c cap=${OPERATOR_CALL.maxCostCents}c trace=${TURN.traceId}$`,
+          `^ai: spark muse-spark-1\\.3 text ${OPERATOR_CALL.purpose} refused too_expensive reserve=[23]\\d\\.\\d{4}c cap=${OPERATOR_CALL.maxCostCents}c trace=${TURN.traceId}$`,
         ),
       ),
     ]);

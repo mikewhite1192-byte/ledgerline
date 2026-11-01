@@ -16,7 +16,8 @@ import type { DriverView, NotePeriod, PeriodNotes } from "@/lib/driver-notes/vie
 import { figureValueText, profitWeek, type ClosedWeek } from "@/lib/briefs/figures";
 import type { BriefRecord, ProfitView } from "@/lib/briefs/view";
 import type { QuarterBody, QuarterRecord, QuarterState, QuarterView } from "@/lib/briefs/quarter-review";
-import { quarterOf, type Quarter, type QuarterInput } from "@/lib/rules-engine";
+import { quarterOf, type DriverRecord, type Quarter, type QuarterInput } from "@/lib/rules-engine";
+import type { DriverInsightsInput } from "@/lib/reports/driver-insights";
 import { fuelSentence, type SentenceInput } from "@/lib/fuel/help";
 import type { FuelPage, FuelRowView, FuelRunView } from "@/lib/fuel/view";
 import type {
@@ -2848,3 +2849,65 @@ export const RATES_EMPTY: RatesPage = {
   diesel: { pinned: null, suggestion: null },
   states: RATES_PAGE.states.map((s) => ({ ...s, pinned: null, suggestion: null })),
 };
+
+// ---- Drivers list (/drivers) ----
+
+const insightDriver = (over: Partial<DriverRecord> & Pick<DriverRecord, "id" | "code" | "firstName" | "lastName">): DriverRecord => ({
+  email: `${over.code.toLowerCase()}@example.test`,
+  workerType: "owner_operator",
+  payBasis: "percent",
+  perMileCents: null,
+  percentBps: 7_500,
+  flatPerLoadCents: null,
+  advanceLimitCents: null,
+  escrowBalanceCents: 0 as Cents,
+  ownInsurance: false,
+  truckUnit: null,
+  tankGallons: 200,
+  activeFrom: "2026-01-05",
+  activeTo: null,
+  moneyArmed: true,
+  ...over,
+});
+
+// The driver insights' records for the 28 days ending 2026-11-02: two active drivers with pay,
+// loads and an advance owed, and one who left in September with a deficit still open.
+export const DRIVER_INSIGHT_INPUT: DriverInsightsInput = {
+  drivers: [
+    insightDriver({ id: DRIVER_ID, code: "BR-D07", firstName: "Rosa", lastName: "Delgado" }),
+    insightDriver({ id: id(21), code: "BR-D12", firstName: "Marcus", lastName: "Hale", workerType: "company", payBasis: "per_mile", perMileCents: 62 as Cents, percentBps: null, moneyArmed: false }),
+    insightDriver({ id: id(22), code: "BR-D15", firstName: "Lena", lastName: "Ortiz", activeTo: "2026-09-30" }),
+  ],
+  periods: [{ id: PERIOD_ID, periodStart: "2026-10-19", periodEnd: "2026-10-25", status: "paid" }],
+  settlements: [
+    { id: id(23), periodId: PERIOD_ID, driverId: DRIVER_ID, status: "paid", grossCents: 284_000 as Cents, deductionsCents: 61_500 as Cents, netCents: 222_500 as Cents, carryForwardCents: 0 as Cents, exceptionCount: 0, paidAt: "2026-10-31T14:00:00Z" },
+    { id: id(24), periodId: PERIOD_ID, driverId: id(21), status: "paid", grossCents: 198_400 as Cents, deductionsCents: 12_000 as Cents, netCents: 186_400 as Cents, carryForwardCents: 0 as Cents, exceptionCount: 0, paidAt: "2026-10-31T14:00:00Z" },
+  ],
+  lines: [{ settlementId: id(23), kind: "fuel", amountCents: -41_250 as Cents }],
+  loads: [
+    { driverId: DRIVER_ID, deliveredOn: "2026-10-21", loadedMiles: 612, emptyMiles: 48 },
+    { driverId: id(21), deliveredOn: "2026-10-22", loadedMiles: 455, emptyMiles: 30 },
+    { driverId: id(21), deliveredOn: "2026-10-24", loadedMiles: 380, emptyMiles: 22 },
+  ],
+  advances: [
+    {
+      id: id(25),
+      driverId: DRIVER_ID,
+      requestRef: "req-fx-25",
+      requestedAt: "2026-10-28T15:00:00Z",
+      requestedOn: "2026-10-28",
+      amountCents: 25_000 as Cents,
+      feeCents: 0 as Cents,
+      status: "paid",
+      recoveredCents: 0 as Cents,
+      source: "seed",
+      reasonCategory: null,
+      paidAt: "2026-10-28T16:00:00Z",
+      loadId: null,
+      takenBackCents: 0 as Cents,
+    },
+  ],
+  deficits: [{ driverId: id(22), owedCents: 8_000 as Cents }],
+};
+// The drivers with an active card: Rosa only, so Marcus shows "No card".
+export const CARDED_DRIVER_IDS: string[] = [DRIVER_ID];

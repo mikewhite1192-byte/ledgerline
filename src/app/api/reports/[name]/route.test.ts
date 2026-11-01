@@ -1,6 +1,8 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { flags } from "@/config/flags";
 import type { Session } from "@/lib/auth/claims";
+import type { ReportRequest } from "@/lib/reports/args";
+import { insightWindow } from "@/lib/reports/driver-insights";
 import { REPORT_COLUMNS, REPORT_TITLES, type ReportResult } from "@/lib/reports/types";
 import { GET } from "./route";
 
@@ -210,6 +212,25 @@ describe("GET /api/reports/:name", () => {
     expect(lines[1]).toBe(`'=cmd|' /C calc'!A0,${CUSTOMER},1.00,0.00,0.00,0.00,-2.50,-1.50`);
     expect(lines[61]).toBe("Total,,60.00,0.00,0.00,0.00,-150.00,-90.00");
     expect(lines.slice(1, 61).some((l) => l.startsWith("="))).toBe(false);
+  });
+
+  it("refuses a driver insights window the report cannot run as bad args: whole by the query, a lone from against today", async () => {
+    const whole = await get("driver_insights", "?from=2025-11-01&to=2026-11-02");
+    expect(whole.status).toBe(400);
+    expect(await whole.json()).toEqual({ error: "bad_request" });
+    expect(mocks.reportForSession).not.toHaveBeenCalled();
+    // The report checks a lone from against the carrier's today before any read; here today is Nov 2.
+    mocks.reportForSession.mockImplementation(async (_s: Session, request: ReportRequest) => {
+      if (request.name === "driver_insights") insightWindow(request.args, "2026-11-02");
+      return aging(1);
+    });
+    for (const from of ["2026-11-03", "2025-11-01"]) {
+      const response = await get("driver_insights", `?from=${from}`);
+      expect(response.status, from).toBe(400);
+      expect(response.headers.get("cache-control")).toBe("no-store");
+      expect(await response.json()).toEqual({ error: "bad_request" });
+    }
+    expect((await get("driver_insights", "?from=2025-11-02")).status).toBe(200);
   });
 
   it("answers forbidden for a login with no membership, and unavailable for anything else", async () => {

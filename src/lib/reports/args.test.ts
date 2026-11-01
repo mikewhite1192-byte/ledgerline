@@ -39,6 +39,20 @@ describe("report args", () => {
     expect(reportOfTool("report_trust_meter")).toBe("trust_meter");
   });
 
+  it("takes the driver insights over a forward window of at most 366 days, either end optional", () => {
+    expect(parseReportArgs("driver_insights", {})?.args).toEqual({});
+    expect(parseReportArgs("driver_insights", { to: "2026-11-02" })?.args).toEqual({ to: "2026-11-02" });
+    expect(parseReportArgs("driver_insights", { from: "2025-11-02", to: "2026-11-02" })?.args).toEqual({
+      from: "2025-11-02",
+      to: "2026-11-02",
+    });
+    expect(parseReportArgs("driver_insights", { from: "2025-11-01", to: "2026-11-02" })).toBeNull();
+    expect(parseReportArgs("driver_insights", { from: "2026-11-03", to: "2026-11-02" })).toBeNull();
+    expect(parseReportArgs("driver_insights", { from: "2026-02-30" })).toBeNull();
+    expect(parseReportArgs("driver_insights", { from: "2026-10-01", driverId: "x" })).toBeNull();
+    expect(reportOfTool("report_driver_insights")).toBe("driver_insights");
+  });
+
   it("takes the year-end 1099 for a four-digit year from 2000 to 2100, and refuses anything else", () => {
     expect(parseReportArgs("year_end_contractors", {})?.args).toEqual({});
     expect(parseReportArgs("year_end_contractors", { year: "2026" })?.args).toEqual({ year: "2026" });

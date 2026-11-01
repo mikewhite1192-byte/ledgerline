@@ -73,6 +73,7 @@ describe("appNav", () => {
       ["Money in", "/collections", "Collections", false],
       ["Money in", "/cash", "Cash", false],
       ["Money in", "/factoring", "Factoring", false],
+      ["Drivers", "/drivers", "Drivers", false],
       ["Drivers", "/documents", "Documents", false],
       ["Drivers", "/voice-notes", "Voice notes", false],
       ["Drivers", "/clips", "Dock clips", false],
@@ -86,10 +87,11 @@ describe("appNav", () => {
     ]);
   });
 
-  it("keeps Home and Models and spend when every switch is off", () => {
+  it("keeps Home, Drivers and Models and spend when every switch is off", () => {
     setAll(false);
     expect(shape("/models")).toEqual([
       ["Today", "/", "Home", false],
+      ["Drivers", "/drivers", "Drivers", false],
       ["Settings", "/models", "Models and spend", true],
     ]);
   });
@@ -183,7 +185,18 @@ describe("the menu registry", () => {
         .sort();
     expect(byArea("primary")).toEqual(["Home"]);
     expect(byArea("pay")).toEqual(
-      ["Advances", "Card check", "Documents", "Dock clips", "Driver notes", "Money codes", "Pay sweep", "Settlements", "Voice notes"].sort(),
+      [
+        "Advances",
+        "Card check",
+        "Documents",
+        "Dock clips",
+        "Driver notes",
+        "Drivers",
+        "Money codes",
+        "Pay sweep",
+        "Settlements",
+        "Voice notes",
+      ].sort(),
     );
     expect(byArea("billing")).toEqual(["Cash", "Collections", "Factoring", "Invoices", "Payments"].sort());
     expect(byArea("books")).toEqual(

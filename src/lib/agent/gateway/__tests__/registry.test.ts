@@ -38,6 +38,7 @@ const EXPECTED: Record<string, { tier: string; roles: AgentRole[] }> = {
   report_ifta_quarter: { tier: "read", roles: ["operator"] },
   report_year_end_contractors: { tier: "read", roles: ["operator", "auditor"] },
   report_trust_meter: { tier: "read", roles: ["operator"] },
+  report_driver_insights: { tier: "read", roles: ["operator"] },
   get_proposal: { tier: "read", roles: ["auditor"] },
   find_unbilled_detention: { tier: "read", roles: ["operator", "auditor"] },
   propose_detention_charge: { tier: "propose", roles: ["operator"] },
@@ -434,7 +435,7 @@ describe("tool registry", () => {
     expect(toolsFor("operator").map((t) => t.name).filter((n) => n.startsWith("report_"))).toEqual([]);
 
     flags.reportsEnabled = true;
-    expect(toolsFor("operator")).toHaveLength(26);
+    expect(toolsFor("operator")).toHaveLength(27);
     expect(toolsFor("auditor")).toHaveLength(12);
     expect(toolsFor("triage")).toHaveLength(2);
     for (const name of REPORT_TOOLS) expect(toolNamed(name)?.tier, name).toBe("read");
@@ -449,14 +450,14 @@ describe("tool registry", () => {
     const names = () => toolsFor("operator").map((t) => t.name);
     flags.iftaEnabled = false;
     flags.reportsEnabled = true;
-    // Reports on, IFTA off: the five reports as before, and the IFTA tool neither offered nor found.
-    expect(toolsFor("operator")).toHaveLength(26);
+    // Reports on, IFTA off: the six reports as before, and the IFTA tool neither offered nor found.
+    expect(toolsFor("operator")).toHaveLength(27);
     expect(names()).not.toContain(IFTA_TOOL);
     expect(toolNamed(IFTA_TOOL)).toBeNull();
     expect(isToolEnabled(TOOL_REGISTRY[IFTA_TOOL])).toBe(false);
 
     flags.iftaEnabled = true;
-    expect(toolsFor("operator")).toHaveLength(27);
+    expect(toolsFor("operator")).toHaveLength(28);
     expect(names()).toContain(IFTA_TOOL);
     expect(toolNamed(IFTA_TOOL)?.tier).toBe("read");
     expect(toolNamed(IFTA_TOOL)?.roles).toEqual(["operator"]);
@@ -477,7 +478,7 @@ describe("tool registry", () => {
     flags.yearEndEnabled = false;
     flags.reportsEnabled = true;
     // Reports on, year-end off: the reports as before, and the year-end tool neither offered nor found.
-    expect(toolsFor("operator")).toHaveLength(26);
+    expect(toolsFor("operator")).toHaveLength(27);
     expect(toolsFor("auditor")).toHaveLength(12);
     for (const role of AGENT_ROLES) expect(names(role), role).not.toContain(YEAR_END_TOOL);
     expect(toolNamed(YEAR_END_TOOL)).toBeNull();
@@ -485,7 +486,7 @@ describe("tool registry", () => {
 
     flags.yearEndEnabled = true;
     expect(Object.fromEntries(AGENT_ROLES.map((r) => [r, toolsFor(r).length]))).toEqual({
-      operator: 27,
+      operator: 28,
       auditor: 13,
       triage: 2,
     });
@@ -510,7 +511,7 @@ describe("tool registry", () => {
     flags.trustMeterEnabled = false;
     flags.reportsEnabled = true;
     // Reports on, trust meter off: the reports as before, and the tool neither offered nor found.
-    expect(toolsFor("operator")).toHaveLength(26);
+    expect(toolsFor("operator")).toHaveLength(27);
     for (const role of AGENT_ROLES) expect(names(role), role).not.toContain(TRUST_TOOL);
     expect(toolNamed(TRUST_TOOL)).toBeNull();
     expect(isToolEnabled(TOOL_REGISTRY[TRUST_TOOL])).toBe(false);
@@ -523,7 +524,7 @@ describe("tool registry", () => {
 
     flags.trustMeterEnabled = true;
     expect(Object.fromEntries(AGENT_ROLES.map((r) => [r, toolsFor(r).length]))).toEqual({
-      operator: 27,
+      operator: 28,
       auditor: 12,
       triage: 2,
     });
@@ -584,7 +585,7 @@ describe("tool registry", () => {
     flags.trustMeterEnabled = true;
     // Every switch on: every registered tool is offered to each of its roles.
     expect(Object.fromEntries(AGENT_ROLES.map((r) => [r, toolsFor(r).length]))).toEqual({
-      operator: 51,
+      operator: 52,
       auditor: 21,
       triage: 2,
     });
