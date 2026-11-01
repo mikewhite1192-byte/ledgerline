@@ -173,6 +173,35 @@ export function failAdvanceProposal(q: Queryable, proposalId: string, note: stri
   );
 }
 
+// The note an advance's proposal ends with when its load was cancelled before any payout was
+// reserved.
+const LOAD_CANCELLED = "load_cancelled";
+
+// A load cancelled after the approval moved the proposal to executing and before the reserve: the
+// reserve refused it and rolled back, so no ledger row exists. In its own transaction, under the
+// proposal lock (taken first, as the approval takes it), a requested advance on a cancelled load
+// with no ledger row ends its proposal as failed. True when it did; a read that fails is false, and
+// the refusal stands as it was.
+async function endOnCancelledLoad(db: TenantDb, session: Session, proposalId: string, now: Date): Promise<boolean> {
+  try {
+    return await db.withTenant(session.tenantId, async (q) => {
+      await q.query(
+        `SELECT 1 FROM proposals
+          WHERE tenant_id = current_tenant_id() AND id = CAST($1 AS uuid) AND kind = 'advance_payout'
+          FOR UPDATE`,
+        [proposalId],
+      );
+      const advance = await readFlowAdvanceByProposal(q, proposalId);
+      if (advance?.status !== "requested" || !(await loadCancelled(q, advance.loadId))) return false;
+      if ((await payoutRows(q, advance.id)).length > 0) return false;
+      return (await failAdvanceProposal(q, proposalId, LOAD_CANCELLED, now.toISOString())) === 1;
+    });
+  } catch (err) {
+    console.error("advance on a cancelled load could not be ended:", err instanceof Error ? err.name : "unknown");
+    return false;
+  }
+}
+
 // The hooks for one payout attempt to the card resolved for it. A resumed row (reserved by an
 // earlier request) never runs onReserved, so it passes no card and keeps the one it recorded;
 // the destination is always read back by advances.card_id.
@@ -296,6 +325,7 @@ type Prepared =
   // resumes a row an earlier request reserved (that row keeps the card it recorded).
   | { kind: "pay"; advance: FlowAdvance; attempt: number; card: CardOnFile | null }
   | { kind: "stale" }
+  | { kind: "cancelled" }
   | { kind: "failed" }
   | { kind: "parked"; reason: ParkReason };
 
@@ -452,14 +482,17 @@ async function prepare(
 
   let advance = await readFlowAdvanceByProposal(q, p.id);
   // A load cancelled since the card: nothing is paid on it while no payout is reserved (a new
-  // approval, a parked release, or a resume before its first ledger row). The card and any parked
-  // advance are left as they are. A payout already reserved goes on, so its outcome is read back by
-  // its key.
+  // approval, a parked release, or a resume before its first ledger row). A parked advance is left
+  // as it is, for a person to reject. Any other ends the proposal as failed, written and returned
+  // so the commit keeps it: a load is never cancelled back, so the card is never left waiting on
+  // it. A payout already reserved goes on, so its outcome is read back by its key.
   if (
     (await loadCancelled(q, namedLoad(p))) &&
     (advance === null || (await payoutRows(q, advance.id)).length === 0)
   ) {
-    throw new Stop("stale");
+    if (advance?.status === "parked") throw new Stop("stale");
+    await failAdvanceProposal(q, p.id, LOAD_CANCELLED, nowIso);
+    return { kind: "cancelled" };
   }
   if (advance?.status === "parked") return releaseParked(q, p, advance, lock, zone, nowIso, who);
   // Parking, asked now: only a person's approval, with the switch on for this proposal's date.
@@ -671,6 +704,7 @@ export async function executeAdvanceProposal(
     throw err;
   }
   if (prepared.kind === "stale") return no("stale_eligibility");
+  if (prepared.kind === "cancelled") return no("stale");
   if (prepared.kind === "failed") return no("payout_failed", true);
   // Written and committed: the advance waits, parked with its reason, for a person.
   if (prepared.kind === "parked") return no(`parked_${prepared.reason}`);
@@ -680,7 +714,10 @@ export async function executeAdvanceProposal(
   }
 
   const paid = await pay(db, session, advance, attempt, proposal.traceId, deps, "payouts_off", card);
-  if (!paid.ok) return paid;
+  if (!paid.ok) {
+    if (paid.category === "unavailable" && (await endOnCancelledLoad(db, session, proposal.id, now))) return no("stale");
+    return paid;
+  }
   if (paid.state === "confirmed") {
     await legTwo(db, session, advance.id, deps, REQUEST_BUDGET_MS - (steady() - started));
     return { ok: true, proposalId: proposal.id, status: "done", moneyActionId: paid.actionId };
