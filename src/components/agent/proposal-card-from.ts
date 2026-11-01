@@ -179,6 +179,12 @@ const KIND_COPY: Readonly<Record<string, KindCopy>> = {
     next: () =>
       "Pulls it back off the card in test mode. What the card cannot give back on a breakdown is booked as money the driver owes.",
   },
+  deficit_book: {
+    noun: "cancelled trip deficit",
+    ask: (_p, amount) => `Book the ${amount} advance on this cancelled load as money the driver owes?`,
+    next: () =>
+      "Closes the advance and books the same amount as money the driver owes, taken back from later pay. Nothing is paid or sent.",
+  },
 };
 
 export function kindCopy(kind: string): KindCopy {

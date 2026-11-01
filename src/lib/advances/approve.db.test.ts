@@ -1534,6 +1534,94 @@ describe("the advance flow", () => {
       expect(mock.sendCount).toBe(1);
     });
 
+    it("refuses as stale an advance on a load cancelled since, before the approval and after it, paying nothing", async () => {
+      const mine = await loadOf("L-1");
+      const cancelLoad = () =>
+        admin.withTenant(A.tenantId, (q) =>
+          q.execute("UPDATE loads SET status = 'cancelled' WHERE tenant_id = current_tenant_id() AND id = CAST($1 AS uuid)", [mine]),
+        );
+      // Cancelled between the approval and the payout: the executor asks again and pays nothing.
+      const before = await addProposal({ loadId: mine, amountCents: 10_000 });
+      const cancelling: ExecutorRegistry = {
+        advance_payout: Object.assign(
+          async (...args: Parameters<Executor>) => {
+            await cancelLoad();
+            return executeAdvanceProposal(...args);
+          },
+          { precheck: precheckAdvanceProposal },
+        ),
+      };
+      expect(await approve(before, false, { ...deps(), executors: cancelling })).toEqual({
+        ok: false,
+        category: "stale",
+        retryable: false,
+      });
+      // The proposal ends as failed, so the card is never left waiting on a load that cannot come back.
+      expect(await proposalRow(before)).toMatchObject({ status: "failed", decision_note: "load_cancelled" });
+      expect(await flowAdvances()).toEqual([]);
+
+      // Already cancelled: the precheck refuses, and the card stays proposed.
+      const after = await addProposal({ loadId: mine, amountCents: 10_000 });
+      expect(await approve(after)).toEqual({ ok: false, category: "stale", retryable: false });
+      expect(await proposalRow(after)).toMatchObject({ status: "proposed", decided_by: null });
+      expect(await flowAdvances()).toEqual([]);
+      expect(mock.sendCount).toBe(0);
+    });
+
+    it("ends as failed a proposal whose load is cancelled after it moved to executing and before the reserve", async () => {
+      const mine = await loadOf("L-1");
+      const id = await addProposal({ loadId: mine, amountCents: 10_000 });
+      // The load is cancelled once the approval's own transaction has committed (the proposal
+      // executing, the advance requested), before the payout's: the reserve refuses and rolls back.
+      const racing: ExecutorRegistry = {
+        advance_payout: Object.assign(
+          async (...[db, ...rest]: Parameters<Executor>) => {
+            let n = 0;
+            const wrapped: TenantDb = {
+              withTenant: async (tenantId, fn) => {
+                const result = await db.withTenant(tenantId, fn);
+                n += 1;
+                if (n === 1) {
+                  await admin.withTenant(A.tenantId, (q) =>
+                    q.execute("UPDATE loads SET status = 'cancelled' WHERE tenant_id = current_tenant_id() AND id = CAST($1 AS uuid)", [mine]),
+                  );
+                }
+                return result;
+              },
+            };
+            return executeAdvanceProposal(wrapped, ...rest);
+          },
+          { precheck: precheckAdvanceProposal },
+        ),
+      };
+      expect(await approve(id, false, { ...deps(), executors: racing })).toEqual({
+        ok: false,
+        category: "stale",
+        retryable: false,
+      });
+      expect(await proposalRow(id)).toMatchObject({ status: "failed", decision_note: "load_cancelled" });
+      const [adv] = await flowAdvances();
+      expect(await advanceRow(adv.id)).toMatchObject({ status: "requested", load_id: mine });
+      expect(await ledger()).toEqual([]);
+      expect(mock.sendCount).toBe(0);
+    });
+
+    it("refuses as stale a retry of a failed payout once its load is cancelled, sending nothing", async () => {
+      const mine = await loadOf("L-1");
+      const id = await addProposal({ loadId: mine, amountCents: 10_000 });
+      mock.failNext("rate_limited");
+      expect(await approve(id)).toEqual({ ok: false, category: "payout_failed", retryable: true });
+      const [adv] = await flowAdvances();
+      expect(await advanceRow(adv.id)).toMatchObject({ status: "approved", load_id: mine });
+      await admin.withTenant(A.tenantId, (q) =>
+        q.execute("UPDATE loads SET status = 'cancelled' WHERE tenant_id = current_tenant_id() AND id = CAST($1 AS uuid)", [mine]),
+      );
+      expect(await retryAdvancePayout(A.session, adv.id, deps())).toMatchObject({ ok: false, category: "stale" });
+      expect(await ledger()).toEqual([expect.objectContaining({ state: "failed", attempt: 1 })]);
+      expect(await advanceRow(adv.id)).toMatchObject({ status: "approved" });
+      expect(mock.sendCount).toBe(1);
+    });
+
     it("gives the desk the driver's loads of the last 45 days in the carrier's zone, and the engine's suggestion", async () => {
       const mine = await loadOf("L-1");
       const loads = (at: string, as: Fixture = A) => app.withTenant(as.tenantId, (q) => readDeskLoads(q, A.driverId, new Date(at)));

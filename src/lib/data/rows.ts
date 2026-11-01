@@ -118,12 +118,12 @@ export type LoadRow = {
 };
 
 // One move of a load (0071, src/lib/loads/movement.ts). The seed writes one per status change
-// in its history, source seed, naming no evidence.
+// in its history, source seed, naming no evidence. A cancel (0080) is a person's press, never seeded.
 export type LoadEventRow = {
   id: string;
   load_id: string;
   from_status: "planned" | "in_transit";
-  to_status: "in_transit" | "delivered";
+  to_status: "in_transit" | "delivered" | "cancelled";
   source: "driver_photo" | "driver_text" | "driver_voice" | "staff" | "demo_feed" | "seed" | "tms";
   evidence_table: "documents" | "inbound_messages" | "voice_notes" | "tms_status_events" | null;
   evidence_id: string | null;

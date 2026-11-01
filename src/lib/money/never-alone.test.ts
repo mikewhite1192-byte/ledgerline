@@ -64,6 +64,7 @@ describe("the two sets", () => {
       "load_move",
       "card_load_ruling",
       "card_pullback",
+      "deficit_book",
     ]) {
       expect(NEVER_ALONE_KINDS, kind).toContain(kind);
     }

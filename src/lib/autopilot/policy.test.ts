@@ -120,6 +120,8 @@ describe("decide", () => {
     ["kind_never_alone", slipped("card_load_ruling")],
     // A card pull-back takes money back off a driver's card: a named person approves, Auto rule or not.
     ["kind_never_alone", slipped("card_pullback")],
+    // A cancelled trip's deficit books what a driver owes: a named person approves, Auto rule or not.
+    ["kind_never_alone", slipped("deficit_book")],
     ["kind_not_allowed", withProposal({ kind: "advance_payout" })],
     // An inherited name is not a kind the switch allows.
     ["kind_not_allowed", withProposal({ kind: "toString" })],

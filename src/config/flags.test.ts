@@ -128,6 +128,8 @@ const KEPT_OFF = [
   "evalRun.enabled",
   // The card pull-back ships off; its own one-line enable PR turns it on.
   "cardPullback.enabled",
+  // The cancelled trip ships off; its own one-line enable PR turns it on.
+  "cancelledTrip.enabled",
 ] as const;
 
 // The on/off switches in flags.ts, by path: every top-level boolean and every boolean inside a
@@ -377,6 +379,14 @@ describe("flags", () => {
     expect(LOCAL_OFF_ONLY as readonly string[]).toContain("driverAdmin.enabled");
   });
 
+  it("ships the cancelled trip off, with a start date, never a kind the autopilot may approve", () => {
+    expect(flags.cancelledTrip).toEqual({ enabled: false, startDate: "2026-11-02" });
+    expect(isLocalDate(flags.cancelledTrip.startDate)).toBe(true);
+    expect(Object.keys(flags.autopilot.kinds)).not.toContain("deficit_book");
+    // Listed ahead of its release, so the demo-path run keeps it off once it ships on.
+    expect(LOCAL_OFF_ONLY as readonly string[]).toContain("cancelledTrip.enabled");
+  });
+
   it("ships load movement from driver evidence on, with a start date", () => {
     expect(flags.loadMovement).toEqual({ enabled: true, startDate: "2026-10-30" });
     expect(isLocalDate(flags.loadMovement.startDate)).toBe(true);
@@ -447,6 +457,7 @@ describe("flags", () => {
       "advanceParking.enabled",
       "cardPullback.enabled",
       "deficitRecovery.enabled",
+      "cancelledTrip.enabled",
     ];
     const offOnly = LOCAL_OFF_ONLY as readonly string[];
     expect(KEPT_OFF.filter((k) => offOnly.includes(k))).toEqual(KEPT_OFF.filter((k) => armedAhead.includes(k)));
