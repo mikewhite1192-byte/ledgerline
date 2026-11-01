@@ -208,7 +208,7 @@ export async function tellFor(q: Queryable, tenantId: string, proposalId: string
 
 // The desk's pass: a live ask whose proposal no longer waits (a person decided it on its card, it
 // was rejected, expired or retired) or is past proposalMaxAgeDays becomes void; a told line past
-// the same age is done. Returns the asks closed.
+// the same age, and a morning digest (0082) no one closed, is done. Returns the asks closed.
 export async function closeStaleAsks(q: Queryable, now: Date): Promise<number> {
   const cutoff = new Date(now.getTime() - flags.proposalMaxAgeDays * DAY_MS).toISOString();
   const voided = await q.execute(
@@ -221,7 +221,7 @@ export async function closeStaleAsks(q: Queryable, now: Date): Promise<number> {
   );
   const told = await q.execute(
     `UPDATE agent_asks SET status = 'done', updated_at = CAST($1 AS timestamptz)
-      WHERE tenant_id = current_tenant_id() AND kind = 'told' AND status = 'open'
+      WHERE tenant_id = current_tenant_id() AND kind IN ('told', 'digest') AND status = 'open'
         AND created_at < CAST($2 AS timestamptz)`,
     [now.toISOString(), cutoff],
   );
@@ -243,12 +243,14 @@ export async function snoozeAsk(q: Queryable, askId: string, untilIso: string, n
   return n === 1;
 }
 
-// "Got it" on a told line: an open one becomes done (0072 lets a told line move open -> done).
+// "Got it" on a told line or a morning digest: an open one becomes done (0072 lets a told line move
+// open -> done; 0082 lets a digest do the same).
 export async function acknowledgeTold(q: Queryable, askId: string, now: Date): Promise<boolean> {
   if (!isUuid(askId)) return false;
   const n = await q.execute(
     `UPDATE agent_asks SET status = 'done', updated_at = CAST($2 AS timestamptz)
-      WHERE tenant_id = current_tenant_id() AND id = CAST($1 AS uuid) AND kind = 'told' AND status = 'open'`,
+      WHERE tenant_id = current_tenant_id() AND id = CAST($1 AS uuid) AND kind IN ('told', 'digest')
+        AND status = 'open'`,
     [askId, now.toISOString()],
   );
   return n === 1;
@@ -268,9 +270,10 @@ export async function answerAsksFor(q: Queryable, proposalId: string, sub: strin
 
 export type AskView = {
   id: string;
-  kind: "ask" | "told";
-  proposalId: string;
-  proposalKind: string;
+  kind: "ask" | "told" | "digest";
+  // Null on a morning digest, which names no proposal (0082); set on every ask and told line.
+  proposalId: string | null;
+  proposalKind: string | null;
   subjectTable: string;
   subjectId: string;
   text: string;
@@ -284,8 +287,8 @@ export type AskView = {
 type AskRow = {
   id: string;
   kind: string;
-  proposal_id: string;
-  proposal_kind: string;
+  proposal_id: string | null;
+  proposal_kind: string | null;
   subject_table: string;
   subject_id: string;
   text: string;
@@ -296,16 +299,17 @@ type AskRow = {
 };
 
 // Showing now: open, or snoozed and its time has come; an ask only while its proposal still waits
-// (one decided elsewhere hides at once, before the desk's pass voids it).
+// (one decided elsewhere hides at once, before the desk's pass voids it). A morning digest has no
+// proposal, so the proposal is a LEFT JOIN, and an ask (which always has one) still needs it waiting.
 const SHOWING = `(a.status = 'open' OR (a.status = 'snoozed' AND a.snoozed_until <= CAST($1 AS timestamptz)))
-  AND (a.kind = 'told' OR p.status = 'proposed')`;
+  AND (a.kind IN ('told', 'digest') OR p.status = 'proposed')`;
 const SHOWN_AT = `(CASE WHEN a.status = 'snoozed' THEN a.snoozed_until ELSE a.created_at END)`;
 
 const viewOf = (r: AskRow): AskView => ({
   id: r.id,
-  kind: r.kind === "told" ? "told" : "ask",
-  proposalId: r.proposal_id,
-  proposalKind: r.proposal_kind,
+  kind: r.kind === "told" ? "told" : r.kind === "digest" ? "digest" : "ask",
+  proposalId: typeof r.proposal_id === "string" ? r.proposal_id : null,
+  proposalKind: typeof r.proposal_kind === "string" ? r.proposal_kind : null,
   subjectTable: r.subject_table,
   subjectId: r.subject_id,
   text: r.text,
@@ -327,7 +331,7 @@ export async function readShowingAsks(
             a.subject_table, CAST(a.subject_id AS text) AS subject_id, a.text, a.reason, a.status,
             ${ts("a.created_at")} AS created_at, ${ts(SHOWN_AT)} AS shown_at
        FROM agent_asks a
-       JOIN proposals p ON p.tenant_id = a.tenant_id AND p.id = a.proposal_id
+       LEFT JOIN proposals p ON p.tenant_id = a.tenant_id AND p.id = a.proposal_id
       WHERE a.tenant_id = current_tenant_id() AND a.status IN ${LIVE_ASK} AND ${SHOWING}
         AND (CAST($2 AS timestamptz) IS NULL OR ${SHOWN_AT} > CAST($2 AS timestamptz))
       ORDER BY ${SHOWN_AT} DESC, a.id DESC
@@ -336,7 +340,7 @@ export async function readShowingAsks(
   );
   const [counted] = await q.query<{ n: number | string }>(
     `SELECT count(*) AS n FROM agent_asks a
-       JOIN proposals p ON p.tenant_id = a.tenant_id AND p.id = a.proposal_id
+       LEFT JOIN proposals p ON p.tenant_id = a.tenant_id AND p.id = a.proposal_id
       WHERE a.tenant_id = current_tenant_id() AND a.status IN ${LIVE_ASK} AND ${SHOWING}`,
     [input.nowIso],
   );
