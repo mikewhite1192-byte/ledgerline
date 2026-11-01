@@ -1274,6 +1274,11 @@ describe("the advance flow", () => {
   });
 
   describe("with 0027: arming, a named card, a load and a take-back", () => {
+    // These arm a driver with no activation steps on record: the checklist is off here (the outer
+    // hooks restore every flag around each test), and activation.db.test.ts arms with it on.
+    beforeEach(() => {
+      flags.activationChecklist.enabled = false;
+    });
     const sim = () => createFuelCardSimAdapter({ log: () => {} });
     // Read at call time: the databases open in beforeAll.
     const services = () => ({ db: app, clock });
