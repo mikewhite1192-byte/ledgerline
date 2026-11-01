@@ -124,6 +124,8 @@ const KEPT_OFF = [
   "cardPullback.enabled",
   // Deficit recovery on pay day ships off; its own one-line enable PR turns it on.
   "deficitRecovery.enabled",
+  // Adding a driver ships off; its own one-line enable PR turns it on.
+  "driverAdmin.enabled",
 ] as const;
 
 // The on/off switches in flags.ts, by path: every top-level boolean and every boolean inside a
@@ -365,6 +367,11 @@ describe("flags", () => {
     expect(isLocalDate(flags.deficitRecovery.startDate)).toBe(true);
     // Listed ahead of its release, so the demo-path run keeps it off once it ships on.
     expect(LOCAL_OFF_ONLY as readonly string[]).toContain("deficitRecovery.enabled");
+  });
+
+  it("ships driver admin off, and local mode can never turn it on", () => {
+    expect(flags.driverAdmin).toEqual({ enabled: false });
+    expect(LOCAL_OVERRIDABLE as readonly string[]).not.toContain("driverAdmin.enabled");
   });
 
   it("ships load movement from driver evidence on, with a start date", () => {

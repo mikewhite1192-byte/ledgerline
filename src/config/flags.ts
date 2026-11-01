@@ -876,6 +876,11 @@ export type Flags = {
   // nothing, so turning it on never rewrites an old stub. The agent reads deficits with
   // get_driver_deficits only while it is on.
   deficitRecovery: { enabled: boolean; startDate: string };
+  // Driver admin (docs: design-d1-drivers 5.1): an admin adds a driver on the Add driver page
+  // (src/lib/drivers/create.ts, POST /api/drivers). A new driver starts not armed and with no
+  // card, so no money can go to them until an admin adds a card and arms them on their page.
+  // Moves no money. The page, the route and the service each ask enabled themselves.
+  driverAdmin: { enabled: boolean };
 };
 
 // One kind's ceiling over the owner's autopilot limits: one item, and the carrier's local day.
@@ -1153,6 +1158,8 @@ export const flags: Flags = {
   cardPullback: { enabled: false, startDate: "2026-11-02" },
   // Off until its own one-line enable PR. Pay math only; nothing moves money on its own.
   deficitRecovery: { enabled: false, startDate: "2026-11-02" },
+  // Off until its own one-line enable PR. Adds a driver (not armed, no card); moves no money.
+  driverAdmin: { enabled: false },
 };
 
 applyLocalOverrides(flags);
