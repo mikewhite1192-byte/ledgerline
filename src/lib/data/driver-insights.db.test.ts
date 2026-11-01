@@ -114,10 +114,11 @@ async function carrier(tag: string, timezone: string, scale: number): Promise<Ca
          VALUES (CAST($1 AS uuid), current_tenant_id(), CAST($2 AS uuid), $3, $4, 'Line', $5, CAST('[]' AS jsonb))`,
         [randomUUID(), settlement, seq, kind, cents],
       );
-    await line(stubs.paidIn, 1, "fuel", 4_000 * scale);
-    await line(stubs.paidIn, 2, "insurance", 3_000 * scale);
-    await line(stubs.approvedIn, 1, "fuel", 6_000 * scale);
-    await line(stubs.paidBefore, 1, "fuel", 5_000 * scale);
+    // Deduction lines are negative, the way the engine writes them.
+    await line(stubs.paidIn, 1, "fuel", -4_000 * scale);
+    await line(stubs.paidIn, 2, "insurance", -3_000 * scale);
+    await line(stubs.approvedIn, 1, "fuel", -6_000 * scale);
+    await line(stubs.paidBefore, 1, "fuel", -5_000 * scale);
     let n = 0;
     const load = (driverId: string | null, status: string, deliveredOn: string | null, loaded: number, empty: number) =>
       ins(
@@ -221,7 +222,7 @@ describe("driver insights reads", () => {
     expect(rows.settlement_periods.map((p) => p.period_end).sort()).toEqual(["2026-10-06", "2026-11-02"]);
     expect(rows.settlements.every((s) => s.status === "paid")).toBe(true);
     expect(rows.settlements.map((s) => s.net_cents).sort((x, y) => x - y)).toEqual([7_000, 50_000]);
-    expect(rows.settlement_lines.map((l) => [l.settlement_id, l.kind, l.amount_cents])).toEqual([[A.stubs.paidIn, "fuel", 4_000]]);
+    expect(rows.settlement_lines.map((l) => [l.settlement_id, l.kind, l.amount_cents])).toEqual([[A.stubs.paidIn, "fuel", -4_000]]);
   });
 
   it("reads loads by delivered date inside the window, delivered or invoiced only", async () => {
@@ -299,5 +300,9 @@ describe("driver insights reads", () => {
     }
     const bad = await callTool(ctx(B), call({ from: "2025-01-01", to: "2026-11-02" }), { db: app, clock: () => NOW.getTime() });
     expect(bad.decision).not.toBe("allowed");
+    expect(bad.result).toEqual({ error: "invalid_args", fieldErrors: [{ path: "to", code: "custom" }] });
+    // A lone from after the carrier's today (still Nov 2 in New York) gets the same answer, not a failure.
+    const lone = await callTool(ctx(B), call({ from: "2026-11-03" }), { db: app, clock: () => NOW.getTime() });
+    expect(lone.result).toEqual({ error: "invalid_args", fieldErrors: [{ path: "from", code: "custom" }] });
   });
 });

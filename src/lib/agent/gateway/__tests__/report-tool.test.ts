@@ -1,4 +1,5 @@
-import { describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it } from "vitest";
+import { flags } from "../../../../config/flags";
 import { IFTA_SAMPLE_RATES } from "../../../../config/ifta-sample-rates";
 import { computeIftaQuarter } from "../../../reports/ifta-quarter";
 import { computeReport } from "../../../reports/run";
@@ -7,6 +8,7 @@ import { c, load } from "../../../rules-engine/test-records";
 import type { FuelPurchaseRecord } from "../../../rules-engine/types";
 import { centsIn, maskFigures } from "../../operator/figures";
 import { MAX_RESULT_CHARS } from "../index";
+import { reportDriverInsights } from "../tools/read/report-driver-insights";
 import { fitResult, REPORT_RESULT_CHARS } from "../tools/read/report-tool";
 import { TENANT } from "./fake-db";
 import { blueRidgePlan, planDb } from "./plan-db";
@@ -124,5 +126,28 @@ describe("fitResult", () => {
     const bare: Record<string, unknown> = { ...fitted };
     delete bare.largestTaxDue;
     expect(maskFigures(note, centsIn(bare)).masked).toBe(1);
+  });
+});
+
+describe("report_driver_insights", () => {
+  const saved = flags.reportsEnabled;
+  afterEach(() => {
+    flags.reportsEnabled = saved;
+  });
+  // 5 PM UTC on Nov 2 is still Nov 2 in the carrier's zone.
+  const ctx = { now: CLOCK.now, timeZone: CLOCK.timeZone } as Parameters<typeof reportDriverInsights.run>[1];
+  const EXTRAS = { screen: null, limit: null };
+  const run = (args: Record<string, string>) =>
+    planDb(plan).withTenant(TENANT, (q) => reportDriverInsights.run(q, ctx, args, EXTRAS));
+
+  it("answers a lone from after today or 366 days or more back as invalid args, the way the schema answers a bad window", async () => {
+    flags.reportsEnabled = true;
+    for (const from of ["2026-11-03", "2025-11-01"]) {
+      expect(await run({ from }), from).toEqual({
+        result: { error: "invalid_args", fieldErrors: [{ path: "from", code: "custom" }] },
+      });
+    }
+    const ok = (await run({ from: "2025-11-02" })).result as { report: string; period: unknown };
+    expect(ok).toMatchObject({ report: "driver_insights", period: { start: "2025-11-02", end: "2026-11-02" } });
   });
 });

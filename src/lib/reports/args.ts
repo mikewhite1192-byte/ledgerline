@@ -9,6 +9,7 @@ import { isReportName, REPORT_FORMATS, type ReportFormat, type ReportName } from
 export const MAX_MARGIN_DAYS = 92;
 // The driver insights window: at most a year and a day (366 days, so a leap year fits).
 export const MAX_INSIGHT_DAYS = 366;
+export const INSIGHT_WINDOW_RULE = "the window must run forward and cover at most 366 days";
 
 const DATE = /^\d{4}-\d{2}-\d{2}$/;
 const dateArg = () => z.string().regex(DATE).refine(isLocalDate, { message: "not a calendar date" });
@@ -40,7 +41,8 @@ const marginArgs = z
   );
 
 // Either end may be left out (the report fills the 28 days ending today); when both are given the
-// window must run forward and cover at most 366 days. A one-sided window is checked by the report.
+// window must run forward and cover at most 366 days. A one-sided window is checked by the report
+// against today in the carrier's zone, which refuses a bad one with ReportArgsError.
 const insightArgs = z
   .strictObject({ from: dateArg().optional(), to: dateArg().optional() })
   .refine(
@@ -51,8 +53,22 @@ const insightArgs = z
       const days = daysBetween(a.from, a.to);
       return days >= 0 && days < MAX_INSIGHT_DAYS;
     },
-    { message: "the window must run forward and cover at most 366 days", path: ["to"] },
+    { message: INSIGHT_WINDOW_RULE, path: ["to"] },
   );
+
+// Args the schema let through that a report refuses once it knows today in the carrier's zone (a
+// lone driver insights `from` after today or 366 days or more before it). Thrown before any read;
+// the tool answers it as invalid args and the route as a bad request, the way the schema's own
+// refusal is answered. A RangeError, so any other caller still reads it as one.
+export class ReportArgsError extends RangeError {
+  readonly path: string;
+
+  constructor(path: string, message: string) {
+    super(message);
+    this.name = "ReportArgsError";
+    this.path = path;
+  }
+}
 
 export const REPORT_ARGS = {
   ar_aging: z.strictObject({ asOf: dateArg().optional() }),

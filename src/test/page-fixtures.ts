@@ -2883,7 +2883,7 @@ export const DRIVER_INSIGHT_INPUT: DriverInsightsInput = {
     { id: id(23), periodId: PERIOD_ID, driverId: DRIVER_ID, status: "paid", grossCents: 284_000 as Cents, deductionsCents: 61_500 as Cents, netCents: 222_500 as Cents, carryForwardCents: 0 as Cents, exceptionCount: 0, paidAt: "2026-10-31T14:00:00Z" },
     { id: id(24), periodId: PERIOD_ID, driverId: id(21), status: "paid", grossCents: 198_400 as Cents, deductionsCents: 12_000 as Cents, netCents: 186_400 as Cents, carryForwardCents: 0 as Cents, exceptionCount: 0, paidAt: "2026-10-31T14:00:00Z" },
   ],
-  lines: [{ settlementId: id(23), kind: "fuel", amountCents: 41_250 as Cents }],
+  lines: [{ settlementId: id(23), kind: "fuel", amountCents: -41_250 as Cents }],
   loads: [
     { driverId: DRIVER_ID, deliveredOn: "2026-10-21", loadedMiles: 612, emptyMiles: 48 },
     { driverId: id(21), deliveredOn: "2026-10-22", loadedMiles: 455, emptyMiles: 30 },

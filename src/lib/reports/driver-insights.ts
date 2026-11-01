@@ -1,6 +1,7 @@
 import {
   compareText,
   outstandingCents,
+  sub,
   sum,
   type AdvanceRecord,
   type DriverRecord,
@@ -8,7 +9,7 @@ import {
   type SettlementRecord,
 } from "../rules-engine";
 import { addDays, assertLocalDate, daysBetween, type LocalDate, type Period } from "../time/local-date";
-import { MAX_INSIGHT_DAYS } from "./args";
+import { INSIGHT_WINDOW_RULE, MAX_INSIGHT_DAYS, ReportArgsError } from "./args";
 import { byId, driverCell, mustGet, reportOf, WORKER_WORDS } from "./build";
 import type { CentsLeader, CountLeader, DriverLeaders, ReportResult, ReportRow } from "./types";
 
@@ -65,8 +66,14 @@ export function assertInsightWindow(window: Period): Period {
   return { start, end };
 }
 
-// The window the args name: `to` default asOf, `from` default the 28 days ending on `to`.
+// The window the args name: `to` default asOf, `from` default the 28 days ending on `to`. The
+// schema checks a window given whole and a lone `to` always gives 28 days, so only a lone `from`
+// can name a bad one here (after asOf, or 366 days or more before it): refused as the args' fault.
 export function insightWindow(args: { from?: LocalDate; to?: LocalDate }, asOf: LocalDate): Period {
+  if (args.from !== undefined && args.to === undefined) {
+    const days = daysBetween(assertLocalDate(args.from, "window start"), assertLocalDate(asOf, "as of"));
+    if (days < 0 || days >= MAX_INSIGHT_DAYS) throw new ReportArgsError("from", INSIGHT_WINDOW_RULE);
+  }
   const end = args.to ?? asOf;
   const start = args.from ?? addDays(assertLocalDate(end, "window end"), -(INSIGHT_DEFAULT_DAYS - 1));
   return assertInsightWindow({ start, end });
@@ -130,12 +137,15 @@ export function driverInsightsOf(
     t.deductionsCents = sum([t.deductionsCents, s.deductionsCents]);
     t.netCents = sum([t.netCents, s.netCents]);
   }
-  // Deduction lines are stored positive.
+  // The engine stores a deduction line negative (the stub's deductionsCents is their sum as a
+  // positive number), so fuel deducted is the lines negated. A positive fuel line is not one the
+  // engine writes: refused, never counted as fuel given back.
   for (const l of input.lines) {
     const s = l.kind === "fuel" ? paid.get(l.settlementId) : undefined;
     if (!s) continue;
+    if (l.amountCents > 0) throw new RangeError("a fuel line is not a deduction");
     const t = touch(s.driverId);
-    t.fuelCents = sum([t.fuelCents, l.amountCents]);
+    t.fuelCents = sum([t.fuelCents, sub(0, l.amountCents)]);
   }
   for (const l of input.loads) {
     if (!within(assertLocalDate(l.deliveredOn, "delivered on"), w)) continue;

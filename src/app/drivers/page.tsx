@@ -10,10 +10,12 @@ import { Input } from "@/components/ui/input";
 import { cn } from "@/lib/cn";
 import { DbError } from "@/lib/db";
 import { readCardedDrivers, readDriverInsightInput } from "@/lib/data/driver-insights";
+import { ReadLimitError } from "@/lib/data/read";
 import { recordHref } from "@/lib/records/href";
 import { WORKER_WORDS } from "@/lib/reports/build";
 import { driverInsightsOf, type DriverInsight } from "@/lib/reports/driver-insights";
 import type { DriverLeaders } from "@/lib/reports/types";
+import { InputError } from "@/lib/rules-engine";
 import {
   ARMED,
   ARMED_WORDS,
@@ -65,8 +67,16 @@ export default async function DriversPage({
     });
   } catch (err) {
     if (err instanceof ForbiddenError) problem = "forbidden";
-    else if (err instanceof DbError) problem = "unreadable";
-    else throw err;
+    // A failed read, a read past its row bound, an amount that is not whole cents, or a record the
+    // engine refuses: the drivers cannot be shown, never shown as empty.
+    else if (
+      err instanceof DbError ||
+      err instanceof ReadLimitError ||
+      err instanceof RangeError ||
+      err instanceof InputError
+    ) {
+      problem = "unreadable";
+    } else throw err;
   }
   if (!view) return <NoCarrierPage problem={problem ?? "unreadable"} />;
 

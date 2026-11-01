@@ -1,7 +1,8 @@
 import { describe, expect, it } from "vitest";
 import type { SettlementPeriodRecord, SettlementRecord } from "../rules-engine";
-import { advance, c, companyDriver, driver } from "../rules-engine/test-records";
-import { parseReportArgs } from "./args";
+import { settleDriver } from "../rules-engine/settlement";
+import { advance, BLUE_RIDGE, c, companyDriver, driver, item, load } from "../rules-engine/test-records";
+import { parseReportArgs, ReportArgsError } from "./args";
 import {
   assertInsightWindow,
   computeDriverInsights,
@@ -67,6 +68,23 @@ describe("insightWindow", () => {
     expect(() => assertInsightWindow({ start: "2026-02-30", end: "2026-03-02" })).toThrow();
   });
 
+  it("refuses a lone from after today or 366 days or more back as the args' fault, and takes a lone to anywhere", () => {
+    for (const from of ["2026-11-03", "2025-11-01"]) {
+      let thrown: unknown = null;
+      try {
+        insightWindow({ from }, AS_OF);
+      } catch (err) {
+        thrown = err;
+      }
+      expect(thrown, from).toBeInstanceOf(ReportArgsError);
+      expect((thrown as ReportArgsError).path).toBe("from");
+    }
+    expect(insightWindow({ from: AS_OF }, AS_OF)).toEqual({ start: AS_OF, end: AS_OF });
+    expect(insightWindow({ from: "2025-11-02" }, AS_OF)).toEqual({ start: "2025-11-02", end: AS_OF });
+    expect(insightWindow({ to: "2027-01-31" }, AS_OF)).toEqual({ start: "2027-01-04", end: "2027-01-31" });
+    expect(insightWindow({ to: "2024-01-31" }, AS_OF)).toEqual({ start: "2024-01-04", end: "2024-01-31" });
+  });
+
   it("parses the same rule from the args: forward, at most 366 days, either end optional", () => {
     expect(parseReportArgs("driver_insights", {})).not.toBeNull();
     expect(parseReportArgs("driver_insights", { from: "2026-10-01" })).not.toBeNull();
@@ -102,16 +120,69 @@ describe("driverInsightsOf", () => {
         stub({ id: "s-draft", periodId: "p1", driverId: D.id, status: "draft" }),
       ],
       lines: [
-        { settlementId: "s-paid", kind: "fuel", amountCents: 12_345 },
-        { settlementId: "s-paid", kind: "fuel", amountCents: 655 },
-        { settlementId: "s-paid", kind: "other_deduction", amountCents: 9_999 },
-        { settlementId: "s-approved", kind: "fuel", amountCents: 7_000 },
+        { settlementId: "s-paid", kind: "fuel", amountCents: -12_345 },
+        { settlementId: "s-paid", kind: "fuel", amountCents: -655 },
+        { settlementId: "s-paid", kind: "other_deduction", amountCents: -9_999 },
+        { settlementId: "s-approved", kind: "fuel", amountCents: -7_000 },
       ],
     });
     const rows = driverInsightsOf(input, WINDOW, AS_OF).rows;
     expect(rows.find((r) => r.driver.id === A.id)).toMatchObject({ netCents: 80_000, fuelCents: 13_000 });
     expect(rows.find((r) => r.driver.id === B.id)).toMatchObject({ netCents: 0, grossCents: 0, fuelCents: 0 });
     expect(rows.find((r) => r.driver.id === D.id)).toMatchObject({ netCents: 0 });
+  });
+
+  it("refuses a positive fuel line on a paid stub: the engine writes deductions negative", () => {
+    const input = empty({
+      periods: [period("p1", "2026-10-20")],
+      settlements: [stub({ id: "s-paid", periodId: "p1", driverId: A.id })],
+      lines: [{ settlementId: "s-paid", kind: "fuel", amountCents: 500 }],
+    });
+    expect(() => driverInsightsOf(input, WINDOW, AS_OF)).toThrow(RangeError);
+  });
+
+  it("reads fuel deducted as a positive figure and names its leader over stubs the engine settled", () => {
+    const week = { start: "2026-10-26", end: "2026-11-01" };
+    const settled = [
+      { driver: A, fuel: 28_640, stubId: "s-eng-a" },
+      { driver: D, fuel: 10_000, stubId: "s-eng-d" },
+    ].map(({ driver: d, fuel, stubId }) => {
+      const result = settleDriver({
+        config: BLUE_RIDGE,
+        driver: d,
+        period: week,
+        loads: [load({ id: `l-${d.id}`, driverId: d.id, linehaulCents: c(200_000) })],
+        days: [],
+        items: [item({ id: `fuel-${d.id}`, driverId: d.id, kind: "fuel", amountCents: c(fuel) })],
+        schedules: [],
+        advances: [],
+        escrowBalanceCents: c(0),
+      });
+      const record = stub({
+        id: stubId,
+        periodId: "p-eng",
+        driverId: d.id,
+        grossCents: result.grossCents,
+        deductionsCents: result.deductionsCents,
+        netCents: result.netCents,
+        carryForwardCents: result.carryForwardCents,
+      });
+      return { record, lines: result.lines.map((l) => ({ settlementId: stubId, kind: l.kind, amountCents: l.amountCents })) };
+    });
+    // The engine wrote the fuel line negative; the report reads it back as fuel deducted.
+    expect(settled[0].lines.filter((l) => l.kind === "fuel").map((l) => l.amountCents)).toEqual([-28_640]);
+    const input = empty({
+      periods: [period("p-eng", week.end)],
+      settlements: settled.map((s) => s.record),
+      lines: settled.flatMap((s) => s.lines),
+    });
+    const { rows, leaders } = driverInsightsOf(input, WINDOW, AS_OF);
+    const a = rows.find((r) => r.driver.id === A.id)!;
+    expect(a.fuelCents).toBe(28_640);
+    expect(a.deductionsCents).toBe(settled[0].record.deductionsCents);
+    expect(a.deductionsCents).toBeGreaterThanOrEqual(28_640);
+    expect(rows.find((r) => r.driver.id === D.id)?.fuelCents).toBe(10_000);
+    expect(leaders.mostFuel).toEqual({ driver: expect.objectContaining({ id: A.id }), valueCents: 28_640 });
   });
 
   it("counts loads and miles by delivered date inside the window", () => {
@@ -217,7 +288,7 @@ describe("computeDriverInsights", () => {
     const input = empty({
       periods: [period("p1", "2026-10-20")],
       settlements: [stub({ id: "s1", periodId: "p1", driverId: B.id })],
-      lines: [{ settlementId: "s1", kind: "fuel", amountCents: 6_000 }],
+      lines: [{ settlementId: "s1", kind: "fuel", amountCents: -6_000 }],
       loads: [{ driverId: B.id, deliveredOn: "2026-10-15", loadedMiles: 300, emptyMiles: 12 }],
       advances: [advance({ id: "a1", driverId: A.id, requestedOn: "2026-10-30", amountCents: c(15_000) })],
     });

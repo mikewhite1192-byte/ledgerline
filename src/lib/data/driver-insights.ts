@@ -1,5 +1,6 @@
 import type { Queryable } from "../db";
 import { assertInsightWindow, type DriverInsightsInput, type InsightDeficit } from "../reports/driver-insights";
+import { InputError } from "../rules-engine";
 import { isUuid } from "../uuid";
 import type { Period } from "../time/local-date";
 import { DELIVERED_BETWEEN, DELIVERED_PAGING, ReadLimitError, readTable, readWherePaged, type Paging } from "./read";
@@ -48,8 +49,8 @@ export async function readDeficitsOwed(q: Queryable): Promise<InsightDeficit[]> 
   if (rows.length > DEFICITS_MAX) throw new ReadLimitError();
   return rows.map((r) => {
     const owed = typeof r.owed_cents === "string" ? Number(r.owed_cents) : NaN;
-    if (!isUuid(r.driver_id)) throw new Error("a deficit row names no driver");
-    if (!Number.isSafeInteger(owed) || owed < 0) throw new Error("a deficit total is not whole cents");
+    if (!isUuid(r.driver_id)) throw new InputError("a deficit row names no driver");
+    if (!Number.isSafeInteger(owed) || owed < 0) throw new InputError("a deficit total is not whole cents");
     return { driverId: r.driver_id.toLowerCase(), owedCents: owed };
   });
 }
@@ -109,11 +110,12 @@ export const CARDED_SQL =
   "SELECT DISTINCT CAST(driver_id AS text) AS driver_id FROM driver_cards" +
   " WHERE tenant_id = current_tenant_id() AND status = 'active' ORDER BY driver_id";
 
+// No LIMIT: the one-active-card-per-driver unique index (migration 0017) bounds it to the drivers.
 export async function readCardedDrivers(q: Queryable): Promise<Set<string>> {
   const rows = await q.query<{ driver_id: unknown }>(CARDED_SQL, []);
   return new Set(
     rows.map((r) => {
-      if (!isUuid(r.driver_id)) throw new Error("a card row names no driver");
+      if (!isUuid(r.driver_id)) throw new InputError("a card row names no driver");
       return r.driver_id.toLowerCase();
     }),
   );
