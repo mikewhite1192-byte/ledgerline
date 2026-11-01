@@ -7,6 +7,7 @@ import {
   insertStatements,
   MAX_PARAMS_PER_INSERT,
   MAX_STATEMENT_CHARS,
+  WIPE_MARK_SQL,
 } from "./writer";
 
 const customer = (i: number) => ({
@@ -155,15 +156,16 @@ describe("insertRows", () => {
 });
 
 describe("deleteTenantRows", () => {
-  it("deletes the current tenant's rows from every table, children first", async () => {
+  it("marks the transaction as the tenant's wipe, then deletes its rows from every table, children first", async () => {
     const { q, seen } = fakeQ(() => 3);
     const out = await deleteTenantRows(q);
-    expect(seen.map((s) => s.sql)).toEqual(
-      [...TENANT_TABLES]
+    expect(seen.map((s) => s.sql)).toEqual([
+      WIPE_MARK_SQL,
+      ...[...TENANT_TABLES]
         .reverse()
         .filter((t) => !APP_KEEPS_TABLES.has(t))
         .map((t) => `DELETE FROM ${t} WHERE tenant_id = current_tenant_id()`),
-    );
+    ]);
     expect(Object.keys(out).sort()).toEqual([...TENANT_TABLES].sort());
     expect(Object.entries(out).every(([t, n]) => n === (APP_KEEPS_TABLES.has(t as never) ? 0 : 3))).toBe(true);
   });

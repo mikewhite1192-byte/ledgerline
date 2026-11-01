@@ -5,6 +5,7 @@ import { createMockPaymentAdapter } from "../adapters/payment/mock";
 import type { AccountingAdapter, PaymentAdapter, SendOutcome } from "../adapters/types";
 import type { Session } from "../auth/claims";
 import { readSettlementInput } from "../data/read";
+import { WIPE_MARK_SQL } from "../data/writer";
 import { createPgDb } from "../db/pg";
 import { adminUrl, appUrl } from "../db/test-urls";
 import type { Db, Param } from "../db/types";
@@ -70,6 +71,12 @@ const adminWrite = (t: Carrier, sql: string, params: Param[] = []) =>
   admin.withTenant(t.id, (q) => q.execute(sql, params));
 const countOf = async (t: Carrier, sql: string, params: Param[] = []) =>
   Number((await adminRows<{ n: string }>(t, sql, params))[0].n);
+// App writes, held by row security and the settlements delete guard (0087).
+const appWrite = (t: Carrier, sql: string, params: Param[] = []) =>
+  app.withTenant(t.id, (q) => q.execute(sql, params));
+const DELETE_SETTLEMENT_SQL = "DELETE FROM settlements WHERE tenant_id = current_tenant_id() AND id = CAST($1 AS uuid)";
+const settlementCount = (t: Carrier, id: string) =>
+  countOf(t, "SELECT count(*) AS n FROM settlements WHERE tenant_id = $1 AND id = CAST($2 AS uuid)", [t.id, id]);
 
 function driverOf(t: Carrier, code: string): string {
   const d = t.plan.rows.drivers.find((x) => x.code === code);
@@ -115,6 +122,14 @@ async function settlementOf(t: Carrier, code: string): Promise<SettlementRow> {
   ]);
   if (!row) throw new Error(`no settlement for ${code}`);
   return row;
+}
+
+// One unparked draft of the open week, picked by id.
+async function unparkedDraftOf(t: Carrier): Promise<SettlementRow> {
+  const drafts = (await draftsOf(t)).filter((d) => d.status === "draft" && d.parked_reason === null);
+  const [first] = drafts.sort((a, b) => (a.id < b.id ? -1 : a.id > b.id ? 1 : 0));
+  if (!first) throw new Error(`no unparked draft for ${t.carrier.slug}`);
+  return first;
 }
 
 type CardRow = {
@@ -843,9 +858,11 @@ describe("settlements against a seeded database", () => {
   it("retires a waiting card whose paystub an interrupted run removed, and the rerun makes a new one", async () => {
     const s = await settlementOf(BR, "BR-D16");
     const card = await openCard(BR, "BR-D16");
-    // What a run that stopped after removing the draft and before retiring its card leaves.
-    await adminWrite(BR, "DELETE FROM settlement_lines WHERE tenant_id = $1 AND settlement_id = CAST($2 AS uuid)", [BR.id, s.id]);
-    expect(await adminWrite(BR, "DELETE FROM settlements WHERE tenant_id = $1 AND id = CAST($2 AS uuid)", [BR.id, s.id])).toBe(1);
+    // What a run that stopped after removing the draft and before retiring its card leaves. The
+    // app role removes it, as the run does: a draft is the one settlement it may delete.
+    expect(s.status).toBe("draft");
+    await appWrite(BR, "DELETE FROM settlement_lines WHERE tenant_id = current_tenant_id() AND settlement_id = CAST($1 AS uuid)", [s.id]);
+    expect(await appWrite(BR, DELETE_SETTLEMENT_SQL, [s.id])).toBe(1);
     expect((await cardById(BR, card.id)).status).toBe("proposed");
 
     expect((await run(BR)).ok).toBe(true);
@@ -855,6 +872,58 @@ describe("settlements against a seeded database", () => {
     expect(fresh.subject_id).toBe((await settlementOf(BR, "BR-D16")).id);
     expect(fresh.subject_id).not.toBe(s.id);
   }, 60_000);
+
+  it("refuses an app delete of a paid settlement, and the row stays", async () => {
+    const [paid] = await adminRows<{ id: string }>(
+      BR,
+      "SELECT id FROM settlements WHERE tenant_id = $1 AND status = 'paid' ORDER BY id LIMIT 1",
+      [BR.id],
+    );
+    if (!paid) throw new Error("BR has no paid settlement");
+    expect(await sqlStateOf(appWrite(BR, DELETE_SETTLEMENT_SQL, [paid.id]))).toBe("23514");
+    expect(await settlementCount(BR, paid.id)).toBe(1);
+  });
+
+  it("refuses an app delete of an approved settlement, and the row stays", async () => {
+    const s = await unparkedDraftOf(BR);
+    const setStatus = (status: string) =>
+      adminWrite(BR, "UPDATE settlements SET status = $3 WHERE tenant_id = $1 AND id = CAST($2 AS uuid)", [BR.id, s.id, status]);
+    expect(await setStatus("approved")).toBe(1);
+    try {
+      expect(await sqlStateOf(appWrite(BR, DELETE_SETTLEMENT_SQL, [s.id]))).toBe("23514");
+      expect(await settlementCount(BR, s.id)).toBe(1);
+    } finally {
+      expect(await setStatus("draft")).toBe(1);
+    }
+  });
+
+  it("deletes nothing when one carrier names another carrier's draft", async () => {
+    const s = await unparkedDraftOf(BR);
+    expect(await appWrite(PW, DELETE_SETTLEMENT_SQL, [s.id])).toBe(0);
+    expect(await settlementCount(BR, s.id)).toBe(1);
+  });
+
+  it("lets the wipe mark through only for its own carrier, and never past its own transaction", async () => {
+    const [paid] = await adminRows<{ id: string }>(
+      BR,
+      "SELECT id FROM settlements WHERE tenant_id = $1 AND status = 'paid' ORDER BY id LIMIT 1",
+      [BR.id],
+    );
+    if (!paid) throw new Error("BR has no paid settlement");
+    // A transaction that set the mark and ended leaves nothing behind for the next one.
+    await app.withTenant(BR.id, (q) => q.execute(WIPE_MARK_SQL));
+    expect(await sqlStateOf(appWrite(BR, DELETE_SETTLEMENT_SQL, [paid.id]))).toBe("23514");
+    // A mark naming another carrier lets nothing through.
+    expect(
+      await sqlStateOf(
+        app.withTenant(BR.id, async (q) => {
+          await q.execute("SELECT set_config('app.tenant_wipe', $1, true)", [PW.id]);
+          return q.execute(DELETE_SETTLEMENT_SQL, [paid.id]);
+        }),
+      ),
+    ).toBe("23514");
+    expect(await settlementCount(BR, paid.id)).toBe(1);
+  });
 
   it("keeps a confirmed payout recorded when booking its paystub fails, and Retry books it without paying again", async () => {
     const s = await settlementOf(BR, "BR-D21");
