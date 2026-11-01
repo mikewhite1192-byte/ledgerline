@@ -111,6 +111,9 @@ const RELEASED_ON = [
   // Released by the owner (D-074, D-077, 2026-11-01): an admin adds, deactivates and reactivates a
   // driver. A new driver starts not armed with no card; deactivating disarms. Moves no money.
   "driverAdmin.enabled",
+  // Released by the owner (D-056, D-077, 2026-11-01): a person cancels a load, and a person approves
+  // the card that books its paid advance as money the driver owes. Never the autopilot.
+  "cancelledTrip.enabled",
 ] as const;
 
 // What stays off, each waiting on a missing piece or an outside send the owner has not released.
@@ -128,8 +131,6 @@ const KEPT_OFF = [
   "evalRun.enabled",
   // The card pull-back ships off; its own one-line enable PR turns it on.
   "cardPullback.enabled",
-  // The cancelled trip ships off; its own one-line enable PR turns it on.
-  "cancelledTrip.enabled",
 ] as const;
 
 // The on/off switches in flags.ts, by path: every top-level boolean and every boolean inside a
@@ -379,11 +380,11 @@ describe("flags", () => {
     expect(LOCAL_OFF_ONLY as readonly string[]).toContain("driverAdmin.enabled");
   });
 
-  it("ships the cancelled trip off, with a start date, never a kind the autopilot may approve", () => {
-    expect(flags.cancelledTrip).toEqual({ enabled: false, startDate: "2026-11-02" });
+  it("releases the cancelled trip, with a start date, off for the local demo run, never a kind the autopilot may approve", () => {
+    expect(flags.cancelledTrip).toEqual({ enabled: true, startDate: "2026-11-02" });
     expect(isLocalDate(flags.cancelledTrip.startDate)).toBe(true);
     expect(Object.keys(flags.autopilot.kinds)).not.toContain("deficit_book");
-    // Listed ahead of its release, so the demo-path run keeps it off once it ships on.
+    expect(LOCAL_OVERRIDABLE as readonly string[]).not.toContain("cancelledTrip.enabled");
     expect(LOCAL_OFF_ONLY as readonly string[]).toContain("cancelledTrip.enabled");
   });
 
