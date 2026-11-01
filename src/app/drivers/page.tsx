@@ -36,6 +36,7 @@ import {
   STATUSES,
   type Filters,
 } from "@/lib/drivers/list";
+import { driverAdminOn } from "@/lib/drivers/switch";
 import { ForbiddenError, withRequestTenant } from "@/lib/tenant/context";
 import { carrierToday, readShell, type ShellTenant } from "@/lib/tenant/shell";
 import { addDays } from "@/lib/time/local-date";
@@ -82,6 +83,8 @@ export default async function DriversPage({
   }
   if (!view) return <NoCarrierPage problem={problem ?? "unreadable"} />;
 
+  // Add driver is an admin's, while the driver admin switch is on; its route asks both again.
+  const canAdd = driverAdminOn() && view.shell.role === "admin";
   const all = listRows(view.rows, f);
   const shown = all.slice(0, LIST_LIMIT);
   const carded = view.carded;
@@ -102,6 +105,13 @@ export default async function DriversPage({
       <PageHeader
         title="Drivers"
         description="Every driver on file with what they earned, hauled and still owe. Ask the agent who earned or owes the most."
+        actions={
+          canAdd ? (
+            <Link href="/drivers/new" className={buttonVariants({ variant: "primary", size: "sm" })}>
+              Add driver
+            </Link>
+          ) : undefined
+        }
       />
       <p className="text-small text-foreground-2">{leadersLine(f.days, view.leaders)}</p>
       <form method="get" action="/drivers" role="search" className="flex flex-wrap items-end gap-2">

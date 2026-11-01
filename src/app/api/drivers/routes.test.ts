@@ -6,6 +6,7 @@ import { POST as cardsPost } from "./[id]/cards/route";
 import { POST as closePost } from "./[id]/cards/[cardId]/close/route";
 import { POST as defaultPost } from "./[id]/cards/[cardId]/default/route";
 import { POST as idsPost } from "./[id]/identities/route";
+import { POST as driversPost } from "./route";
 import { POST as suggestPost } from "../advances/suggest/route";
 import { POST as takeBackPost } from "../advances/[id]/take-back/route";
 
@@ -32,12 +33,14 @@ const mocks = vi.hoisted(() => ({
   takeBackAdvance: vi.fn(),
   readDeskLoads: vi.fn(),
   readDeskSuggestion: vi.fn(),
+  createDriver: vi.fn(),
 }));
 
 vi.mock("@/lib/auth/session", () => ({ getSession: mocks.getSession }));
 // The staff check has its own tests (src/lib/auth/staff-gate.test.ts); here every caller is staff.
 vi.mock("@/lib/auth/staff-gate", () => ({ staffGate: async () => null }));
 vi.mock("@/lib/advances/arming", () => ({ armDriver: mocks.armDriver }));
+vi.mock("@/lib/drivers/create", () => ({ createDriver: mocks.createDriver }));
 vi.mock("@/lib/advances/identity", () => ({
   addIdentity: mocks.addIdentity,
   addCard: mocks.addCard,
@@ -68,7 +71,11 @@ function post(handler: Handler, params: Record<string, string>, body: unknown, s
   return handler(request, { params: Promise.resolve(params) as Promise<never> });
 }
 
-const saved = { advances: flags.advancesEnabled, takeback: flags.advanceTakeback.enabled };
+const saved = {
+  advances: flags.advancesEnabled,
+  takeback: flags.advanceTakeback.enabled,
+  driverAdmin: flags.driverAdmin.enabled,
+};
 
 beforeEach(() => {
   flags.advancesEnabled = true;
@@ -82,6 +89,7 @@ beforeEach(() => {
 afterEach(() => {
   flags.advancesEnabled = saved.advances;
   flags.advanceTakeback.enabled = saved.takeback;
+  flags.driverAdmin.enabled = saved.driverAdmin;
   vi.restoreAllMocks();
 });
 
@@ -245,5 +253,94 @@ describe("POST /api/advances/suggest", () => {
     mocks.getSession.mockResolvedValue(null);
     expect((await post(suggestPost as unknown as Handler, {}, { driverId: DRIVER })).status).toBe(401);
     expect(mocks.readDeskSuggestion).not.toHaveBeenCalled();
+  });
+});
+
+describe("POST /api/drivers", () => {
+  const NEW_DRIVER = "55555555-5555-4555-8555-555555555555";
+  const BODY = {
+    code: "br-d27",
+    firstName: "Ana",
+    lastName: "Example",
+    email: "Ana@Example.test",
+    workerType: "company",
+    payBasis: "per_mile",
+    perMileCents: 62,
+  };
+  const add = (body: unknown, site = "same-origin") => post(driversPost as unknown as Handler, {}, body, site);
+
+  beforeEach(() => {
+    flags.driverAdmin.enabled = true;
+    mocks.createDriver.mockReset().mockResolvedValue({ ok: true, changed: true, id: NEW_DRIVER });
+  });
+
+  it("refuses while driver admin is off, before the session or the body, even a direct post", async () => {
+    flags.driverAdmin.enabled = false;
+    const res = await add(BODY);
+    expect(res.status).toBe(403);
+    expect(await res.json()).toEqual({ error: "disabled", retryable: false });
+    expect(mocks.getSession).not.toHaveBeenCalled();
+    expect(mocks.createDriver).not.toHaveBeenCalled();
+  });
+
+  it("refuses a cross-site post and a request with no session", async () => {
+    expect((await add(BODY, "cross-site")).status).toBe(403);
+    mocks.getSession.mockResolvedValue(null);
+    expect((await add(BODY)).status).toBe(401);
+    expect(mocks.createDriver).not.toHaveBeenCalled();
+  });
+
+  it("refuses a body that is not exactly a new driver", async () => {
+    for (const body of [
+      { ...BODY, perMileCents: 0 },
+      { ...BODY, percentBps: 7_500 },
+      { ...BODY, payBasis: "percent" },
+      { ...BODY, code: "has space" },
+      { ...BODY, email: "nope" },
+      { ...BODY, moneyArmed: true },
+      { ...BODY, tenantId: SESSION.tenantId },
+      "{not json",
+    ]) {
+      const res = await add(body);
+      expect(res.status, JSON.stringify(body)).toBe(400);
+      expect(await res.json()).toEqual({ error: "bad_request", retryable: false });
+    }
+    expect(mocks.createDriver).not.toHaveBeenCalled();
+  });
+
+  it("runs the service with the parsed body and answers the new driver's id", async () => {
+    const res = await add(BODY);
+    expect(res.status).toBe(200);
+    expect(await res.json()).toEqual({ ok: true, changed: true, id: NEW_DRIVER });
+    expect(mocks.createDriver).toHaveBeenCalledWith(SESSION, {
+      ...BODY,
+      code: "BR-D27",
+      email: "ana@example.test",
+      tankGallons: 200,
+      ownInsurance: false,
+      preferredLanguage: "en",
+    });
+  });
+
+  it("answers a key already on file and a role refusal by category, and anything thrown as unavailable", async () => {
+    for (const [category, status] of [
+      ["code_taken", 409],
+      ["email_taken", 409],
+      ["role", 403],
+      ["disabled", 403],
+    ] as const) {
+      mocks.createDriver.mockResolvedValueOnce({ ok: false, category, retryable: false });
+      const res = await add(BODY);
+      expect(res.status, category).toBe(status);
+      expect(await res.json()).toEqual({ error: category, retryable: false });
+    }
+    const errorLog = vi.spyOn(console, "error").mockImplementation(() => {});
+    mocks.createDriver.mockRejectedValueOnce(new Error('duplicate key value violates unique constraint "drivers_secret_detail"'));
+    const res = await add(BODY);
+    expect(res.status).toBe(503);
+    const text = await res.text();
+    expect(JSON.parse(text)).toEqual({ error: "unavailable", retryable: true });
+    expect(text).not.toContain("secret_detail");
+    expect(errorLog.mock.calls.flat().join(" ")).not.toContain("secret_detail");
   });
 });

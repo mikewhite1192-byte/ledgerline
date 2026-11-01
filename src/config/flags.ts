@@ -864,6 +864,11 @@ export type Flags = {
   // itself: the propose tool, the take-back, the gate, the executor, the ledger hooks, the
   // simulated card provider and the Check route.
   cardPullback: { enabled: boolean; startDate: string };
+  // Driver admin (docs: design-d1-drivers 5.1): an admin adds a driver on the Add driver page
+  // (src/lib/drivers/create.ts, POST /api/drivers). A new driver starts not armed and with no
+  // card, so no money can go to them until an admin adds a card and arms them on their page.
+  // Moves no money. The page, the route and the service each ask enabled themselves.
+  driverAdmin: { enabled: boolean };
 };
 
 // One kind's ceiling over the owner's autopilot limits: one item, and the carrier's local day.
@@ -1139,6 +1144,8 @@ export const flags: Flags = {
   advanceParking: { enabled: true, startDate: "2026-11-02" },
   // Off until its own one-line enable PR. A pull is an outside write, in test mode only.
   cardPullback: { enabled: false, startDate: "2026-11-02" },
+  // Off until its own one-line enable PR. Adds and deactivates drivers; moves no money.
+  driverAdmin: { enabled: false },
 };
 
 applyLocalOverrides(flags);

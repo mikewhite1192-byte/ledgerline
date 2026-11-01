@@ -7,9 +7,10 @@ import { StatusBadge } from "@/components/app/status-badge";
 import { Day, Facts, RecordLink } from "@/components/invoices/cells";
 import { Badge } from "@/components/ui/badge";
 import { Card, CardBody } from "@/components/ui/card";
-import { readDriverIdentity } from "@/lib/advances/identity";
+import { readDriverIdentity, type DriverIdentity } from "@/lib/advances/identity";
 import { advancesOn } from "@/lib/advances/switches";
 import { readRole } from "@/lib/auth/role";
+import { driverAdminOn } from "@/lib/drivers/switch";
 import { formatPeriod } from "@/lib/format/dates";
 import { codeToWords } from "@/lib/format/labels";
 import { readDriverRecord } from "@/lib/settlements/views";
@@ -19,6 +20,13 @@ import { DriverMoney } from "./money-panel";
 export const dynamic = "force-dynamic";
 
 const WORKER = { company: "Company driver", owner_operator: "Owner-operator" } as const;
+
+// While driver admin is on (so a just-added driver lands here): the one-line cue above the money
+// panel when the driver has no active card or is not armed, the two steps before an advance.
+function needsSetup(identity: DriverIdentity): boolean {
+  if (!driverAdminOn()) return false;
+  return !identity.armed.on || !identity.cards.some((c) => c.status === "active");
+}
 
 // One driver: who they are and how they are paid, their recent paystubs and advances. Every
 // paystub line cites its driver, so this is where those links land. While advances are on, the
@@ -51,6 +59,9 @@ export default async function DriverRecord({ params }: { params: Promise<{ id: s
         description={d.code}
         actions={d.ownInsurance ? <Badge tone="info">Carries own insurance</Badge> : undefined}
       />
+      {money && needsSetup(money.identity) ? (
+        <p className="text-body text-foreground-2">Before this driver can take an advance: add a card, then arm them.</p>
+      ) : null}
       {money ? <DriverMoney identity={money.identity} canAdmin={money.canAdmin} timezone={page.shell.timezone} /> : null}
       <Card>
         <CardBody>

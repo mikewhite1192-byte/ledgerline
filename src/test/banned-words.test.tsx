@@ -1530,6 +1530,22 @@ const PAGES: PageCase[] = [
         setup: () => (state.fx.driverRecord = { ...fx.DRIVER_RECORD, settlements: [], advances: [], ownInsurance: false, activeTo: "2026-09-30" }),
         load: async () => (await import("@/app/records/drivers/[id]/page")).default({ params: p({ id: ID }) }),
       },
+      {
+        name: "just added, driver admin on",
+        setup: () => {
+          state.fx.driverRecord = { ...fx.DRIVER_RECORD, settlements: [], advances: [] };
+          state.fx.identity = { ...fx.IDENTITY, armed: { on: false, since: null }, tmsIds: [], cards: [] };
+        },
+        load: async () => {
+          flags.driverAdmin.enabled = true;
+          try {
+            return await (await import("@/app/records/drivers/[id]/page")).default({ params: p({ id: ID }) });
+          } finally {
+            flags.driverAdmin.enabled = false;
+          }
+        },
+        shows: ["Before this driver can take an advance: add a card, then arm them.", "Not armed"],
+      },
     ],
   },
   {
@@ -1634,6 +1650,36 @@ const PAGES: PageCase[] = [
         },
         load: async () => (await import("@/app/drivers/page")).default(sp()),
         shows: "no paid paystubs, deliveries or amounts owed yet",
+      },
+      {
+        name: "driver admin on",
+        setup: () => onDay("2026-11-02T15:00:00.000Z"),
+        load: async () => {
+          flags.driverAdmin.enabled = true;
+          try {
+            return await (await import("@/app/drivers/page")).default(sp());
+          } finally {
+            flags.driverAdmin.enabled = false;
+          }
+        },
+        shows: ["Rosa Delgado", "Add driver"],
+      },
+    ],
+  },
+  {
+    file: "drivers/new/page.tsx",
+    variants: [
+      {
+        name: "form",
+        load: async () => {
+          flags.driverAdmin.enabled = true;
+          try {
+            return await (await import("@/app/drivers/new/page")).default();
+          } finally {
+            flags.driverAdmin.enabled = false;
+          }
+        },
+        shows: ["Add a driver", "Driver code", "starts not armed and with no card"],
       },
     ],
   },
