@@ -229,7 +229,7 @@ export async function parkSettlement(
 }
 
 // A per-tenant advisory lock for the rest of the transaction, so two runs of one job cannot
-// interleave. The name is fixed text from this module, never input.
+// interleave. The name is a constant from this package, never input.
 export async function tenantLock(q: Queryable, name: string): Promise<void> {
   await q.query(
     `SELECT count(*) AS n FROM (

@@ -14,8 +14,10 @@ import { DEMO_CARRIERS, type DemoCarrier } from "../seed/carriers";
 import golden from "../seed/golden.json";
 import { buildCarrierPlan } from "../seed/plan";
 import { replaceTenantData } from "../seed/run";
+import { cents } from "../rules-engine";
 import { ForbiddenError } from "../tenant/context";
 import { settlementApproveExecutor } from "./approve";
+import { findContradictions, readSourceFacts } from "./contradiction";
 import { linesHash } from "./hash";
 import type { SettlementMoneyDeps } from "./legs";
 import { addNamedLine } from "./named-line";
@@ -23,10 +25,16 @@ import { runPayPeriod } from "./run";
 import { readStoredLines } from "./stored";
 import { POST } from "../../app/api/settlements/[id]/lines/route";
 
-// No one is signed in to the route here: the signed-out case reads a null session.
+// The route reads its session and database from here: no one is signed in unless a case sets one,
+// and the staff check runs on the app's role.
+const holder = vi.hoisted(() => ({ db: undefined as unknown, session: null as unknown }));
 vi.mock("@/lib/auth/session", async (importOriginal) => ({
   ...(await importOriginal<typeof import("@/lib/auth/session")>()),
-  getSession: async () => null,
+  getSession: async () => holder.session,
+}));
+vi.mock("@/lib/db", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("@/lib/db")>()),
+  getDb: () => holder.db,
 }));
 
 // Named stub lines (0084) against a real database seeded with a demo carrier under its own slug,
@@ -89,7 +97,7 @@ const CITED_FUEL = (() => {
   if (!item?.ref_id) throw new Error("no cited fuel purchase");
   const purchase = PLAN.rows.fuel_purchases.find((f) => f.id === item.ref_id);
   if (!purchase) throw new Error("the cited purchase is missing");
-  return { id: purchase.id, cents: Number(purchase.amount_cents) };
+  return { id: purchase.id, cents: Number(purchase.amount_cents), paidWith: purchase.paid_with };
 })();
 
 type Stub = { id: string; status: string; gross_cents: string; net_cents: string; parked_reason: string | null };
@@ -194,6 +202,19 @@ const name = (body: unknown, settlementId: string, session: Session = STAFF) =>
   addNamedLine(app, session, settlementId, body, clock());
 const lumperBody = (amountCents = LUMPER.cents) => ({ kind: "reimbursement", sourceRef: LUMPER_REF, amountCents });
 
+// A fuel purchase of the lumper's driver that no pay item cites, paid as given.
+async function plantFuel(paidWith: "company_card" | "driver_own", amountCents: number): Promise<string> {
+  const id = randomUUID();
+  await write(
+    `INSERT INTO fuel_purchases (id, tenant_id, driver_id, purchased_at, purchased_on, state, gallons_milli,
+       amount_cents, paid_with, purchase_ref)
+     VALUES (CAST($1 AS uuid), current_tenant_id(), CAST($2 AS uuid), CAST($3 AS timestamptz), CAST($4 AS date),
+       'IL', 100000, $5, $6, $7)`,
+    [id, LUMPER.driverId, `${OPEN.period_end}T15:00:00Z`, OPEN.period_end, amountCents, paidWith, `NL-DIR-${id}`],
+  );
+  return id;
+}
+
 // Another draft with an insurance line and pay to send, of a driver none of the other cases touches.
 async function insuredStub(skip: readonly string[]): Promise<{ stub: Stub; seq: number }> {
   const found = await rows<{ settlement_id: string; driver_id: string; seq: number }>(
@@ -232,6 +253,7 @@ describe("named stub lines against a seeded database", () => {
   beforeAll(async () => {
     admin = createPgDb({ connectionString: adminUrl() });
     app = createPgDb({ connectionString: appUrl() });
+    holder.db = app;
     const leftover = await admin.withoutTenant((q) =>
       q.query<{ slug: string }>("SELECT slug FROM tenants WHERE slug = $1", [CARRIER.slug]),
     );
@@ -366,9 +388,58 @@ describe("named stub lines against a seeded database", () => {
 
   it("refuses a record another pay item already cites", async () => {
     const s = await stubOf(LUMPER.driverId);
-    const body = { kind: "reimbursement", sourceRef: `fuel_purchases:${CITED_FUEL.id}`, amountCents: CITED_FUEL.cents };
+    // Named the way its money ran, so the cite is what refuses it.
+    const kind = CITED_FUEL.paidWith === "driver_own" ? "reimbursement" : "other_deduction";
+    const body = { kind, sourceRef: `fuel_purchases:${CITED_FUEL.id}`, amountCents: CITED_FUEL.cents };
     expect(await name(body, s.id)).toMatchObject({ ok: false, category: "already_cited" });
     expect(await namedItems()).toEqual([]);
+  });
+
+  it("refuses a line that runs against the way its record's money ran as source_missing, and writes nothing", async () => {
+    const s = await stubOf(LUMPER.driverId);
+    const card = await openCard(s.id);
+    const company = await plantFuel("company_card", 41_000);
+    const own = await plantFuel("driver_own", 42_000);
+    // Company fuel is never paid back to the driver, and fuel the driver paid is never taken again.
+    const companyBack = { kind: "reimbursement", sourceRef: `fuel_purchases:${company}`, amountCents: 41_000 };
+    expect(await name(companyBack, s.id)).toMatchObject({ ok: false, category: "source_missing" });
+    const ownTaken = { kind: "other_deduction", sourceRef: `fuel_purchases:${own}`, amountCents: 42_000 };
+    expect(await name(ownTaken, s.id)).toMatchObject({ ok: false, category: "source_missing" });
+    // A lumper the driver paid is a reimbursement only.
+    const lumperTaken = { kind: "other_deduction", sourceRef: LUMPER_REF, amountCents: LUMPER.cents };
+    expect(await name(lumperTaken, s.id)).toMatchObject({ ok: false, category: "source_missing" });
+    expect(await namedItems()).toEqual([]);
+    expect((await openCard(s.id)).id).toBe(card.id);
+  });
+
+  it("refuses at entry a record of another driver of the same carrier as source_missing", async () => {
+    const { stub } = await insuredStub([]);
+    expect(await name(lumperBody(), stub.id)).toMatchObject({ ok: false, category: "source_missing" });
+    expect(await namedItems()).toEqual([]);
+  });
+
+  it("reads another driver's record as missing in the recheck, so the line is a contradiction", async () => {
+    const { stub } = await insuredStub([]);
+    const [theirs] = await rows<{ driver_id: string }>(
+      "SELECT CAST(driver_id AS text) AS driver_id FROM settlements WHERE tenant_id = current_tenant_id() AND id = CAST($1 AS uuid)",
+      [stub.id],
+    );
+    const line = {
+      kind: "reimbursement" as const,
+      amountCents: cents(LUMPER.cents, "lumper"),
+      sources: [],
+      enteredBy: staffId,
+      sourceRef: LUMPER_REF,
+    };
+    const facts = await app.withTenant(T, (q) => readSourceFacts(q, [line], theirs.driver_id));
+    expect(facts.amounts.has(LUMPER_REF)).toBe(false);
+    expect(findContradictions([line], facts, stub.id)).toEqual([
+      { category: "contradicting_line", source: { table: "load_accessorials", id: LUMPER.id } },
+    ]);
+    // The driver who paid it reads it, and the same line passes.
+    const own = await app.withTenant(T, (q) => readSourceFacts(q, [line], LUMPER.driverId));
+    expect(own.amounts.get(LUMPER_REF)).toBe(LUMPER.cents);
+    expect(findContradictions([line], own, stub.id)).toEqual([]);
   });
 
   it("adds a named reimbursement for a lumper the driver paid: one item, one named line, the gross up, a new card", async () => {
@@ -476,12 +547,17 @@ describe("named stub lines against a seeded database", () => {
     await raiseDays(stub.id, seq);
     flags.namedLines.enabled = false;
     try {
+      // A signed-out caller is refused before the switch is asked, so the answer says nothing of it.
+      const signedOut = await post(stub.id, lumperBody());
+      expect(signedOut.status).toBe(401);
+      holder.session = STAFF;
       const res = await post(stub.id, lumperBody());
       expect(res.status).toBe(404);
       expect(await res.json()).toEqual({ error: "disabled" });
       expect(await name(lumperBody(), stub.id)).toMatchObject({ ok: false, category: "disabled" });
       await approve(card.id);
     } finally {
+      holder.session = null;
       flags.namedLines.enabled = true;
     }
     expect(await stubById(stub.id)).toMatchObject({ status: "approved", parked_reason: null });

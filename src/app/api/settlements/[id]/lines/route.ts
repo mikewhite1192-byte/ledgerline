@@ -10,8 +10,9 @@ import { isUuid } from "@/lib/uuid";
 // POST { kind, sourceRef, amountCents, label? }: a staff member names one reimbursement or deduction
 // on a driver's open draft paystub, citing one fuel purchase or lumper of that driver
 // (src/lib/settlements/named-line.ts). The amount must equal the record's; the rules engine then
-// makes the line and the week is run again. The switch is asked here before anything else and
-// again by the service. Nothing is paid or sent. Categories only.
+// makes the line and the week is run again. The switch is asked here once the caller is known to be
+// staff, so a signed-out caller learns nothing of it, and again by the service. Nothing is paid or
+// sent. Categories only.
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
 export const maxDuration = 30;
@@ -36,11 +37,11 @@ async function bodyOf(request: Request): Promise<unknown> {
 
 export async function POST(request: Request, { params }: { params: Promise<{ id: string }> }) {
   if (isCrossSite(request)) return reply({ error: "forbidden" }, 403);
-  if (!flags.namedLines.enabled) return reply({ error: "disabled" }, 404);
   const session = await getSession();
   if (!session) return reply({ error: "unauthenticated" }, 401);
   const notStaff = await staffGate(session);
   if (notStaff) return notStaff;
+  if (!flags.namedLines.enabled) return reply({ error: "disabled" }, 404);
   const { id } = await params;
   if (!isUuid(id)) return reply({ error: "bad_request" }, 400);
   const body = await bodyOf(request);

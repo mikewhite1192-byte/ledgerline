@@ -19,8 +19,8 @@ import { readPeriod, readStoredSettlement, tenantLock } from "./stored";
 // Two steps:
 //   1. One tenant transaction, the run lock then the draft locked (the order the pay run takes
 //      them): the caller must be staff, the draft open and unparked, its week open and on or after
-//      the settlements start. The record is read under row security, bound to the draft's driver;
-//      none is source_missing. Another pay item already citing it is already_cited (a named line
+//      the settlements start. The record is read under row security, bound to the draft's driver
+//      and to the way its money ran; none is source_missing. Another pay item already citing it is already_cited (a named line
 //      must not pay it twice). An amount other than the record's, to the cent, is
 //      contradicting_line. Each refusal writes nothing. Clean: one pay item, upserted on its
 //      item_ref.
@@ -88,16 +88,26 @@ async function staffMembershipId(q: Queryable, session: Session): Promise<string
   return m.id;
 }
 
-// The record's amount, read bound to the driver; null when there is no such record of theirs. A
-// load accessorial counts only as a lumper the driver paid (0004: the only one a driver pays, and
-// detention, layover and stop pay are already on the load's accessorial line).
-async function readRecordAmount(q: Queryable, ref: NamedRef, driverId: string): Promise<number | null> {
+// The record's amount, read bound to the driver and to the line's direction; null when there is no
+// such record of theirs. A fuel purchase is a reimbursement only when the driver paid it and a
+// deduction only when the company card did, so the driver is never paid for company fuel or charged
+// twice for their own. A load accessorial counts only as a lumper the driver paid (0004: the only one
+// a driver pays, and detention, layover and stop pay are already on the load's accessorial line), so
+// it is a reimbursement only.
+async function readRecordAmount(
+  q: Queryable,
+  ref: NamedRef,
+  driverId: string,
+  kind: NamedLineInput["kind"],
+): Promise<number | null> {
+  if (ref.table === "load_accessorials" && kind !== "reimbursement") return null;
   const rows =
     ref.table === "fuel_purchases"
       ? await q.query<{ amount_cents: number | string }>(
           `SELECT amount_cents FROM fuel_purchases
-            WHERE tenant_id = current_tenant_id() AND id = CAST($1 AS uuid) AND driver_id = CAST($2 AS uuid)`,
-          [ref.id, driverId],
+            WHERE tenant_id = current_tenant_id() AND id = CAST($1 AS uuid) AND driver_id = CAST($2 AS uuid)
+              AND paid_with = $3`,
+          [ref.id, driverId, kind === "reimbursement" ? "driver_own" : "company_card"],
         )
       : await q.query<{ amount_cents: number | string }>(
           `SELECT a.amount_cents FROM load_accessorials a
@@ -128,7 +138,7 @@ async function enter(q: Queryable, session: Session, settlementId: string, input
 
   const ref = parseSourceRef(input.sourceRef);
   if (!ref) return refuse("source_missing");
-  const recordCents = await readRecordAmount(q, ref, stored.driverId);
+  const recordCents = await readRecordAmount(q, ref, stored.driverId, input.kind);
   if (recordCents === null) return refuse("source_missing");
   const itemRef = namedItemRef(stored.id, ref);
   const others = await q.query<{ n: number | string }>(
