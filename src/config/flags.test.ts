@@ -105,6 +105,9 @@ const RELEASED_ON = [
   // Released by the owner (D-071, 2026-10-31): an advance whose numbers no longer hold at approval
   // parks with its reason for a person instead of failing. Parking moves no money.
   "advanceParking.enabled",
+  // Released by the owner (D-071, 2026-11-01): a driver's named deficits are taken back from pay
+  // after advances, within the same cap and floor. Pay math only; nothing moves money on its own.
+  "deficitRecovery.enabled",
 ] as const;
 
 // What stays off, each waiting on a missing piece or an outside send the owner has not released.
@@ -122,8 +125,6 @@ const KEPT_OFF = [
   "evalRun.enabled",
   // The card pull-back ships off; its own one-line enable PR turns it on.
   "cardPullback.enabled",
-  // Deficit recovery on pay day ships off; its own one-line enable PR turns it on.
-  "deficitRecovery.enabled",
   // Adding a driver ships off; its own one-line enable PR turns it on.
   "driverAdmin.enabled",
 ] as const;
@@ -362,8 +363,8 @@ describe("flags", () => {
     expect(LOCAL_OFF_ONLY as readonly string[]).toContain("cardPullback.enabled");
   });
 
-  it("ships deficit recovery off, with a start date", () => {
-    expect(flags.deficitRecovery).toEqual({ enabled: false, startDate: "2026-11-02" });
+  it("releases deficit recovery, with a start date, off for the local demo run", () => {
+    expect(flags.deficitRecovery).toEqual({ enabled: true, startDate: "2026-11-02" });
     expect(isLocalDate(flags.deficitRecovery.startDate)).toBe(true);
     // Listed ahead of its release, so the demo-path run keeps it off once it ships on.
     expect(LOCAL_OFF_ONLY as readonly string[]).toContain("deficitRecovery.enabled");
