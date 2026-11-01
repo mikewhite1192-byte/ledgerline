@@ -276,6 +276,8 @@ describe("the money invariants on a real database", { timeout: 60_000 }, () => {
     "driver_deficits",
     // A fuel card pull-back (0080): no seed, an approval writes it.
     "card_pullbacks",
+    // A driver deactivated by a person (0081): no seed, the driver's page writes it.
+    "driver_status_events",
   ];
 
   it("all five pass with a row in every tenant table for both carriers, and the probe reads them", async () => {
@@ -571,6 +573,13 @@ describe("the money invariants on a real database", { timeout: 60_000 }, () => {
           `INSERT INTO driver_arm_events (id, tenant_id, driver_id, armed, note, membership_id, source)
            VALUES (CAST($1 AS uuid), current_tenant_id(), CAST($2 AS uuid), true, 'invariants-test',
              CAST($3 AS uuid), 'ui')`,
+          [randomUUID(), c.driver, c.membership],
+        );
+        // A person recording the driver's last day, as the driver's page writes it (0081).
+        await q.execute(
+          `INSERT INTO driver_status_events (id, tenant_id, driver_id, active, effective_on, note, membership_id)
+           VALUES (CAST($1 AS uuid), current_tenant_id(), CAST($2 AS uuid), false, DATE '2026-11-02',
+             'invariants-test', CAST($3 AS uuid))`,
           [randomUUID(), c.driver, c.membership],
         );
         await q.execute(

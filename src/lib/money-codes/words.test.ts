@@ -65,6 +65,8 @@ describe("money code words", () => {
     // The ones left out are the advance's, with the same meaning.
     expect(ADVANCE_APPROVE_NOTICE.load_not_drivers).toBeTruthy();
     expect(ADVANCE_APPROVE_NOTICE.driver_not_armed).toBeTruthy();
+    expect(ADVANCE_APPROVE_NOTICE.driver_inactive).toBeTruthy();
+    expect(moneyCodeSentence("driver_inactive")).toBe("This driver is no longer active with the carrier, so no code was issued.");
     expect(ADVANCE_APPROVE_NOTICE.stale_eligibility).toBeTruthy();
   });
 

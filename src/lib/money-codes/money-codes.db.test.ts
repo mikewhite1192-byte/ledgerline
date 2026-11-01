@@ -10,13 +10,15 @@ import type { Db, Queryable, TenantDb } from "../db/types";
 import { CONFIDENCE_FIELDS } from "../documents/types";
 import { readBySubject } from "../money/read";
 import { clearLedger, dropTenant, makeTenant, setArmed, sqlStateOf, type Fixture } from "../money/test-db";
-import { executeProposal } from "../proposals/execute";
+import { executeProposal, type ExecutorRegistry } from "../proposals/execute";
 import { checkMoneyCode } from "../rules-engine/money-codes";
 import { settleDriver } from "../rules-engine/settlement";
 import {
   chargeItemRef,
   checkPendingCode,
+  executeMoneyCodeProposal,
   finishIssuedCode,
+  precheckMoneyCode,
   revealMoneyCode,
   reimbursementItemRef,
   type MoneyCodeDeps,
@@ -747,6 +749,60 @@ describe("money codes against the database", () => {
     await setArmed(admin, A, A.driverId, false);
     expect(await approve(proposalId)).toMatchObject({ ok: false, category: "driver_not_armed" });
     expect(await proposalStatus(proposalId)).toBe("proposed");
+    expect(await codeRows()).toEqual([]);
+    expect(await ledger()).toEqual([]);
+    expect(await payItems()).toEqual([]);
+  });
+
+  it("refuses a driver past their last day, still armed, at the request, at the approval and at the executor", async () => {
+    const loadId = await addLoadOnTheRoad(A);
+    const proposalId = await ask(A, loadId, 15_000);
+    const setLastDay = (day: string | null) =>
+      admin.withTenant(A.tenantId, (q) =>
+        q.execute("UPDATE drivers SET active_to = CAST($2 AS date) WHERE tenant_id = current_tenant_id() AND id = CAST($1 AS uuid)", [
+          A.driverId,
+          day,
+        ]),
+      );
+    // NOW is Nov 2 in the carrier's zone: a last day of Nov 1 has passed.
+    await setLastDay("2026-11-01");
+    expect(await approve(proposalId)).toEqual({ ok: false, category: "driver_inactive", retryable: false });
+    expect(await proposalStatus(proposalId)).toBe("proposed");
+    // A new request from the form: the engine reads the departed driver as not armed.
+    const input = await app.withTenant(A.tenantId, (q) =>
+      readMoneyCodeInput(
+        q,
+        {
+          driverId: A.driverId,
+          loadId,
+          purpose: "lumper",
+          amountCents: 12_000,
+          source: "form",
+          documentId: null,
+          voiceNoteId: null,
+          capCents: flags.moneyCodes.capCents,
+          perDriverPerDay: flags.moneyCodes.perDriverPerDay,
+        },
+        new Date(NOW).toISOString(),
+      ),
+    );
+    expect(input.driverArmed).toBe(false);
+    // Left after the precheck: the executor asks again under the driver lock.
+    await setLastDay(null);
+    const racing: ExecutorRegistry = {
+      money_code: Object.assign((...args: Parameters<typeof executeMoneyCodeProposal>) => executeMoneyCodeProposal(...args), {
+        precheck: async (...args: Parameters<typeof precheckMoneyCode>) => {
+          const answer = await precheckMoneyCode(...args);
+          await setLastDay("2026-11-01");
+          return answer;
+        },
+      }),
+    };
+    expect(await approve(proposalId, A.session, deps({ executors: racing }))).toEqual({
+      ok: false,
+      category: "driver_inactive",
+      retryable: false,
+    });
     expect(await codeRows()).toEqual([]);
     expect(await ledger()).toEqual([]);
     expect(await payItems()).toEqual([]);

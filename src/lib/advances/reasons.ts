@@ -60,6 +60,7 @@ export const FLOW_OUTCOMES = [
   "eligibility_unavailable",
   "no_card",
   "driver_not_armed",
+  "driver_inactive",
   "card_not_drivers",
   "load_not_drivers",
   "ref_collision",
@@ -104,6 +105,7 @@ const OUTCOME_SENTENCES: Readonly<Record<FlowOutcome, string>> = {
   no_card: "This driver has no fuel card on file, so nothing was paid.",
   driver_not_armed:
     "This driver is not armed to receive money. An admin can arm them on the driver page.",
+  driver_inactive: "This driver is no longer active with the carrier, so nothing was paid.",
   card_not_drivers: "That card is not one of this driver's active cards, so nothing was paid.",
   load_not_drivers: "That load is not one of this driver's loads, so nothing was paid.",
   ref_collision: "This advance's reference is already taken. Nothing was paid; it needs a person.",
@@ -158,6 +160,7 @@ const CARD_OUTCOMES = [
   "eligibility_unavailable",
   "no_card",
   "driver_not_armed",
+  "driver_inactive",
   "card_not_drivers",
   "load_not_drivers",
   "ref_collision",
@@ -214,6 +217,22 @@ const PANEL_SENTENCES: Readonly<Record<string, string>> = {
   unauthenticated: OUTCOME_SENTENCES.unauthenticated,
   forbidden: OUTCOME_SENTENCES.forbidden,
 };
+
+// The driver's Status row (deactivate, reactivate): the panel's list with its own words for the
+// admin rule, the driver admin switch and a date out of bounds.
+const STATUS_SENTENCES: Readonly<Record<string, string>> = {
+  ...PANEL_SENTENCES,
+  role: "Only an admin can deactivate or reactivate a driver.",
+  disabled: "Driver changes are switched off.",
+  not_found: "No such driver.",
+  bad_request: "Pick a last day on or after the driver's start date and within a year of today.",
+};
+
+export function statusSentence(code: string): string {
+  return Object.hasOwn(STATUS_SENTENCES, code)
+    ? STATUS_SENTENCES[code]
+    : "That did not finish. Nothing was changed; try again.";
+}
 
 export function panelSentence(code: string): string {
   return Object.hasOwn(PANEL_SENTENCES, code)

@@ -1,5 +1,6 @@
 import type { Param, Queryable } from "../db";
 import { parseRead } from "../documents/schema";
+import { DRIVER_MONEY_SQL, driverMoneyStateOf } from "../drivers/active";
 import {
   cents,
   driverPayOnLoad,
@@ -743,8 +744,9 @@ export const MONEY_CODE_LOAD_SQL =
   " to_char(delivered_on, 'YYYY-MM-DD') AS delivered_on" +
   " FROM loads WHERE tenant_id = current_tenant_id() AND id = CAST($1 AS uuid)";
 
-export const MONEY_CODE_DRIVER_SQL =
-  "SELECT money_armed FROM drivers WHERE tenant_id = current_tenant_id() AND id = CAST($1 AS uuid)";
+// The driver's arm and active state (src/lib/drivers/active.ts): the engine's driverArmed is true
+// only for a driver armed AND active today, so a departed driver still armed reads as not armed.
+export const MONEY_CODE_DRIVER_SQL = DRIVER_MONEY_SQL;
 
 const MONEY_CODE_DOCUMENT_SQL =
   "SELECT read_status, document_kind, CAST(reading AS text) AS reading FROM documents" +
@@ -829,7 +831,11 @@ export async function readMoneyCodeInput(q: Queryable, ask: MoneyCodeAsk, now: I
   if (!tenant) throw new Error("no tenant is set");
   const driverId = assertUuid(ask.driverId, "driverId");
   const loadId = assertUuid(ask.loadId, "loadId");
-  const armed = await q.query<{ money_armed: boolean }>(MONEY_CODE_DRIVER_SQL, [driverId]);
+  const today = localDateOf(now, tenant.timezone);
+  const armed = await q.query<{ money_armed: boolean; active_from: string | null; active_to: string | null }>(
+    MONEY_CODE_DRIVER_SQL,
+    [driverId],
+  );
   const loads = await q.query<{
     id: string;
     driver_id: string | null;
@@ -872,14 +878,14 @@ export async function readMoneyCodeInput(q: Queryable, ask: MoneyCodeAsk, now: I
   if (codeRows.length > MONEY_CODE_ROWS_MAX) throw new ReadLimitError();
   return {
     driverId,
-    driverArmed: armed.length === 1 && armed[0].money_armed === true,
+    driverArmed: armed.length === 1 && driverMoneyStateOf(armed[0], today) === "ok",
     load,
     purpose: ask.purpose,
     amountCents: ask.amountCents,
     capCents: ask.capCents,
     perDriverPerDay: ask.perDriverPerDay,
     now,
-    today: localDateOf(now, tenant.timezone),
+    today,
     source: ask.source,
     receipt,
     voice,

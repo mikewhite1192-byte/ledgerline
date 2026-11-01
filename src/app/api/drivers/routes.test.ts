@@ -6,6 +6,7 @@ import { POST as cardsPost } from "./[id]/cards/route";
 import { POST as closePost } from "./[id]/cards/[cardId]/close/route";
 import { POST as defaultPost } from "./[id]/cards/[cardId]/default/route";
 import { POST as idsPost } from "./[id]/identities/route";
+import { POST as statusPost } from "./[id]/status/route";
 import { POST as driversPost } from "./route";
 import { POST as suggestPost } from "../advances/suggest/route";
 import { POST as takeBackPost } from "../advances/[id]/take-back/route";
@@ -34,6 +35,7 @@ const mocks = vi.hoisted(() => ({
   readDeskLoads: vi.fn(),
   readDeskSuggestion: vi.fn(),
   createDriver: vi.fn(),
+  setDriverStatus: vi.fn(),
 }));
 
 vi.mock("@/lib/auth/session", () => ({ getSession: mocks.getSession }));
@@ -41,6 +43,10 @@ vi.mock("@/lib/auth/session", () => ({ getSession: mocks.getSession }));
 vi.mock("@/lib/auth/staff-gate", () => ({ staffGate: async () => null }));
 vi.mock("@/lib/advances/arming", () => ({ armDriver: mocks.armDriver }));
 vi.mock("@/lib/drivers/create", () => ({ createDriver: mocks.createDriver }));
+vi.mock("@/lib/drivers/status", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("@/lib/drivers/status")>()),
+  setDriverStatus: mocks.setDriverStatus,
+}));
 vi.mock("@/lib/advances/identity", () => ({
   addIdentity: mocks.addIdentity,
   addCard: mocks.addCard,
@@ -337,6 +343,90 @@ describe("POST /api/drivers", () => {
     const errorLog = vi.spyOn(console, "error").mockImplementation(() => {});
     mocks.createDriver.mockRejectedValueOnce(new Error('duplicate key value violates unique constraint "drivers_secret_detail"'));
     const res = await add(BODY);
+    expect(res.status).toBe(503);
+    const text = await res.text();
+    expect(JSON.parse(text)).toEqual({ error: "unavailable", retryable: true });
+    expect(text).not.toContain("secret_detail");
+    expect(errorLog.mock.calls.flat().join(" ")).not.toContain("secret_detail");
+  });
+});
+
+describe("POST /api/drivers/[id]/status", () => {
+  const change = (body: unknown, params: Record<string, string> = { id: DRIVER }, site = "same-origin") =>
+    post(statusPost as Handler, params, body, site);
+
+  beforeEach(() => {
+    flags.driverAdmin.enabled = true;
+    mocks.setDriverStatus
+      .mockReset()
+      .mockResolvedValue({ ok: true, changed: true, active: false, activeTo: "2026-11-02", armed: false });
+  });
+
+  it("refuses while driver admin is off, before the session or the body, even a direct post", async () => {
+    flags.driverAdmin.enabled = false;
+    const res = await change({ active: false });
+    expect(res.status).toBe(403);
+    expect(await res.json()).toEqual({ error: "disabled", retryable: false });
+    expect(mocks.getSession).not.toHaveBeenCalled();
+    expect(mocks.setDriverStatus).not.toHaveBeenCalled();
+  });
+
+  it("refuses while advances are off, a cross-site post and a request with no session", async () => {
+    flags.advancesEnabled = false;
+    expect((await change({ active: false })).status).toBe(403);
+    flags.advancesEnabled = true;
+    expect((await change({ active: false }, { id: DRIVER }, "cross-site")).status).toBe(403);
+    mocks.getSession.mockResolvedValue(null);
+    expect((await change({ active: false })).status).toBe(401);
+    expect(mocks.setDriverStatus).not.toHaveBeenCalled();
+  });
+
+  it("refuses a malformed driver id and a body that is not exactly a status change", async () => {
+    expect((await change({ active: false }, { id: "nope" })).status).toBe(400);
+    for (const body of [
+      { active: "no" },
+      {},
+      { active: false, effectiveOn: "11/02/2026" },
+      { active: false, effectiveOn: "2026-02-30" },
+      { active: false, note: "x".repeat(241) },
+      { active: false, moneyArmed: true },
+      "{not json",
+    ]) {
+      const res = await change(body);
+      expect(res.status, JSON.stringify(body)).toBe(400);
+      expect(await res.json()).toEqual({ error: "bad_request", retryable: false });
+    }
+    expect(mocks.setDriverStatus).not.toHaveBeenCalled();
+  });
+
+  it("runs the service with the lower-case id and the parsed body", async () => {
+    const res = await change({ active: false, effectiveOn: "2026-11-02", note: "moved away" }, { id: DRIVER.toUpperCase() });
+    expect(res.status).toBe(200);
+    expect(await res.json()).toEqual({ ok: true, changed: true, active: false, activeTo: "2026-11-02", armed: false });
+    expect(mocks.setDriverStatus).toHaveBeenCalledWith(SESSION, DRIVER, {
+      active: false,
+      effectiveOn: "2026-11-02",
+      note: "moved away",
+    });
+    await change({ active: true });
+    expect(mocks.setDriverStatus).toHaveBeenLastCalledWith(SESSION, DRIVER, { active: true, effectiveOn: null, note: null });
+  });
+
+  it("answers a refusal by category, and anything thrown as unavailable without its text", async () => {
+    for (const [category, status] of [
+      ["role", 403],
+      ["not_found", 404],
+      ["bad_request", 400],
+      ["disabled", 403],
+    ] as const) {
+      mocks.setDriverStatus.mockResolvedValueOnce({ ok: false, category, retryable: false });
+      const res = await change({ active: false });
+      expect(res.status, category).toBe(status);
+      expect(await res.json()).toEqual({ error: category, retryable: false });
+    }
+    const errorLog = vi.spyOn(console, "error").mockImplementation(() => {});
+    mocks.setDriverStatus.mockRejectedValueOnce(new Error("driver deactivation wrote nothing secret_detail"));
+    const res = await change({ active: false });
     expect(res.status).toBe(503);
     const text = await res.text();
     expect(JSON.parse(text)).toEqual({ error: "unavailable", retryable: true });

@@ -4,6 +4,7 @@ import { moneyCodeIssuer } from "../adapters";
 import type { MoneyCodeIssuer, MoneyCodeRequest } from "../adapters/types";
 import type { Session } from "../auth/claims";
 import { readMoneyCodeInput } from "../data/read";
+import { readDriverMoneyState } from "../drivers/active";
 import { DbError, getDb, type Queryable, type TenantDb } from "../db";
 import { executeMoneyAction, type MoneyDeps, type MoneyHooks } from "../money/execute";
 import { isCanonicalUuid, memoCodeOf } from "../money/keys";
@@ -206,17 +207,6 @@ async function codeBy(q: Queryable, column: "id" | "proposal_id", id: string, lo
     [id],
   );
   return rows[0] ? lockOf(rows[0]) : null;
-}
-
-// Whether the driver is armed to receive money: null when there is no such driver here.
-async function driverArmed(q: Queryable, driverId: string, lock: boolean): Promise<boolean | null> {
-  const rows = await q.query<{ money_armed: boolean }>(
-    `SELECT money_armed FROM drivers WHERE tenant_id = current_tenant_id() AND id = CAST($1 AS uuid)${
-      lock ? " FOR UPDATE" : ""
-    }`,
-    [driverId],
-  );
-  return rows.length === 1 ? rows[0].money_armed === true : null;
 }
 
 async function lockLoad(q: Queryable, loadId: string): Promise<boolean> {
@@ -471,8 +461,11 @@ export async function precheckMoneyCode(
   const zone = await readTenantZone(q);
   const refusal = issueGate(a.amountCents, localDateOf(nowIso, zone));
   if (refusal) return no(refusal);
-  const armed = await driverArmed(q, a.driverId, false);
-  if (armed === null) return no("not_found");
+  const state = await readDriverMoneyState(q, a.driverId, localDateOf(nowIso, zone), false);
+  if (state === null) return no("not_found");
+  // Not armed is left to the engine below (checkNow); a driver past their last day is refused
+  // here by name, since the engine's input folds it into not armed.
+  if (state === "inactive") return no("driver_inactive");
   if (await codeBy(q, "proposal_id", p.id, false)) return no("code_exists");
   let decision: MoneyCodeDecision;
   try {
@@ -519,14 +512,16 @@ async function prepare(
   // then the driver (the paystub lines' key) and then the proposal; this one holds the proposal,
   // so waiting on the driver or the load here would close a cycle with a settle in flight, and
   // the database would abort one of them. The arming is still read, so a resume never sends for
-  // a driver disarmed since.
+  // a driver disarmed or deactivated since.
   const existing = status === "executing" ? await codeBy(q, "proposal_id", p.id, false) : null;
   const resume = existing !== null;
-  // On a new code, arming takes the driver lock, so it cannot change between this read and the
-  // commit that writes the code.
-  const armed = await driverArmed(q, a.driverId, !resume);
-  if (armed === null) throw new Stop("not_found");
-  if (!armed) throw new Stop("driver_not_armed");
+  // Armed AND active on the carrier's date (src/lib/drivers/active.ts). On a new code, arming and
+  // a status change take the driver lock, so neither can change between this read and the commit
+  // that writes the code.
+  const state = await readDriverMoneyState(q, a.driverId, localDateOf(nowIso, zone), !resume);
+  if (state === null) throw new Stop("not_found");
+  if (state === "inactive") throw new Stop("driver_inactive");
+  if (state === "not_armed") throw new Stop("driver_not_armed");
   if (!resume && !(await lockLoad(q, a.loadId))) throw new Stop("not_found");
 
   // The code row is read, never locked, here. The reserve, settle and close transactions lock the
