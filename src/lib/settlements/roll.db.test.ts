@@ -19,8 +19,9 @@ import { rollPayWeek } from "./roll";
 // The pay week roll (D-090) against the real database, as the app's role: the Blue Ridge demo
 // carrier, seeded with its plan under its own slug (the demo reset runs only for a demo slug), and
 // put back to the plan by the demo reset before each test. The sweep's start opens the week holding
-// the carrier's today only with the switch on, once however many starts race, and leaves the
-// seeded week and its stubs as they were. The tenant is removed after.
+// the carrier's today only with the switch on, once however many starts race, along with any week
+// skipped since the newest one, and leaves the seeded week and its stubs as they were. The tenant
+// is removed after.
 
 const CARRIER = DEMO_CARRIERS[0];
 const plan = buildCarrierPlan(CARRIER, DEMO_ANCHOR);
@@ -162,6 +163,19 @@ describe("the pay week roll at the sweep's start", () => {
     expect(later).toEqual({ opened: false, periodStart: null, reason: "week_exists" });
     await start(new Date("2026-11-04T18:00:00.000Z"));
     expect((await periods()).length).toBe(SEEDED + 1);
+  });
+
+  it("opens the skipped week too when no start came for a whole week, and the sweep runs today's week", async () => {
+    flags.payWeekRoll = { enabled: true };
+    // Tuesday November 10, a week after the seeded week ended, with no start in between.
+    const runId = await start(new Date("2026-11-10T18:00:00.000Z"));
+    const after = await periods();
+    expect(after.length).toBe(SEEDED + 2);
+    expect(after.slice(-2).map((p) => [p.period_start, p.period_end, p.status])).toEqual([
+      ["2026-11-02", "2026-11-08", "open"],
+      ["2026-11-09", "2026-11-15", "open"],
+    ]);
+    expect(await runPeriod(runId)).toBe(after[after.length - 1].id);
   });
 
   it("opens nothing on Sunday evening in the carrier's zone, still the seeded week's last day", async () => {

@@ -5,14 +5,17 @@ import { readTable } from "../data/read";
 import type { SettlementPeriodRow } from "../data/rows";
 import type { Queryable } from "../db";
 import { ConfigError } from "../rules-engine";
-import { daysBetween, localDateOf, periodContaining, type LocalDate, type Period } from "../time/local-date";
+import { addDays, daysBetween, localDateOf, periodContaining, type LocalDate, type Period } from "../time/local-date";
 import { tenantLock } from "./stored";
 
 // The pay week roll (D-090): when the sweep starts for a carrier, the pay week holding today (the
 // carrier's local date, in its week shape) is made sure to exist, inserted open when it does not.
 // The week before stays open, untouched, until a person approves and pays it and the roll-up
-// closes it (book.ts rollUpPeriod), so the sweep never closes a week. Only the week holding today
-// is opened, never a gap week before it. No money field is read or written here.
+// closes it (book.ts rollUpPeriod), so the sweep never closes a week. Weeks stay back to back:
+// when no sweep started for a whole week (or a demo reset put the seeded weeks back), the roll
+// opens each missing week from the one right after the newest period up to today's, so a load
+// delivered or a shortfall carried into a skipped week still has a week to draft in. No money
+// field is read or written here.
 //
 // Dedupe key: UNIQUE (tenant_id, period_start) with ON CONFLICT DO NOTHING, under the per-tenant
 // advisory lock pay_week_roll for the caller's transaction.
@@ -21,20 +24,36 @@ export type RollReason = "switched_off" | "week_exists" | "before_first_version"
 
 export type RollResult = { opened: boolean; periodStart: LocalDate | null; reason?: RollReason };
 
-// Pure. The week to open: the week holding `today`, when no period row already starts that day
-// and the week does not start before the first pay rules version. Null means nothing to do. A
-// period that overlaps the week without starting on its first day also counts as holding it, so
-// a week is never opened across one already there.
-export function weekToOpen(args: {
+// The most weeks one start opens. A longer run of missing weeks is caught up, oldest first, over
+// the starts after it, so the weeks stay back to back either way.
+export const MAX_WEEKS_PER_ROLL = 8;
+
+// Pure. The weeks to open, oldest first: every week from the one right after the newest period
+// (any status) through the week holding `today`, or today's week alone when the carrier has no
+// period. A week that starts before the first pay rules version is never opened, and a period that
+// overlaps a week without starting on its first day also counts as holding it, so a week is never
+// opened across one already there. Empty means nothing to do; a newest period at or after today's
+// week opens nothing behind it.
+export function weeksToOpen(args: {
   today: LocalDate;
   weekStartDow: number;
   firstEffectiveFrom: LocalDate;
   periods: readonly Pick<SettlementPeriodRow, "period_start">[];
-}): Period | null {
-  const week = periodContaining(args.today, args.weekStartDow);
-  if (week.start < args.firstEffectiveFrom) return null;
-  if (args.periods.some((p) => Math.abs(daysBetween(week.start, p.period_start)) < 7)) return null;
-  return week;
+}): Period[] {
+  const current = periodContaining(args.today, args.weekStartDow);
+  if (current.start < args.firstEffectiveFrom) return [];
+  const newest = args.periods.reduce<LocalDate | null>((m, p) => (m === null || p.period_start > m ? p.period_start : m), null);
+  let from = newest === null ? current.start : addDays(newest, 7);
+  if (from < args.firstEffectiveFrom) from = args.firstEffectiveFrom;
+  let week = periodContaining(from, args.weekStartDow);
+  if (week.start < from) week = periodContaining(addDays(week.start, 7), args.weekStartDow);
+  const weeks: Period[] = [];
+  for (let i = 0; i < MAX_WEEKS_PER_ROLL && week.start <= current.start; i += 1) {
+    const start = week.start;
+    if (!args.periods.some((p) => Math.abs(daysBetween(start, p.period_start)) < 7)) weeks.push(week);
+    week = periodContaining(addDays(week.start, 7), args.weekStartDow);
+  }
+  return weeks;
 }
 
 // SQL, inside the caller's tenant transaction. Reads its own switch. Never throws for a carrier
@@ -57,30 +76,36 @@ export async function rollPayWeek(q: Queryable, now: Date): Promise<RollResult> 
     throw e;
   }
   const holding = periodContaining(today, first.week_start_dow);
-  const week = weekToOpen({
+  const weeks = weeksToOpen({
     today,
     weekStartDow: first.week_start_dow,
     firstEffectiveFrom: first.effective_from,
     periods: await readTable(q, "settlement_periods"),
   });
-  if (!week) {
+  if (weeks.length === 0) {
     const reason = holding.start < first.effective_from ? "before_first_version" : "week_exists";
     return { opened: false, periodStart: null, reason };
   }
-  const inserted = await q.execute(
-    `INSERT INTO settlement_periods (id, tenant_id, period_start, period_end, status)
-     VALUES (CAST($1 AS uuid), current_tenant_id(), CAST($2 AS date), CAST($3 AS date), 'open')
-     ON CONFLICT (tenant_id, period_start) DO NOTHING`,
-    [randomUUID(), week.start, week.end],
-  );
-  const back = await q.query<{ id: string }>(
-    `SELECT id FROM settlement_periods
-      WHERE tenant_id = current_tenant_id() AND period_start = CAST($1 AS date)`,
-    [week.start],
-  );
-  if (back.length !== 1) throw new Error("pay week roll: the opened week did not read back");
-  // Zero rows inserted is the conflict: another start opened the week first.
-  if (inserted !== 1) return { opened: false, periodStart: week.start, reason: "week_exists" };
-  console.info(`pay week ${week.start} opened by the sweep`);
-  return { opened: true, periodStart: week.start };
+  let opened = false;
+  for (const week of weeks) {
+    const inserted = await q.execute(
+      `INSERT INTO settlement_periods (id, tenant_id, period_start, period_end, status)
+       VALUES (CAST($1 AS uuid), current_tenant_id(), CAST($2 AS date), CAST($3 AS date), 'open')
+       ON CONFLICT (tenant_id, period_start) DO NOTHING`,
+      [randomUUID(), week.start, week.end],
+    );
+    const back = await q.query<{ id: string }>(
+      `SELECT id FROM settlement_periods
+        WHERE tenant_id = current_tenant_id() AND period_start = CAST($1 AS date)`,
+      [week.start],
+    );
+    if (back.length !== 1) throw new Error("pay week roll: the opened week did not read back");
+    // Zero rows inserted is the conflict: another start opened the week first.
+    if (inserted === 1) {
+      opened = true;
+      console.info(`pay week ${week.start} opened by the sweep`);
+    }
+  }
+  const newest = weeks[weeks.length - 1].start;
+  return opened ? { opened: true, periodStart: newest } : { opened: false, periodStart: newest, reason: "week_exists" };
 }

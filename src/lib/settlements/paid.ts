@@ -49,10 +49,10 @@ export type PaidWrites = {
 
 export const CARRIED_DESCRIPTION = "Shortfall carried from the week before";
 
-// The day a carried shortfall is dated: the first day after the week, unless a later week already
-// holds an approved or paid stub of this driver (a newer week paid before this one, D-090), whose
-// lines can no longer change; then the first day past every such week in a row. In the normal
-// order that is periodEnd + 1. Each step moves past one week, so the walk ends.
+// The day a carried shortfall is dated: the first day after the week, unless a later week can no
+// longer draft it (closed, or holding an approved or paid stub of this driver: a newer week paid
+// before this one, D-090); then the first day past every such week in a row. In the normal order
+// that is periodEnd + 1. Each step moves past one week, so the walk ends.
 export function carriedItemDate(periodEnd: LocalDate, settledWeeks: readonly Period[]): LocalDate {
   let day = addDays(periodEnd, 1);
   for (let i = 0; i <= settledWeeks.length; i += 1) {
@@ -70,7 +70,7 @@ export function paidWritesOf(input: {
   // The driver's escrow balance just before this booking.
   openingCents: number;
   periodEnd: LocalDate;
-  // Later weeks where the driver already has an approved or paid stub (carriedItemDate).
+  // Later weeks that can no longer draft this driver's carried item (carriedItemDate).
   settledWeeks?: readonly Period[];
 }): PaidWrites {
   if (!Number.isSafeInteger(input.openingCents)) throw new RangeError("opening balance is not cents");

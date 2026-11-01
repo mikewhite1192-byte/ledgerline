@@ -285,4 +285,22 @@ describe("recoveries held across two open weeks", () => {
     );
     expect(items).toEqual([{ item_date: "2026-11-16", amount: "50000" }]);
   });
+
+  it("dates a carried shortfall past a newer week that closed with no stub of this driver", async () => {
+    const { w1, w2 } = await setup({ deficit: false, escrow: false });
+    await item("other_deduction", "2026-11-04", 150_000);
+    await runWeek(w1);
+    // The newer week was paid for the other drivers and closed; this driver had no stub in it.
+    await admin.withTenant(A.tenantId, (q) =>
+      q.execute("UPDATE settlement_periods SET status = 'paid' WHERE tenant_id = current_tenant_id() AND id = CAST($1 AS uuid)", [w2]),
+    );
+    await pay(await stubOf(w1));
+    const items = await admin.withTenant(A.tenantId, (q) =>
+      q.query<{ item_date: string }>(
+        `SELECT CAST(item_date AS text) AS item_date
+           FROM pay_items WHERE tenant_id = current_tenant_id() AND kind = 'carried_shortfall'`,
+      ),
+    );
+    expect(items).toEqual([{ item_date: "2026-11-16" }]);
+  });
 });
