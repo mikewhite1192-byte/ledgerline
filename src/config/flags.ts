@@ -1156,8 +1156,8 @@ export const flags: Flags = {
   advanceParking: { enabled: true, startDate: "2026-11-02" },
   // Off until its own one-line enable PR. A pull is an outside write, in test mode only.
   cardPullback: { enabled: false, startDate: "2026-11-02" },
-  // Off until its own one-line enable PR. Pay math only; nothing moves money on its own.
-  deficitRecovery: { enabled: false, startDate: "2026-11-02" },
+  // On by the owner's call (D-071, 2026-11-01). Pay math only; nothing moves money on its own.
+  deficitRecovery: { enabled: true, startDate: "2026-11-02" },
   // Off until its own one-line enable PR. Adds a driver (not armed, no card); moves no money.
   driverAdmin: { enabled: false },
 };
