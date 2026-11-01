@@ -64,6 +64,7 @@ export type MockRefusal =
   | "no_pod"
   | "no_open_stop"
   | "pickup_first"
+  | "before_pickup"
   | "bad_time"
   | "bad_status"
   | "same_status";
@@ -199,8 +200,9 @@ export async function applyMockAction(
     const pickup = action.kind === "complete_pickup";
     const times = stopTimes(load, at, action.arrivedLocal, action.departedLocal);
     if (times === null) return fail("bad_time");
-    const stops = await q.query<{ id: string; stop_kind: string; completed: boolean }>(
-      `SELECT CAST(id AS text) AS id, stop_kind, completed_at IS NOT NULL AS completed FROM mock_tms_stops
+    const stops = await q.query<{ id: string; stop_kind: string; completed: boolean; completed_at: string | null }>(
+      `SELECT CAST(id AS text) AS id, stop_kind, completed_at IS NOT NULL AS completed,
+              to_char(completed_at AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"') AS completed_at FROM mock_tms_stops
         WHERE tenant_id = current_tenant_id() AND mock_load_id = CAST($1 AS uuid) ORDER BY ordinal`,
       [load.id],
     );
@@ -209,6 +211,12 @@ export async function applyMockAction(
     const stop = pickup ? pickups.find((s) => !s.completed) : deliveries[deliveries.length - 1];
     if (!stop || stop.completed) return fail("no_open_stop");
     if (!pickup && pickups.some((s) => !s.completed)) return fail("pickup_first");
+    // A delivery starts no earlier than the last pickup left and ends after it, so the two stop
+    // rows never share a time and Delivered is never dated before In Transit.
+    if (!pickup) {
+      const left = Math.max(...pickups.map((s) => Date.parse(s.completed_at as string)));
+      if (Date.parse(times.arrived) < left || Date.parse(times.departed) <= left) return fail("before_pickup");
+    }
     const to = pickup ? L.in_transit : L.delivered;
     const local = localClockOf(times.departed, load.zone);
     const moves = statusRows(load, to);

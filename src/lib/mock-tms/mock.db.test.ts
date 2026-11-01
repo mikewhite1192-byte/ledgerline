@@ -308,6 +308,21 @@ describe("the sample dispatch system", () => {
       ["status", "Booked", "Tendered"],
     ]);
     expect(await act(f, l.reference, { kind: "assign_driver", driverExternalId: "drv-9" }, 4)).toEqual({ ok: false, category: "unknown_driver" });
+
+    // The pickup leaves at 9:05 AM local; a delivery typed before it, or ending the same minute, is refused.
+    expect(await act(f, l.reference, { kind: "complete_pickup", arrivedLocal: null, departedLocal: null }, 5)).toMatchObject({ ok: true });
+    for (const [arrivedLocal, departedLocal] of [
+      ["2026-11-03T08:00", "2026-11-03T08:15"],
+      ["2026-11-03T09:05", "2026-11-03T09:05"],
+    ]) {
+      expect(await act(f, l.reference, { kind: "complete_delivery", arrivedLocal, departedLocal }, 10)).toEqual({
+        ok: false,
+        category: "before_pickup",
+      });
+    }
+    expect(await act(f, l.reference, { kind: "complete_delivery", arrivedLocal: "2026-11-03T09:05", departedLocal: "2026-11-03T09:06" }, 10)).toMatchObject({
+      ok: true,
+    });
   });
 
   it("stops at the history cap and writes nothing", async () => {

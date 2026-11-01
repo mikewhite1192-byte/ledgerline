@@ -32,6 +32,7 @@ export const MOCK_MESSAGES: Record<MockActionCategory, string> = {
   no_pod: "Delivered needs a proof of delivery on file. Complete the delivery instead.",
   no_open_stop: "That stop is already completed. Nothing was changed.",
   pickup_first: "Complete the pickup before the delivery. Nothing was changed.",
+  before_pickup: "The delivery must start no earlier than the pickup left, and end after it. Nothing was changed.",
   bad_time: "Arrival must be at or before departure, departure no later than now, and neither more than seven days back.",
   bad_status: "Pick a status from the list. Nothing was changed.",
   same_status: "The load already has that status. Nothing was changed.",

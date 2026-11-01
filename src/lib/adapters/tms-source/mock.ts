@@ -264,7 +264,8 @@ async function listOf(
           reference: r.reference,
           driverExternalId: r.driver_external_id,
         },
-        stale.get(r.external_id) ?? null,
+        // A load whose own last update is already that old shows as it is.
+        Date.parse(r.updated_at) > feedNowMs(ctx) - STALE_MS ? (stale.get(r.external_id) ?? null) : null,
         faults,
       ),
     );

@@ -1127,6 +1127,7 @@ describe("the demo reset", () => {
     }
   });
 
+  // Three full seeds of one carrier; a CI runner needs more than the default 5 s.
   it("rolls the clear back when the replace fails after it, so the carrier is left as it was", async () => {
     await withMoneySwitches(async () => {
       await dress(A, planA, "a");
@@ -1141,7 +1142,7 @@ describe("the demo reset", () => {
       await resetDemoTenant(app, A, planA);
       expect(await rowsOf(A)).toEqual(sorted(planA.rows));
     });
-  });
+  }, 60_000);
 
   it("lets the desk loop sweep the day again, once, after a reset removed the day's sweep run, and leaves the other carrier alone", async () => {
     const saved = { desk: structuredClone(flags.deskLoop), sweep: flags.sweepEnabled, fanout: flags.fanoutEnabled };
