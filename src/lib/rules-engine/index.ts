@@ -48,7 +48,15 @@ export {
   leaseLine,
   scheduleActive,
 } from "./deductions";
-export { checkAdvance, DUPLICATE_WINDOW_MS, outstandingCents, recoverAdvances } from "./recovery";
+export {
+  checkAdvance,
+  checkDeficit,
+  deficitOwedCents,
+  DUPLICATE_WINDOW_MS,
+  outstandingCents,
+  recoverAdvances,
+  recoverDeficits,
+} from "./recovery";
 export { settleDriver } from "./settlement";
 export { advanceEligibility, floorToDollars } from "./advances";
 export { invoiceAmount } from "./invoices";

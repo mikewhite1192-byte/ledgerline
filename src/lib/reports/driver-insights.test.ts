@@ -156,6 +156,7 @@ describe("driverInsightsOf", () => {
         items: [item({ id: `fuel-${d.id}`, driverId: d.id, kind: "fuel", amountCents: c(fuel) })],
         schedules: [],
         advances: [],
+        deficits: [],
         escrowBalanceCents: c(0),
       });
       const record = stub({

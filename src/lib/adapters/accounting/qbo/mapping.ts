@@ -120,6 +120,9 @@ export const ACCOUNT_FOR_PAY_LINE: Record<string, AccountRole> = {
   carried_shortfall: "driver_chargebacks",
   lease: "driver_chargebacks",
   insurance: "driver_chargebacks",
+  // Money a driver owes by a person's ruling (a card load, a pull-back the card could not cover),
+  // taken back from pay: a chargeback, like fuel.
+  deficit_recovery: "driver_chargebacks",
 };
 
 export function accountForPayLine(kind: string): AccountRole {

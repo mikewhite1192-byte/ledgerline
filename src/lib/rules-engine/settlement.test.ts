@@ -36,6 +36,7 @@ function input(over: Partial<SettlementInput> = {}): SettlementInput {
     items: [],
     schedules: [],
     advances: [],
+    deficits: [],
     escrowBalanceCents: c(0),
     ...over,
   };

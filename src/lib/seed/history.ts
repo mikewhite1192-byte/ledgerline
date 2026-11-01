@@ -78,6 +78,8 @@ export function applyHistory({ slug, zone, rows, newId }: HistoryArgs): void {
         items: [...rows.pay_items, ...carried].filter((i) => i.driver_id === d.id).map(payItemOf),
         schedules: (schedules.get(d.id) ?? []).map(scheduleOf),
         advances: (advances.get(d.id) ?? []).map(advanceOf),
+        // The seed writes no deficits, so its history recovers none.
+        deficits: [],
         escrowBalanceCents: driverOf(d).escrowBalanceCents,
       });
       const settlementId = newId();

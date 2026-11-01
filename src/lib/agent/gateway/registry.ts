@@ -10,6 +10,7 @@ import { getAdvances } from "./tools/read/get-advances";
 import { getArAging } from "./tools/read/get-ar-aging";
 import { getCardBreaks } from "./tools/read/get-card-breaks";
 import { getCardLoads } from "./tools/read/get-card-loads";
+import { getDriverDeficits } from "./tools/read/get-driver-deficits";
 import { getCashFriday } from "./tools/read/get-cash-friday";
 import { getCollections } from "./tools/read/get-collections";
 import { getCustomerPayments } from "./tools/read/get-customer-payments";
@@ -144,6 +145,8 @@ const TOOLS: readonly AnyToolDef[] = [
   proposeEscrowRelease,
   // Offered only while flags.cardPullback.enabled is on (the tool's enabled switch).
   proposeCardPullback,
+  // Offered only while flags.deficitRecovery.enabled is on (the tool's enabled switch).
+  getDriverDeficits,
   // Offered only while flags.tmsSync.enabled is on (each tool's enabled switch): reads of the
   // dispatch mirror, never a write to it.
   getTmsLoad,
