@@ -3,7 +3,7 @@ import { flags } from "../../config/flags";
 import { AiError, complete, type AiFormat, type AiRequest, type AiResult } from "../ai";
 import type { Session } from "../auth/claims";
 import { briefPlainText } from "../briefs/render";
-import { verifyBrief } from "../briefs/verify";
+import { TAG_REACH, verifyBrief } from "../briefs/verify";
 import { getDb, type TenantDb } from "../db";
 import { formatCents } from "../format/money";
 import { tenantLock } from "../invoices/number";
@@ -52,7 +52,7 @@ export const DIGEST_RULES = [
   "- Copy every number exactly as the list writes it, and put its tag right after the number, before",
   '  any word, like this: "2 [f2] card breaks wait for you" or "$450.00 [f11] in advances". Every number',
   "  needs its own tag.",
-  '- A fact that reads "not read" is said as "not read", never as a number.',
+  '- A fact that reads "not read" is said as "not read" with its tag right after, like "not read [f12]", never as a number.',
   "- Write every number in digits. No numbers as words, no dates, no years.",
   "- No advice, no promises, no links, no questions.",
   'Reply with JSON only: {"text": the digest}.',
@@ -115,11 +115,18 @@ export async function draftDigest(
   if (result.status !== "ok") return fallback("model_incomplete", cents);
   const checked = verifyBrief(result.text, facts);
   if (!checked.ok) return fallback(`check_${checked.category}`, cents);
-  // Every fact that needs a person and is above 0 or not read must be cited, so a draft can never
-  // leave one out; the code-written line always names them.
-  const cited = new Set(checked.verification.cited);
+  // Every fact that needs a person and is above 0 or not read must be said, so a draft can never
+  // leave one out; the code-written line always names them. A tag alone is not enough: a number
+  // above 0 needs its checked number, and a fact not read needs "not read" right before its tag.
+  const counted = new Set(checked.spans.map((s) => s.key));
+  const saidNotRead = (key: string) =>
+    checked.tags.some(
+      (t) => t.key === key && /not read\s*$/i.test(checked.text.slice(Math.max(0, t.start - TAG_REACH), t.start)),
+    );
   const left = facts.some(
-    (f) => f.needsPerson && (!f.known || (typeof f.value === "number" && f.value > 0)) && !cited.has(f.key),
+    (f) =>
+      f.needsPerson &&
+      (f.known ? typeof f.value === "number" && f.value > 0 && !counted.has(f.key) : !saidNotRead(f.key)),
   );
   if (left) return fallback("check_incomplete", cents);
   const plain = briefPlainText(checked.text).trim();

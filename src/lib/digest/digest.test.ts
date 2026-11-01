@@ -206,9 +206,22 @@ describe("the draft", () => {
     expect(d).toMatchObject({ text: words, category: "check_incomplete" });
   });
 
+  it("lands the words line on a draft that names a fact that needs a person by its tag alone", async () => {
+    const bare = DRAFT.replace("2 [f2] card breaks and ", "Card breaks [f2] and ");
+    const d = await draftDigest(facts, replying(JSON.stringify({ text: bare })), SESSION, "t");
+    expect(d).toMatchObject({ text: words, category: "check_incomplete" });
+  });
+
+  it("keeps a draft that says a fact that needs a person was not read", async () => {
+    const unread = numberFacts(factIdsFor(WEDNESDAY), { ...DAILY, send: undefined });
+    const text = DRAFT.replace("2 [f12] invoices to send", "invoices to send not read [f12]");
+    const d = await draftDigest(unread, replying(JSON.stringify({ text })), SESSION, "t");
+    expect(d.category).toBe("drafted");
+  });
+
   it("lands the words line on a draft that leaves out a fact that was not read", async () => {
     const unread = numberFacts(factIdsFor(WEDNESDAY), { ...DAILY, send: undefined });
-    const d = await draftDigest(unread, replying(JSON.stringify({ text: DRAFT.replace("2 [f12] invoices to send", "invoices to send") })), SESSION, "t");
+    const d = await draftDigest(unread, replying(JSON.stringify({ text: DRAFT.replace("2 [f12] invoices to send", "invoices to send [f12]") })), SESSION, "t");
     expect(d).toMatchObject({ text: digestWords(unread), category: "check_incomplete" });
   });
 
