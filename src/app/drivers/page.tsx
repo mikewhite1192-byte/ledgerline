@@ -75,6 +75,8 @@ export default async function DriversPage({
       err instanceof RangeError ||
       err instanceof InputError
     ) {
+      // The category only, never the text, so an outage and a bound are told apart in the log.
+      console.error("drivers page unreadable:", err.name);
       problem = "unreadable";
     } else throw err;
   }
