@@ -413,7 +413,9 @@ describe("agent asks", () => {
     expect(dropped.reason).toBeNull();
     expect(dropped.reason_call_id).not.toBeNull();
     expect(logs.join(" ")).toContain("dropped=figures");
-    expect(logs.join(" ")).not.toContain("950");
+    // The dropped figure, never a bare "950": the logged ids are random and can contain those digits.
+    expect(logs.join(" ")).not.toContain("$950.00");
+    expect(logs.join(" ")).not.toContain("The rule allows");
     // A second pass finds nothing left to try.
     expect(await fillReasons(desk(A), NOW + 60_000, { db: app, clock, complete })).toEqual({ tried: 0, kept: 0 });
     expect(calls).toHaveLength(2);

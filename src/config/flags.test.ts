@@ -139,6 +139,8 @@ const KEPT_OFF = [
   "cardPullback.enabled",
   // The dispatch webhook ships off; its own one-line enable PR turns it on once the key is stored.
   "tmsHook.enabled",
+  // The activation checklist ships off; its own one-line enable PR turns it on.
+  "activationChecklist.enabled",
   // The stub sent mark ships off; its own one-line enable PR turns it on.
   "stubSent.enabled",
 ] as const;
@@ -487,6 +489,7 @@ describe("flags", () => {
       "tmsHook.enabled",
       "morningDigest.enabled",
       "namedLines.enabled",
+      "activationChecklist.enabled",
       "stubSent.enabled",
     ];
     const offOnly = LOCAL_OFF_ONLY as readonly string[];

@@ -2,12 +2,15 @@ import { randomUUID } from "node:crypto";
 import type { Session } from "../auth/claims";
 import { getDb, type TenantDb } from "../db";
 import { isCanonicalUuid } from "../money/keys";
+import { activationOn, readActivationChecklist, type ArmBlocker } from "./activation";
 import { readMember } from "./member";
 
 // Arming a driver: whether money may go to them at all, separate from the card on file. A new
 // driver is not armed. Only an admin arms or disarms (decision D-034). One tenant transaction
 // with the driver locked, so an approval that locks the same driver sees the state before or
-// after the change, never in between; every change writes one row to the append-only log.
+// after the change, never in between; every change writes one row to the append-only log. While
+// the activation checklist is on (./activation.ts), arming a driver who is not armed is refused
+// with the first step still missing; a driver already armed, and every disarm, never read it.
 
 export type ArmTransition = "noop" | "arm" | "disarm";
 
@@ -18,7 +21,7 @@ export function armTransition(current: boolean, wanted: boolean): ArmTransition 
 
 export type ArmResult =
   | { ok: true; changed: boolean; armed: boolean; armedAt: string | null }
-  | { ok: false; category: "not_found" | "role" | "bad_request" | "driver_inactive"; retryable: false };
+  | { ok: false; category: "not_found" | "role" | "bad_request" | "driver_inactive" | ArmBlocker; retryable: false };
 
 const NOTE_MAX = 240;
 
@@ -56,6 +59,14 @@ export async function armDriver(
     const step = armTransition(current, change.armed);
     if (step === "noop") {
       return { ok: true, changed: false, armed: current, armedAt: rows[0].money_armed_at } as const;
+    }
+    // Only the false-to-true arm, read under the driver's row lock in the same transaction as the
+    // write. Off, nothing is read and the arm is exactly as before.
+    if (step === "arm" && activationOn()) {
+      const checklist = await readActivationChecklist(q, driverId);
+      if (checklist.blockers.length > 0) {
+        return { ok: false, category: checklist.blockers[0], retryable: false } as const;
+      }
     }
     // Arming stamps the time; disarming keeps the last armed time as history.
     await q.execute(
