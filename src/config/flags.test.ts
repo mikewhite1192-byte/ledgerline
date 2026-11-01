@@ -131,6 +131,9 @@ const RELEASED_ON = [
   // Released by the owner (D-071, 2026-11-01) once the key was stored: the dispatch system can wake
   // the desk with a signed call. It reads only, never writes to dispatch, and moves no money.
   "tmsHook.enabled",
+  // Released by the owner (D-071, D-087, 2026-11-01): the sample dispatch system for the demo
+  // carriers. It changes only its own tables and moves no money.
+  "mockTms.enabled",
 ] as const;
 
 // What stays off, each waiting on a missing piece or an outside send the owner has not released.
@@ -148,8 +151,6 @@ const KEPT_OFF = [
   "evalRun.enabled",
   // The card pull-back ships off; its own one-line enable PR turns it on.
   "cardPullback.enabled",
-  // The sample dispatch system ships off; its own one-line enable PR turns it on.
-  "mockTms.enabled",
 ] as const;
 
 // The on/off switches in flags.ts, by path: every top-level boolean and every boolean inside a
@@ -445,8 +446,8 @@ describe("flags", () => {
     expect(LOCAL_OFF_ONLY as readonly string[]).toContain("tmsHook.enabled");
   });
 
-  it("ships the sample dispatch system off, capped per load, and local mode can never turn it on", () => {
-    expect(flags.mockTms).toEqual({ enabled: false, maxEventsPerLoad: 36 });
+  it("ships the sample dispatch system on, capped per load, and local mode can never turn it on", () => {
+    expect(flags.mockTms).toEqual({ enabled: true, maxEventsPerLoad: 36 });
     expect(flags.mockTms.maxEventsPerLoad).toBeLessThan((MAX_HISTORY_PAGES - 1) * CUT_PAGE);
     expect(Number.isSafeInteger(flags.mockTms.maxEventsPerLoad) && flags.mockTms.maxEventsPerLoad > 0).toBe(true);
     expect(LOCAL_OVERRIDABLE as readonly string[]).not.toContain("mockTms.enabled");
