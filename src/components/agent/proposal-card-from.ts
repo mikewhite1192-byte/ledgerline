@@ -9,6 +9,7 @@ import { formatInstant, formatLocalDate } from "@/lib/format/dates";
 import { sourceLabel } from "@/lib/format/labels";
 import { formatCents } from "@/lib/format/money";
 import { isRuleKey } from "@/lib/pay-rules/rules";
+import { PULL_FOR_PERSON } from "@/lib/pullbacks/words";
 import {
   AUDIT_LINES,
   CONCERNS_QUESTION,
@@ -474,6 +475,8 @@ export function proposalCardFrom(
     ...(p.kind === "card_match" && p.cardMatch ? { detail: cardMatchDetail(p.cardMatch) } : {}),
     ...(p.kind === "card_load_ruling" && p.cardLoad ? { detail: cardLoadDetail(p.cardLoad) } : {}),
     ...(p.kind === "card_pullback" && p.pull ? { detail: pullDetail(p.pull, p.amountCents) } : {}),
+    // A pull marked unknown is a person's to settle, never checked again on its own.
+    ...(p.kind === "card_pullback" && p.pullForPerson ? { statusNotes: { unknown: { text: PULL_FOR_PERSON } } } : {}),
     confirmQuestion,
     confirmNoun: copy.noun,
     ...(confirmNext ? { confirmNext } : {}),

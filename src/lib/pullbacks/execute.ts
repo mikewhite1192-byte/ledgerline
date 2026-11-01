@@ -719,15 +719,19 @@ export const pullbackExecutor: Executor = Object.assign(
 // once), so a call still in flight is not read back as if it had been lost.
 const CHECK_AFTER_SECONDS = 60;
 
+// needsPerson: the pull reads unknown after the pass (money moved but its record could not be
+// finished, such as another amount confirmed), so it waits for a person whatever its ledger rows
+// say. A pull that no longer reads counts as one too: unknown is never nothing.
 export type CheckResult =
-  | { ok: true; summary: ReconcileSummary; tooNew: number; stillWaiting: number }
+  | { ok: true; summary: ReconcileSummary; tooNew: number; stillWaiting: number; needsPerson: boolean }
   | { ok: false; category: string; retryable: boolean };
 
 // Check pending for one pull: the reconcile pass over this pull's own open ledger rows, each read
 // back through the card provider by its request id. Never pulls anything new; a pull found made
 // gets the same finishPull the approval would have run (once: the pull row is locked and a pulled
 // one is left as it is), and one found not made ends the pull failed. A person asked, so the
-// read-back runs even past the automatic check limit; it stays read-only toward the provider.
+// read-back runs even past the automatic check limit; it stays read-only toward the provider. A
+// pull marked unknown answers needsPerson, its ledger rows left as they are.
 export async function checkPendingPull(session: Session, pullId: string, deps: PullbackDeps = {}): Promise<CheckResult> {
   if (!pullbackOn()) return no("pullback_off");
   const db = deps.db ?? getDb();
@@ -754,12 +758,14 @@ export async function checkPendingPull(session: Session, pullId: string, deps: P
   );
   let tooNew = 0;
   let stillWaiting = 0;
-  if (summary.checked === 0) {
-    const rows = await db.withTenant(session.tenantId, (q) => pullRows(q, found.pull.id));
-    for (const r of rows) {
-      if (r.state === "sent" && r.sentSecondsAgo !== null && r.sentSecondsAgo <= CHECK_AFTER_SECONDS) tooNew += 1;
-      else if (r.state === "sent" || r.state === "unknown") stillWaiting += 1;
-    }
+  const after = await db.withTenant(session.tenantId, async (q) => ({
+    pull: await readPull(q, "id", found.pull.id),
+    rows: summary.checked === 0 ? await pullRows(q, found.pull.id) : [],
+  }));
+  for (const r of after.rows) {
+    if (r.state === "sent" && r.sentSecondsAgo !== null && r.sentSecondsAgo <= CHECK_AFTER_SECONDS) tooNew += 1;
+    else if (r.state === "sent" || r.state === "unknown") stillWaiting += 1;
   }
-  return { ok: true, summary, tooNew, stillWaiting };
+  const needsPerson = after.pull === null || after.pull.status === "unknown";
+  return { ok: true, summary, tooNew, stillWaiting, needsPerson };
 }

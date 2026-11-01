@@ -19,6 +19,7 @@ import { sourceWords } from "@/lib/advances/request";
 import { takebackReasonWords } from "@/lib/advances/takeback-words";
 import { advancesOn } from "@/lib/advances/switches";
 import { pullbackOn } from "@/lib/pullbacks/switches";
+import { PULL_APPROVE_NOTICES } from "@/lib/pullbacks/words";
 import { formatInstant, formatLocalDate } from "@/lib/format/dates";
 import { codeToWords, recordNamer } from "@/lib/format/labels";
 import { formatCents } from "@/lib/format/money";
@@ -145,7 +146,12 @@ export default async function AdvanceRecordPage({ params }: { params: Promise<{ 
         pulls={pullbackOn()}
       />
       {pullCards.length > 0 ? (
-        <InvoiceCards cards={pullCards} auditorOn={flags.auditorEnabled} label="Card pull-back to approve" />
+        <InvoiceCards
+          cards={pullCards}
+          auditorOn={flags.auditorEnabled}
+          label="Card pull-back to approve"
+          notices={PULL_APPROVE_NOTICES}
+        />
       ) : null}
 
       <Card>

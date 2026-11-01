@@ -83,6 +83,8 @@ type ProposalRow = {
   exceptions: string | null;
   // A factoring card's request (0060), once its approval wrote one.
   factoring_status?: string | null;
+  // A card pull-back's pull row (0080), once its approval wrote one.
+  pull_status?: string | null;
 };
 type FlagRow = { input_id: string; body_text: string; categories: string | null };
 
@@ -415,9 +417,15 @@ function proposalView(r: ProposalRow): ProposalView {
     reasons,
     sources: refsOf(r.sources),
     // A parked advance never has a ledger row, so a parked one left executing (its payout refused
-    // at the reserve) reads approved with its parked line, not unknown.
+    // at the reserve) reads approved with its parked line, not unknown. A pull marked unknown moved
+    // money its record could not finish (another amount confirmed, or the advance moved): never
+    // failed or done whatever its ledger row says, since a person settles it.
     status:
-      isParkReason(r.park_reason) && r.money_state === null ? "approved" : cardStatusOf(r.status, r.money_state),
+      r.kind === "card_pullback" && r.pull_status === "unknown"
+        ? "unknown"
+        : isParkReason(r.park_reason) && r.money_state === null
+          ? "approved"
+          : cardStatusOf(r.status, r.money_state),
     flagged: r.flagged_input_id !== null,
     flagCategories: stringsOf(r.flag_categories),
     operatorVerdict: r.operator_verdict,
@@ -436,7 +444,9 @@ function proposalView(r: ProposalRow): ProposalView {
     ...(r.kind === "advance_payout" ? { load: advanceLoadOf(r.args), parked: parkedOf(r) } : {}),
     ...(r.kind === "card_match" ? { cardMatch: cardMatchOf(r.args) } : {}),
     ...(r.kind === "card_load_ruling" ? { cardLoad: cardLoadOf(r.args, r.card_load_driver) } : {}),
-    ...(r.kind === "card_pullback" ? { pull: pullViewOf(r.args, Number(r.amount_cents)) } : {}),
+    ...(r.kind === "card_pullback"
+      ? { pull: pullViewOf(r.args, Number(r.amount_cents)), pullForPerson: r.pull_status === "unknown" }
+      : {}),
     ...(CASH_KINDS.has(r.kind) ? { cash: cashOf(r) } : {}),
     ...(r.kind === "pay_rule_change" ? { ruleChange: ruleChangeOf(r) } : {}),
   };
@@ -522,7 +532,7 @@ const PROPOSAL_SQL = `
            END
          END AS card_last4,
          CASE WHEN p.kind IN ('detention_charge', 'advance_payout', 'card_match', 'factoring_request', 'bill_defer',
-                             'collections_chase', 'pay_rule_change', 'card_load_ruling')
+                             'collections_chase', 'pay_rule_change', 'card_load_ruling', 'card_pullback')
               THEN CAST(p.args AS text) END AS args,
          CASE WHEN p.kind = 'card_load_ruling' THEN
            (SELECT d.code FROM drivers d
@@ -535,7 +545,10 @@ const PROPOSAL_SQL = `
          CAST(p.exceptions AS text) AS exceptions,
          CASE WHEN p.kind = 'factoring_request' THEN
            (SELECT fr.status FROM factoring_requests fr WHERE fr.tenant_id = p.tenant_id AND fr.proposal_id = p.id)
-         END AS factoring_status
+         END AS factoring_status,
+         CASE WHEN p.kind = 'card_pullback' THEN
+           (SELECT cp.status FROM card_pullbacks cp WHERE cp.tenant_id = p.tenant_id AND cp.proposal_id = p.id)
+         END AS pull_status
     FROM proposals p`;
 
 // Proposals by id, for the sweep's run page (any staff member of the carrier sees a run's drafts,

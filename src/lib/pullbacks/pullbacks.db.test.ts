@@ -6,6 +6,7 @@ import type { CardPuller } from "../adapters/types";
 import { takeBackAdvance } from "../advances/takeback";
 import { cardPullbackLimit } from "../agent/gateway/limits";
 import { dedupeKey } from "../agent/gateway/store/proposals";
+import { readEngineProposalViews, readProposalViews } from "../agent/gateway/store/views";
 import type { GatewayContext } from "../agent/gateway/types";
 import { autopilotSession, autopilotSub } from "../autopilot/session";
 import { createPgDb } from "../db/pg";
@@ -15,6 +16,8 @@ import { addAdvance, clearLedger, dropTenant, makeTenant, setCardBehavior, sqlSt
 import { executeProposal } from "../proposals/execute";
 import { checkPendingPull, type PullbackDeps } from "./execute";
 import { planPull, type PullAsk, type PullPlanned } from "./facts";
+import { PULL_FOR_PERSON } from "./words";
+import { proposalCardFrom } from "../../components/agent/proposal-card-from";
 
 // The card pull-back against a real database, as the app's own role, with the registered executor
 // (EXECUTORS) and the simulated card provider (test mode; never a real card). The card's balance is
@@ -181,6 +184,12 @@ const deps = (): PullbackDeps => ({
 
 const approve = (id: string, session = A.session) => executeProposal(session, id, { confirmed: false }, deps());
 
+// The card a person sees, read through the app's own view query (never a fake row).
+const seenCard = async (id: string, f: Fixture = A) => {
+  const [view] = await app.withTenant(f.tenantId, (q) => readProposalViews(q, [id]));
+  return { view, card: proposalCardFrom(view) };
+};
+
 type PullDb = { id: string; status: string; pull_cents: string; shortfall_cents: string; money_action_id: string | null };
 
 const pulls = (f: Fixture = A) =>
@@ -326,6 +335,14 @@ describe("card pull-back", () => {
     const plan = await planOf(breakdown(28_000));
     expect(plan).toMatchObject({ pullCents: 25_000, shortfallCents: 3_000 });
     const id = await addProposal(plan);
+    // The card to approve shows the planned pull and the shortfall, read from the stored plan.
+    const waiting = await seenCard(id);
+    expect(waiting.view).toMatchObject({ status: "proposed", pullForPerson: false });
+    expect(waiting.view.pull).toEqual({ last4: plan.cardLast4, pullCents: 25_000, shortfallCents: 3_000, onAdvance: false });
+    expect(waiting.card.confirmQuestion).toBe(`Pull $250.00 back off the driver's fuel card ending ${plan.cardLast4}?`);
+    expect(waiting.card.detail).toBe(
+      `Card ending ${plan.cardLast4} holds $250.00 of the $280.00 asked for. The other $30.00 is booked as money the driver owes.`,
+    );
     expect(await approve(id)).toMatchObject({ ok: true, status: "done" });
     const [pull] = await pulls();
     expect(pull).toMatchObject({ status: "pulled", pull_cents: "25000", shortfall_cents: "3000" });
@@ -370,6 +387,21 @@ describe("card pull-back", () => {
       ok: false,
       refusal: "nothing_to_pull",
     });
+    // Check pending says it waits for a person, and changes nothing: no read-back, no new row.
+    const [held] = await pulls();
+    expect(await checkPendingPull(A.session, held.id, deps())).toMatchObject({
+      ok: true,
+      summary: { checked: 0 },
+      stillWaiting: 0,
+      needsPerson: true,
+    });
+    expect((await pulls())[0].status).toBe("unknown");
+    expect((await ledger()).map((r) => r.state)).toEqual(["failed"]);
+    expect(calls).toBe(1);
+    // The card reads as not confirmed, a person's to settle, never failed.
+    const { view, card } = await seenCard(id);
+    expect(view).toMatchObject({ status: "unknown", pullForPerson: true });
+    expect(card.statusNotes?.unknown).toEqual({ text: PULL_FOR_PERSON });
   });
 
   it("keeps a pull with no answer open until Check pending reads it back, then settles it once", async () => {
@@ -386,7 +418,7 @@ describe("card pull-back", () => {
       refusal: "nothing_to_pull",
     });
 
-    expect(await checkPendingPull(A.session, open.id, deps())).toMatchObject({ ok: true });
+    expect(await checkPendingPull(A.session, open.id, deps())).toMatchObject({ ok: true, needsPerson: false });
     expect((await pulls())[0].status).toBe("pulled");
     expect((await ledger())[0].state).toBe("confirmed");
     expect(await deficits()).toHaveLength(1);
@@ -571,6 +603,17 @@ describe("card pull-back", () => {
       );
       expect(p).toMatchObject({ kind: "card_pullback", subject_table: "advances", amount_cents: "30000", status: "proposed" });
       expect(p.args).toMatchObject({ advanceId: adv, pullCents: 25_000, shortfallCents: 0 });
+      // The advance page's read: the card names what the card gives back and what stays owed.
+      const [view] = await app.withTenant(A.tenantId, (q) => readEngineProposalViews(q, "card_pullback", 5, adv));
+      expect(view).toMatchObject({
+        id: proposalId,
+        pull: { last4: p.args.cardLast4, pullCents: 25_000, shortfallCents: 0, onAdvance: true },
+      });
+      const card = proposalCardFrom(view);
+      expect(card.confirmQuestion).toBe(`Pull $250.00 back off the driver's fuel card ending ${p.args.cardLast4}?`);
+      expect(card.detail).toBe(
+        `Card ending ${p.args.cardLast4} holds $250.00 of the $300.00 asked for. The other $50.00 stays owed on the advance and is recovered from pay.`,
+      );
       // The engine's card is audited by the sweep; stood in for here.
       await admin.withTenant(A.tenantId, (q) =>
         q.execute(

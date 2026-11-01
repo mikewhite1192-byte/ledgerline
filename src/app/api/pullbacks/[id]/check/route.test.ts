@@ -41,6 +41,7 @@ const CHECKED = {
   summary: { checked: 1, confirmed: 1, failed: 0, stillUnknown: 0, skipped: 0, errors: 0 },
   tooNew: 0,
   stillWaiting: 0,
+  needsPerson: false,
 };
 
 beforeEach(() => {
@@ -62,6 +63,13 @@ describe("POST /api/pullbacks/[id]/check", () => {
     expect(res.headers.get("cache-control")).toBe("no-store");
     expect(await res.json()).toEqual(CHECKED);
     expect(mocks.checkPendingPull).toHaveBeenCalledWith(SESSION, PULL);
+  });
+
+  it("answers a pull left for a person as needing one, with nothing waiting on the provider", async () => {
+    const held = { ...CHECKED, summary: { ...CHECKED.summary, checked: 0, confirmed: 0 }, needsPerson: true };
+    mocks.checkPendingPull.mockResolvedValueOnce(held);
+    const res = await check();
+    expect([res.status, await res.json()]).toEqual([200, held]);
   });
 
   it("refuses a cross-site post before the switch, the login or the read-back", async () => {

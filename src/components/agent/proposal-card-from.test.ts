@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { advanceLoadOf, cardLoadOf, pullViewOf } from "@/lib/agent/gateway/store/views";
 import type { ProposalView } from "@/lib/agent/view";
+import { PULL_FOR_PERSON } from "@/lib/pullbacks/words";
 import { hrefOrNull, recordHref } from "@/lib/records/href";
 import {
   FLAG_QUESTION,
@@ -521,6 +522,15 @@ describe("a card pull-back card", () => {
     const unread = proposalCardFrom({ ...base, pull: null });
     expect(unread.confirmQuestion).toBe("Pull up to $400.00 back off the driver's fuel card?");
     expect(unread.detail).toBeUndefined();
+  });
+
+  it("says a pull marked unknown waits for a person, never that it is checked again on its own", () => {
+    const base = { ...view, kind: "card_pullback", amountCents: 40_000, direction: "in", destination: null } as const;
+    const held = proposalCardFrom({ ...base, status: "unknown", pullForPerson: true });
+    expect(held.status).toBe("unknown");
+    expect(held.statusNotes).toEqual({ unknown: { text: PULL_FOR_PERSON } });
+    // A pull still open on its ledger row keeps the shared not-confirmed line.
+    expect(proposalCardFrom({ ...base, status: "unknown", pullForPerson: false }).statusNotes).toBeUndefined();
   });
 });
 

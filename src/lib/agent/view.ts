@@ -160,6 +160,9 @@ export type ProposalView = {
   cardLoad?: CardLoadView | null;
   // Set on a card_pullback only, when its stored args read back whole.
   pull?: PullView | null;
+  // Set on a card_pullback only: true when its pull is marked unknown (money moved but its record
+  // could not be finished), so a person settles it.
+  pullForPerson?: boolean;
   // Set on an advance_payout only: its advance parked after the approval, with the reason; whether
   // the parking switch lets a press release it now; whether only an admin may. Null otherwise.
   parked?: { reason: ParkReason; on: boolean; adminOnly: boolean } | null;
