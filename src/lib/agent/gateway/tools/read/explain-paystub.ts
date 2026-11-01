@@ -21,11 +21,12 @@ export const explainPaystub = defineTool({
     "line applies; parkedReason says why a stored paystub no longer matches its records. A stored " +
     "line with namedByPerson true was typed by staff and cites one record in sourceRef; " +
     "contradictions lists each line that does not match the record it cites, as the approval check " +
-    "would find it now; null means it was not checked, never that there are none. A paid stub " +
-    "carries stub: a one-line summary written from the stored totals, to read to staff as it is, " +
-    "and sent, which says when a staff member recorded sending the stub and their role; sent null " +
+    "would find it now; null means it was not checked, never that there are none. When present, " +
+    "stub on a paid stub carries a one-line summary written from the stored totals, to read to " +
+    "staff as it is, and sent, which says when a staff member recorded sending the stub and their role; sent null " +
     "on a paid stub means no send is recorded yet. You cannot send a stub: a staff member sends it " +
-    "and records it with the Mark stub sent button on the paystub's page. stub is null unless paid.",
+    "and records it with the Mark stub sent button on the paystub's page. stub is null unless paid, " +
+    "and absent when stub send records are off.",
   tier: "read",
   roles: OPERATOR,
   label: "Explaining the pay stub",
@@ -56,14 +57,16 @@ export const explainPaystub = defineTool({
           stored.id,
         ).map((p) => ({ category: p.category, source: p.source }));
       }
-      // The stub's one line and whether a person recorded sending it, for a paid stub only. The
-      // sender is named by role; the membership id and email stay out.
+      // The stub's one line and whether a person recorded sending it, for a paid stub only, and only
+      // while flags.stubSent is on (off, the key is absent and nothing more is read). The sender is
+      // named by role; the membership id and email stay out.
+      const stubOn = flags.stubSent.enabled;
       let stub: { summary: string; sent: { at: string; byRole: string } | null } | null = null;
       // A paid stub always has its week and its paid time (foreign key, 0005's paid check); if
       // either ever reads missing, stub stays null and the lines and totals still come back.
       const [period] =
-        stored.status === "paid" ? await readRowsWhereId(q, "settlement_periods", "id", a.periodId) : [];
-      if (stored.status === "paid" && period && stored.paid_at !== null) {
+        stubOn && stored.status === "paid" ? await readRowsWhereId(q, "settlement_periods", "id", a.periodId) : [];
+      if (stubOn && stored.status === "paid" && period && stored.paid_at !== null) {
         const sent = stored.stub_sent_at !== null ? await readStubSent(q, stored.id) : null;
         if (stored.stub_sent_at !== null && sent === null) throw new Error("the stub sent mark could not be read");
         stub = {
@@ -94,7 +97,7 @@ export const explainPaystub = defineTool({
           parkedReason: stored.parked_reason,
           notes: exemptNotes,
           contradictions,
-          stub,
+          ...(stubOn ? { stub } : {}),
           rows: [...lines]
             .sort((x, y) => x.seq - y.seq)
             .map((l) => ({

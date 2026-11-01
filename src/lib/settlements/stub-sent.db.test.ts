@@ -237,6 +237,8 @@ describe("the stub sent mark against a seeded database", () => {
   });
 
   it("shows the agent the stub line and who sent it by role, never the membership id or email", async () => {
+    // The stub key is there only while the switch is on (set for this file in beforeAll).
+    expect(flags.stubSent.enabled).toBe(true);
     try {
       const before = await explain(PAID.driver_id, PAID.period_id);
       const driver = PLAN.rows.drivers.find((d) => d.id === PAID.driver_id)!;
@@ -274,6 +276,20 @@ describe("the stub sent mark against a seeded database", () => {
       const draft = await explain(d.driver_id, OPEN.id);
       expect((draft.result as { stub: unknown }).stub).toBeNull();
     } finally {
+      await clearMarks();
+    }
+  });
+
+  it("adds no stub key to the agent's explanation while the switch is off, even for a marked paid stub", async () => {
+    expect(flags.stubSent.enabled).toBe(true);
+    try {
+      expect(await markStubSent(app, STAFF, PAID.id, clock())).toMatchObject({ ok: true, already: false });
+      flags.stubSent.enabled = false;
+      const told = await explain(PAID.driver_id, PAID.period_id);
+      expect(told.result).not.toHaveProperty("stub");
+      expect(told.result).toMatchObject({ computed: false, status: "paid", settlementId: PAID.id });
+    } finally {
+      flags.stubSent.enabled = true;
       await clearMarks();
     }
   });
