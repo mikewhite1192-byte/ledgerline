@@ -56,6 +56,8 @@ describe("the sample dispatch system's webhook send", () => {
 
   it("sends nothing while its switch is off, or without an origin or a key", async () => {
     const f = fetchAnswering(202);
+    on();
+    flags.mockTms.enabled = false;
     expect(await sendMockHook(TENANT, "x", { fetch: f, key: async () => KEY, env: ENV })).toBe("hook_off");
     on();
     expect(await sendMockHook(TENANT, "x", { fetch: f, key: async () => KEY, env: {} })).toBe("not_configured");
