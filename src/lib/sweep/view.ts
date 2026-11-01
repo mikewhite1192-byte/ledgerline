@@ -269,19 +269,20 @@ export type SweepHome = {
   runs: SweepRunView[];
 };
 
-// The sweep's own page and the home card: the open week and the latest runs.
+// The sweep's own page and the home card: the newest open week (the one a run sweeps, D-090) and
+// the latest runs.
 export async function readSweepHome(session: Session, deps: { db?: TenantDb } = {}): Promise<SweepHome> {
   const db = deps.db ?? getDb();
   return db.withTenant(session.tenantId, async (q) => {
     await assertMembership(q, session);
     const open = await q.query<{ id: string; period_start: string; period_end: string }>(
       `SELECT id, CAST(period_start AS text) AS period_start, CAST(period_end AS text) AS period_end
-         FROM settlement_periods WHERE status = 'open' ORDER BY period_start DESC LIMIT 2`,
+         FROM settlement_periods WHERE status = 'open' ORDER BY period_start DESC LIMIT 1`,
     );
     const runs = await q.query<RunRow>(`${runSelect()} ORDER BY r.started_at DESC, r.id LIMIT 10`);
     return {
       openPeriod:
-        open.length === 1 ? { id: open[0].id, periodStart: open[0].period_start, periodEnd: open[0].period_end } : null,
+        open[0] ? { id: open[0].id, periodStart: open[0].period_start, periodEnd: open[0].period_end } : null,
       runs: runs.map(runOf),
     };
   });

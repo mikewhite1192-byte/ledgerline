@@ -39,6 +39,7 @@ import { checkPhase, planPhase, reconcilePhase, type FanoutCtx, type FanoutDeps 
 import { endSweep, isRequiredSweepChecklist, nextSweepChecklist, sweepChecklist, type SweepChecklistChange } from "./checklist";
 import { sweepCoverage, SWEEP_ENGINE_CHECKS } from "../agent/verify/required";
 import { serviceSession } from "./service-session";
+import { rollPayWeek } from "../settlements/roll";
 
 // The pay sweep (design 3.2): one run checks one open week, drafts a pay correction for each
 // finding it can fix and lists the rest for a person. It only proposes. A run works in slices,
@@ -207,15 +208,17 @@ async function readRun(q: Queryable, runId: string): Promise<Run | null> {
   return rows[0] ?? null;
 }
 
-// The run's open week: the one named (still open), else the single open one.
-async function openPeriod(q: Queryable, periodId: string | null) {
+// The run's open week: the one named (still open), else the newest open one by its start, the
+// week new records land in (D-090). An older open week waits for its approvals and pay.
+export async function openPeriod(q: Queryable, periodId: string | null) {
   const periods = await q.query<{ id: string; period_start: string; period_end: string }>(
     `SELECT id, CAST(period_start AS text) AS period_start, CAST(period_end AS text) AS period_end
        FROM settlement_periods WHERE status = 'open'
-        AND (CAST($1 AS uuid) IS NULL OR id = CAST($1 AS uuid))`,
+        AND (CAST($1 AS uuid) IS NULL OR id = CAST($1 AS uuid))
+      ORDER BY period_start DESC LIMIT 1`,
     [periodId],
   );
-  return periods.length === 1 ? periods[0] : null;
+  return periods[0] ?? null;
 }
 
 function defaults(db: TenantDb, clock: () => Date, deps: SweepDeps): Ctx["deps"] {
@@ -258,6 +261,9 @@ export async function startSweep(
     await assertMembership(q, session);
     // A replayed start returns the same run.
     if (await readRun(q, runId)) return { ok: true, runId, existing: true };
+    // With its switch on, the week holding today is opened first, in this transaction, so the
+    // roll's lock covers the insert and the pick together.
+    await rollPayWeek(q, now);
     const period = await openPeriod(q, periodId);
     if (!period) return { ok: false, category: "no_open_period" };
     // A run nobody has touched for ten minutes is given up, so the week can be swept again.

@@ -1,5 +1,5 @@
 import { cents, sub, sum, type Cents, type LineKind, type SourceRef } from "../rules-engine";
-import { addDays, type LocalDate } from "../time/local-date";
+import { addDays, isWithin, type LocalDate, type Period } from "../time/local-date";
 
 // The writes a paid settlement makes, worked out from its paystub lines alone (pure). The seed's
 // history (applyHistory) and the live booking (bookPaidSettlement) both call this, so the two
@@ -49,6 +49,20 @@ export type PaidWrites = {
 
 export const CARRIED_DESCRIPTION = "Shortfall carried from the week before";
 
+// The day a carried shortfall is dated: the first day after the week, unless a later week already
+// holds an approved or paid stub of this driver (a newer week paid before this one, D-090), whose
+// lines can no longer change; then the first day past every such week in a row. In the normal
+// order that is periodEnd + 1. Each step moves past one week, so the walk ends.
+export function carriedItemDate(periodEnd: LocalDate, settledWeeks: readonly Period[]): LocalDate {
+  let day = addDays(periodEnd, 1);
+  for (let i = 0; i <= settledWeeks.length; i += 1) {
+    const holding = settledWeeks.find((w) => isWithin(day, w));
+    if (!holding) return day;
+    day = addDays(holding.end, 1);
+  }
+  throw new RangeError("the settled weeks overlap");
+}
+
 export function paidWritesOf(input: {
   settlementId: string;
   lines: readonly PaidLine[];
@@ -56,6 +70,8 @@ export function paidWritesOf(input: {
   // The driver's escrow balance just before this booking.
   openingCents: number;
   periodEnd: LocalDate;
+  // Later weeks where the driver already has an approved or paid stub (carriedItemDate).
+  settledWeeks?: readonly Period[];
 }): PaidWrites {
   if (!Number.isSafeInteger(input.openingCents)) throw new RangeError("opening balance is not cents");
   const escrowLines = input.lines.filter((l) => l.kind === "escrow");
@@ -112,8 +128,9 @@ export function paidWritesOf(input: {
             kind: "carried_shortfall",
             subkind: "shortfall",
             amountCents: input.carryForwardCents,
-            // Pay periods are whole weeks back to back, so the next one starts the day after.
-            itemDate: addDays(input.periodEnd, 1),
+            // Pay periods are whole weeks back to back, so the next one starts the day after,
+            // past any later week already settled for this driver.
+            itemDate: carriedItemDate(input.periodEnd, input.settledWeeks ?? []),
             refTable: "settlements",
             refId: input.settlementId,
             description: CARRIED_DESCRIPTION,

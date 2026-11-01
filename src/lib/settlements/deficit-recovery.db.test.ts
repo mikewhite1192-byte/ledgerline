@@ -464,10 +464,10 @@ describe("deficit recovery on pay day", () => {
     });
   });
 
-  it("takes from a deficit only what the driver's other approved, unbooked stubs leave, and parks a draft that took the same part", async () => {
+  it("takes from a deficit only what the driver's older drafts and other approved, unbooked stubs leave", async () => {
     await payConfig(A, 6_000);
     const d = await addDeficit(A, 10_000);
-    // A carrier has one open week at a time: week one is run while open, then week two opens.
+    // Week one is run while open, then week two opens.
     const [w1, w2] = [await period(A, "2026-11-02", "open"), await period(A, "2026-11-09")];
     const openOnly = (p: string) =>
       admin.withTenant(A.tenantId, (q) =>
@@ -511,23 +511,23 @@ describe("deficit recovery on pay day", () => {
         q.execute("UPDATE settlements SET status = 'approved' WHERE tenant_id = current_tenant_id() AND id = CAST($1 AS uuid)", [s]),
       );
 
-    // Both weeks drafted while neither is approved: each takes the cap from the same deficit.
+    // Both weeks drafted while neither is approved: week one's draft, the older, holds the cap it
+    // took, so week two takes only what is left (D-090).
     await runWeek(w1);
     await openOnly(w2);
     await runWeek(w2);
     const [s1, s2] = [await stubOf(w1), await stubOf(w2)];
     expect(await taken(s1)).toEqual([6_000]);
-    expect(await taken(s2)).toEqual([6_000]);
+    expect(await taken(s2)).toEqual([4_000]);
     expect(await recheck(s2)).toBeNull();
 
-    // Week one is approved; its payout can go out before it books. Week two's recheck now reads
-    // only 4000 left, so week two parks instead of taking the same part twice, and week one's own
-    // recheck (its own stub left out) stays clean.
+    // Week one is approved; its payout can go out before it books. It still holds the same part,
+    // so week two's recheck stays clean, and so does week one's own (its own stub left out).
     await approve(s1);
-    expect(await recheck(s2)).toBe("line_amount_changed");
+    expect(await recheck(s2)).toBeNull();
     expect(await recheck(s1)).toBeNull();
 
-    // A rerun of week two takes only what is left, and both rechecks hold once it is approved too.
+    // A rerun of week two takes the same, and both rechecks hold once it is approved too.
     await runWeek(w2);
     expect(await stubOf(w2)).toBe(s2);
     expect(await taken(s2)).toEqual([4_000]);

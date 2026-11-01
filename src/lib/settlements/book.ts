@@ -41,12 +41,29 @@ export async function bookPaidSettlement(q: Queryable, settlementId: string, now
     [stored.driverId],
   );
   if (!driver) throw new Error("the settlement's driver is missing");
+  const carryForwardCents = cents(stored.carryForwardCents, "carry forward");
+  // A shortfall carried into a later week this driver already has an approved or paid stub in
+  // would never be charged, so its date skips past those weeks (carriedItemDate).
+  const settledWeeks =
+    carryForwardCents > 0
+      ? (
+          await q.query<{ period_start: string; period_end: string }>(
+            `SELECT CAST(p.period_start AS text) AS period_start, CAST(p.period_end AS text) AS period_end
+               FROM settlements s
+               JOIN settlement_periods p ON p.tenant_id = s.tenant_id AND p.id = s.period_id
+              WHERE s.tenant_id = current_tenant_id() AND s.driver_id = CAST($1 AS uuid)
+                AND s.status IN ('approved', 'paid') AND p.period_start > CAST($2 AS date)`,
+            [stored.driverId, period.start],
+          )
+        ).map((w) => ({ start: w.period_start, end: w.period_end }))
+      : [];
   const writes = paidWritesOf({
     settlementId,
     lines,
-    carryForwardCents: cents(stored.carryForwardCents, "carry forward"),
+    carryForwardCents,
     openingCents: Number(driver.escrow_balance_cents),
     periodEnd: period.end,
+    settledWeeks,
   });
   const at = now.toISOString();
 

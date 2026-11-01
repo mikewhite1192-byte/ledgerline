@@ -4,6 +4,7 @@ import { chargeArgsOf, detentionChargeOf } from "../../../data/detention-charge"
 import { DEFICITS_SQL, INSIGHT_WHERE } from "../../../data/driver-insights";
 import {
   ESCROW_LINES,
+  HELD_SQL,
   LOAD_NUMBERS_FIRST,
   LOAD_NUMBERS_NEXT,
   MONEY_CODE_DRIVER_SQL,
@@ -239,6 +240,27 @@ export function planDb(plan: CarrierPlan, extra?: Handler): FakeDb {
       return (tables.pinned_rates ?? [])
         .filter((r) => r.status === "pinned" && r.retired_at === null && r.kind === params[0])
         .map((r) => ({ ...r }));
+    }
+    // What the driver's other unpaid stubs hold on the balances a week draws down (data/read.ts
+    // readHeldRecoveries): drafts in older weeks and approved stubs in any other week. A seed plan
+    // stores no lines, so this answers from a settlement_lines list a test adds, or none.
+    if (sql === HELD_SQL) {
+      const [driverId, periodId, start] = params.map(String);
+      const periods = new Map((tables.settlement_periods ?? []).map((p) => [String(p.id), p]));
+      const held = new Set(
+        (tables.settlements ?? [])
+          .filter((s) => String(s.driver_id) === driverId)
+          .filter((s) =>
+            s.status === "draft"
+              ? String(periods.get(String(s.period_id))?.period_start) < start
+              : s.status === "approved" && String(s.period_id) !== periodId,
+          )
+          .map((s) => String(s.id)),
+      );
+      return (tables.settlement_lines ?? [])
+        .filter((l) => ["advance_recovery", "deficit_recovery", "escrow"].includes(String(l.kind)))
+        .filter((l) => held.has(String(l.settlement_id)))
+        .map((l) => ({ kind: l.kind, sources: JSON.stringify(l.sources), amount_cents: String(l.amount_cents) }));
     }
     // The quarter review's own reads (briefs/quarter-figures.ts). A seed plan holds no proposals,
     // so the fixes and the detention they billed answer from a proposals list a test adds, or none.

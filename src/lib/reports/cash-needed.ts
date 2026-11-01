@@ -1,6 +1,5 @@
 import {
   compareText,
-  ConfigError,
   sum,
   type DriverRecord,
   type SettlementPeriodRecord,
@@ -36,12 +35,13 @@ const GROUPS: readonly { type: DriverRecord["workerType"]; label: string }[] = [
   { type: "owner_operator", label: "Owner-operators" },
 ];
 
-// The week that holds the day asked for (its first day or any day in it), or the one open week.
-// Two open weeks are refused with the engine's own category, never picked between.
+// The week that holds the day asked for (its first day or any day in it), or the week paid next:
+// the oldest open week by its start, as Cash Friday reports it (D-090).
 function weekOf(input: CashNeededInput, day?: string): SettlementPeriodRecord | null {
   if (day !== undefined) return periodHolding(input.periods, day);
-  const open = input.periods.filter((p) => p.status === "open");
-  if (open.length > 1) throw new ConfigError("more_than_one_open_period");
+  const open = input.periods
+    .filter((p) => p.status === "open")
+    .sort((a, b) => compareText(a.periodStart, b.periodStart));
   return open[0] ?? null;
 }
 

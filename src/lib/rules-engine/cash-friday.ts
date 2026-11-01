@@ -399,9 +399,11 @@ export function computeCashFriday(input: CashFridayInput, asOfDate: LocalDate): 
   if (!settings) return refuse("balance_missing");
   const balanceAsOf = assertDate(settings.balanceAsOf, "balance date");
   if (balanceAsOf > asOf) return refuse("balance_in_future");
-  const open = input.periods.filter((p) => p.status === "open");
+  // With two open weeks (D-090), the week paid next: the oldest open one by its start.
+  const open = input.periods
+    .filter((p) => p.status === "open")
+    .sort((a, b) => compareText(a.periodStart, b.periodStart));
   if (open.length === 0) return refuse("no_open_period");
-  if (open.length > 1) return refuse("more_than_one_open_period");
   const period = open[0];
   const payDay = payDayFor({ start: period.periodStart, end: period.periodEnd }, settings.payDayDow, asOf);
   const payRun = payRunTotal(input, period);

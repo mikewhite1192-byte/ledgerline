@@ -208,7 +208,7 @@ describe("cash_needed", () => {
     expect(none.emptyReason).toBe("no_pay_run");
   });
 
-  it("refuses two open weeks with the engine's own category instead of picking one", () => {
+  it("reports the oldest open week, the week paid next, when two are open", () => {
     const periods = plan.rows.settlement_periods.map(periodOf);
     const open = periods.filter((p) => p.status === "open");
     expect(open).toHaveLength(1);
@@ -219,9 +219,7 @@ describe("cash_needed", () => {
       settlements: plan.rows.settlements.map(settlementOf),
       drivers: plan.rows.drivers.map(driverOf),
     };
-    expect(() => computeCashNeeded(input, {}, "2026-11-02")).toThrow(
-      expect.objectContaining({ name: "ConfigError", message: "more_than_one_open_period" }),
-    );
+    expect(computeCashNeeded(input, {}, "2026-11-02").period).toEqual({ start: "2026-10-19", end: "2026-10-25" });
     // A day asked for names its own week, so two open weeks do not matter then.
     expect(computeCashNeeded(input, { periodStart: "2026-10-21" }, "2026-11-02").period).toEqual({
       start: "2026-10-19",

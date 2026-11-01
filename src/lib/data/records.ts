@@ -1,9 +1,12 @@
 import { flags, type Flags } from "../../config/flags";
 import {
   cents,
+  compareText,
   ConfigError,
   InputError,
   parsePayConfig,
+  sub,
+  sum,
   type AdvanceRecord,
   type CashFridayInput,
   type CashFridayLimits,
@@ -364,6 +367,52 @@ export function checkInputOf(
   };
 }
 
+// What a driver's other unpaid stubs before a week hold on the balances a week draws down
+// (readHeldRecoveries, D-090): advance and deficit recoveries by the record's id in lower case,
+// and the escrow those stubs withhold.
+export type HeldRecoveries = {
+  advances: ReadonlyMap<string, number>;
+  deficits: ReadonlyMap<string, number>;
+  escrowCents: number;
+};
+
+export const NOTHING_HELD: HeldRecoveries = { advances: new Map(), deficits: new Map(), escrowCents: 0 };
+
+// The driver's rows as the week reads them: what is held counts as recovered already, never past
+// what is still owed (an advance's amount and fee less what a person took back, which checkAdvance
+// refuses past; a deficit's amount), and the escrow held counts toward the balance. Held never
+// lowers what the record says, so a bad record still fails the engine's own check. Pure; rows of
+// other drivers pass through unchanged.
+export function applyHeld<
+  R extends Pick<TenantRows, "drivers" | "advances"> & { driver_deficits?: readonly DeficitRow[] },
+>(rows: R, driverId: string, held: HeldRecoveries): R {
+  const heldOn = (map: ReadonlyMap<string, number>, id: string) => c(map.get(id.toLowerCase()) ?? 0);
+  return {
+    ...rows,
+    drivers: rows.drivers.map((d) =>
+      d.id !== driverId || held.escrowCents === 0
+        ? d
+        : { ...d, escrow_balance_cents: sum([c(d.escrow_balance_cents), c(held.escrowCents)]) },
+    ),
+    advances: rows.advances.map((a) => {
+      const h = a.driver_id === driverId ? heldOn(held.advances, a.id) : 0;
+      if (h === 0) return a;
+      const owed = sub(sum([c(a.amount_cents), c(a.fee_cents)]), c(a.taken_back_cents));
+      const recovered = Math.max(a.recovered_cents, Math.min(owed, sum([c(a.recovered_cents), h])));
+      return { ...a, recovered_cents: recovered };
+    }),
+    ...(rows.driver_deficits
+      ? {
+          driver_deficits: rows.driver_deficits.map((d) => {
+            const h = d.driver_id === driverId ? heldOn(held.deficits, d.id) : 0;
+            if (h === 0) return d;
+            return { ...d, recovered_cents: Math.max(d.recovered_cents, Math.min(d.amount_cents, sum([c(d.recovered_cents), h]))) };
+          }),
+        }
+      : {}),
+  };
+}
+
 // One driver's settlement for one period, under the version that period runs on, from the
 // escrow balance the driver holds now. The driver's deficits count only while deficit recovery
 // applies to the period (deficitRecoveryApplies); otherwise the input carries none. Rows without
@@ -479,9 +528,13 @@ export function factoredInvoiceIds(lines: readonly { invoice_id: string; status:
   return new Set(lines.filter((l) => l.status !== "declined" && l.status !== "failed").map((l) => l.invoice_id));
 }
 
+// The previews describe the week Cash Friday reports: the oldest open week (D-090), so the pay
+// run total and the previews are one week's.
 function previewsOf(rows: CashFridayRows): SettlementInput[] | null {
-  const open = rows.settlement_periods.filter((p) => p.status === "open");
-  if (open.length !== 1) return null;
+  const open = rows.settlement_periods
+    .filter((p) => p.status === "open")
+    .sort((a, b) => compareText(a.period_start, b.period_start));
+  if (open.length === 0) return null;
   const period: Period = { start: open[0].period_start, end: open[0].period_end };
   const active = rows.drivers
     .filter((d) => d.active_from <= period.end && (d.active_to === null || d.active_to >= period.start))

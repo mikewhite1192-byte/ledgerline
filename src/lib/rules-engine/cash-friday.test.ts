@@ -525,13 +525,16 @@ describe("computeCashFriday refusals", () => {
     expect(computeCashFriday(golden({ settings }), AS_OF)).toEqual({ ok: false, refusal: "balance_in_future" });
   });
 
-  it("refuses with no open week, and with two", () => {
+  it("refuses with no open week", () => {
     expect(computeCashFriday(golden({ periods: [CLOSED] }), AS_OF)).toEqual({ ok: false, refusal: "no_open_period" });
-    const second = { ...CLOSED, id: "per-2", status: "open" as const };
-    expect(computeCashFriday(golden({ periods: [second, PERIOD] }), AS_OF)).toEqual({
-      ok: false,
-      refusal: "more_than_one_open_period",
-    });
+  });
+
+  it("reports the oldest open week when two are open, the week paid next", () => {
+    const one = computeCashFriday(golden(), AS_OF);
+    expect(one.ok).toBe(true);
+    const newer = { ...PERIOD, id: "per-new", periodStart: addDays(PERIOD.periodStart, 7), periodEnd: addDays(PERIOD.periodEnd, 7) };
+    expect(computeCashFriday(golden({ periods: [newer, PERIOD] }), AS_OF)).toEqual(one);
+    expect(computeCashFriday(golden({ periods: [PERIOD, newer] }), AS_OF)).toEqual(one);
   });
 
   it("refuses when the week has no stored run and no preview could be built", () => {
