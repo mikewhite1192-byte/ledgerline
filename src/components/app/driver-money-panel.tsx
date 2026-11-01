@@ -141,7 +141,7 @@ export function DriverMoneyPanel({
     if (note !== "") body.note = note;
     const done = active
       ? "Reactivated. They are not armed: an admin arms them again before any advance."
-      : "Deactivated and disarmed. No new money can go to this driver.";
+      : "Deactivated. They are not armed, so no new money can go to this driver.";
     if (await run("status", `${base}/status`, body, done, statusSentence)) {
       setConfirmStatus(false);
       setLastDay("");
@@ -188,6 +188,9 @@ export function DriverMoneyPanel({
 
   const since = identity.armed.since ? formatInstant(identity.armed.since, timezone) : null;
   const busy = pending !== null;
+  // A driver with a last day on file is never armed (the route refuses it too): reactivate first.
+  // Disarming stays offered.
+  const canArm = identity.armed.on || identity.activeTo === null;
   const showStatus = statusAdminOn && typeof today === "string" && DATE.test(today);
   const status = showStatus ? statusWords(identity.activeTo, today) : null;
   return (
@@ -209,13 +212,13 @@ export function DriverMoneyPanel({
             ) : (
               <Badge tone="warning">Not armed</Badge>
             )}
-            {canAdmin && !confirmArm ? (
+            {canAdmin && canArm && !confirmArm ? (
               <Button variant="outline" size="sm" disabled={busy} onClick={() => setConfirmArm(true)}>
                 {identity.armed.on ? "Disarm" : "Arm"}
               </Button>
             ) : null}
           </div>
-          {canAdmin && confirmArm ? (
+          {canAdmin && canArm && confirmArm ? (
             <div className="flex flex-wrap items-center gap-2">
               <p className="text-body text-foreground">
                 {identity.armed.on
@@ -237,6 +240,7 @@ export function DriverMoneyPanel({
               </Button>
             </div>
           ) : null}
+          {canAdmin && !canArm ? <p className="text-small text-muted-foreground">{panelSentence("driver_inactive")}</p> : null}
           {!canAdmin ? <p className="text-small text-muted-foreground">Only an admin arms or disarms a driver.</p> : null}
         </section>
 

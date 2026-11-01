@@ -4,7 +4,7 @@ import { readMember } from "../advances/member";
 import type { Session } from "../auth/claims";
 import { getDb, type Queryable, type TenantDb } from "../db";
 import { isCanonicalUuid } from "../money/keys";
-import { ForbiddenError } from "../tenant/context";
+import { readTenantZone } from "../money/read";
 import { carrierToday } from "../tenant/shell";
 import { daysBetween, isLocalDate, type LocalDate } from "../time/local-date";
 import { driverAdminOn } from "./switch";
@@ -83,9 +83,7 @@ export async function setDriverStatus(
   return db.withTenant(session.tenantId, async (q) => {
     const member = await readMember(q, session);
     if (member.role !== "admin") return refuse("role");
-    const tenants = await q.query<{ timezone: string }>("SELECT timezone FROM tenants WHERE id = current_tenant_id()");
-    if (tenants.length !== 1) throw new ForbiddenError();
-    const today = carrierToday(tenants[0].timezone, now);
+    const today = carrierToday(await readTenantZone(q), now);
     const rows = await q.query<{ active_from: string; active_to: string | null; money_armed: boolean }>(
       `SELECT to_char(active_from, 'YYYY-MM-DD') AS active_from, to_char(active_to, 'YYYY-MM-DD') AS active_to,
               money_armed

@@ -178,6 +178,10 @@ describe("the driver money routes", () => {
     let res = await post(armPost as Handler, { id: DRIVER }, { armed: true });
     expect(res.status).toBe(403);
     expect(await res.json()).toEqual({ error: "role", retryable: false });
+    mocks.armDriver.mockResolvedValue({ ok: false, category: "driver_inactive", retryable: false });
+    res = await post(armPost as Handler, { id: DRIVER }, { armed: true });
+    expect(res.status).toBe(409);
+    expect(await res.json()).toEqual({ error: "driver_inactive", retryable: false });
     mocks.addIdentity.mockResolvedValue({ ok: false, category: "identity_taken", retryable: false });
     res = await post(idsPost as Handler, { id: DRIVER }, { system: "tms", externalId: "TMS-9" });
     expect(res.status).toBe(409);

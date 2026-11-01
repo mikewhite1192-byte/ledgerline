@@ -1,6 +1,7 @@
 import { randomUUID } from "node:crypto";
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from "vitest";
 import { flags } from "@/config/flags";
+import { armDriver } from "../advances/arming";
 import { readDriverIdentity } from "../advances/identity";
 import { createPgDb } from "../db/pg";
 import { adminUrl, appUrl } from "../db/test-urls";
@@ -197,6 +198,33 @@ describe("deactivating and reactivating a driver", () => {
     // The money gates read the driver as active and not armed.
     const state = await app.withTenant(A.tenantId, (q) => readDriverMoneyState(q, A.driverId, TODAY, false));
     expect(state).toBe("not_armed");
+  });
+
+  it("refuses to arm a deactivated driver and writes nothing, still disarms one, and reactivating leaves them not armed", async () => {
+    await makeAdmin(A);
+    await setDriverStatus(A.session, A.driverId, { active: false, effectiveOn: "2026-11-20" }, deps());
+    const after = await snapshot(A);
+    expect(after.driver).toMatchObject({ active_to: "2026-11-20", money_armed: false });
+    expect(await armDriver(A.session, A.driverId, { armed: true }, deps())).toEqual({
+      ok: false,
+      category: "driver_inactive",
+      retryable: false,
+    });
+    expect(await snapshot(A)).toEqual(after);
+    // Disarming a driver with a last day on file stays allowed: no change when already disarmed,
+    // and a disarm when an older row is still armed.
+    expect(await armDriver(A.session, A.driverId, { armed: false }, deps())).toMatchObject({ ok: true, changed: false, armed: false });
+    expect(await snapshot(A)).toEqual(after);
+    await setArmed(admin, A, A.driverId, true);
+    expect(await armDriver(A.session, A.driverId, { armed: false }, deps())).toMatchObject({ ok: true, changed: true, armed: false });
+    expect(await driverState(A)).toMatchObject({ active_to: "2026-11-20", money_armed: false });
+    expect(await setDriverStatus(A.session, A.driverId, { active: true }, deps())).toMatchObject({
+      ok: true,
+      changed: true,
+      activeTo: null,
+      armed: false,
+    });
+    expect(await driverState(A)).toMatchObject({ active_to: null, money_armed: false });
   });
 
   it("deactivates a driver who is not armed with no arming log row", async () => {

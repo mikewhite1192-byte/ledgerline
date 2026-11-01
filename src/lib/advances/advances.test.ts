@@ -198,6 +198,7 @@ describe("the sentences a person sees", () => {
     expect(takeBackSentence("Error: socket hang up")).toBe(outcomeSentence("unavailable"));
     expect(panelSentence("role")).toBe("Only an admin can arm a driver or change their cards.");
     expect(panelSentence("identity_taken")).toBe("That id already belongs to another driver.");
+    expect(panelSentence("driver_inactive")).toBe("This driver is deactivated. Reactivate them before arming.");
     expect(panelSentence("card_not_drivers")).toContain("not one of this driver's active cards");
     expect(panelSentence("constructor")).toBe(panelSentence("unavailable"));
     expect(panelSentence("Error: socket hang up at 10.0.0.1")).toBe(panelSentence("unavailable"));

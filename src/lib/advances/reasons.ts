@@ -210,6 +210,7 @@ export function takeBackSentence(code: string): string {
 const PANEL_SENTENCES: Readonly<Record<string, string>> = {
   role: "Only an admin can arm a driver or change their cards.",
   card_not_drivers: "That card is not one of this driver's active cards.",
+  driver_inactive: "This driver is deactivated. Reactivate them before arming.",
   identity_taken: "That id already belongs to another driver.",
   not_found: "No such driver or card.",
   bad_request: "Check what was entered and try again.",

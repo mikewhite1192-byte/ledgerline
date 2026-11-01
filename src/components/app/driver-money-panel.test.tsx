@@ -193,7 +193,7 @@ describe("DriverMoneyPanel", () => {
     fireEvent.change(screen.getByLabelText(/Last day/), { target: { value: "2026-11-05" } });
     fireEvent.change(screen.getByLabelText(/Note/), { target: { value: "  moving on  " } });
     fireEvent.click(button("Deactivate"));
-    await waitFor(() => expect(screen.getByText("Deactivated and disarmed. No new money can go to this driver.")).toBeTruthy());
+    await waitFor(() => expect(screen.getByText("Deactivated. They are not armed, so no new money can go to this driver.")).toBeTruthy());
     expect(calls).toEqual([
       { path: `/api/drivers/${DRIVER}/status`, body: { active: false, effectiveOn: "2026-11-05", note: "moving on" } },
     ]);
@@ -224,6 +224,25 @@ describe("DriverMoneyPanel", () => {
       expect(screen.getByText("Reactivated. They are not armed: an admin arms them again before any advance.")).toBeTruthy(),
     );
     expect(calls).toEqual([{ path: `/api/drivers/${DRIVER}/status`, body: { active: true } }]);
+  });
+
+  it("offers no Arm for a driver with a last day on file, says why, and still offers Disarm", () => {
+    const leaving = { ...identity, activeTo: "2026-11-20" };
+    render(<DriverMoneyPanel identity={leaving} canAdmin timezone="UTC" send={sender().send} />);
+    expect(screen.queryByRole("button", { name: "Arm" })).toBeNull();
+    expect(screen.getByText("This driver is deactivated. Reactivate them before arming.")).toBeTruthy();
+    cleanup();
+    const armedLeaving = { ...leaving, armed: { on: true, since: "2026-10-05T14:00:00.000Z" } };
+    render(<DriverMoneyPanel identity={armedLeaving} canAdmin timezone="UTC" send={sender().send} />);
+    expect(button("Disarm")).toBeTruthy();
+    expect(screen.queryByText("This driver is deactivated. Reactivate them before arming.")).toBeNull();
+  });
+
+  it("shows an arm refused for a departed driver as its fixed sentence", async () => {
+    render(<DriverMoneyPanel identity={identity} canAdmin timezone="UTC" send={sender({ ok: false, error: "driver_inactive" }).send} />);
+    fireEvent.click(button("Arm"));
+    fireEvent.click(button("Arm"));
+    await waitFor(() => expect(screen.getByText("This driver is deactivated. Reactivate them before arming.")).toBeTruthy());
   });
 
   it("gives staff the status but no status buttons, and says who can", () => {
