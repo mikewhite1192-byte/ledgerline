@@ -198,6 +198,7 @@ export function payItemOf(r: PayItemRow): PayItemRecord {
     itemRef: r.item_ref,
     description: r.description,
     settlementId: r.settlement_id,
+    enteredBy: r.entered_by,
   };
 }
 

@@ -27,7 +27,7 @@ export const LOCAL_OVERRIDABLE = [
 // codes, the desk loop, factoring, escrow releases and the autopilot, the dispatch sync's switch
 // (tmsSync.enabled), the card load ruling's switch, the invoice on finalize's switch
 // (tmsFinalizeInvoice.enabled), parked advances' switch (advanceParking.enabled), the card
-// pull-back's switch and deficit recovery's switch are listed ahead of their own release, while they still ship off, so each
+// pull-back's switch, deficit recovery's switch and the named stub lines' switch are listed ahead of their own release, while they still ship off, so each
 // release PR changes only its flag: an off-only switch can never be turned on, so listing one early
 // lets the local run do nothing it could not already do.
 export const LOCAL_OFF_ONLY = [
@@ -94,6 +94,7 @@ export const LOCAL_OFF_ONLY = [
   "deficitRecovery.enabled",
   "cancelledTrip.enabled",
   "driverAdmin.enabled",
+  "namedLines.enabled",
 ] as const;
 
 type Overridable = (typeof LOCAL_OVERRIDABLE)[number];

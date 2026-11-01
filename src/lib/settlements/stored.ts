@@ -1,3 +1,4 @@
+import { flags } from "../../config/flags";
 import type { Queryable } from "../db";
 import { readSettlementInput } from "../data/read";
 import {
@@ -10,6 +11,7 @@ import {
   type SettlementResult,
   type SourceRef,
 } from "../rules-engine";
+import { findContradictions, readSourceFacts } from "./contradiction";
 import {
   checkLineSources,
   parkReasonOf,
@@ -102,6 +104,8 @@ type LineRow = {
   amount_cents: number | string;
   sources: unknown;
   meta: unknown;
+  entered_by: string | null;
+  source_ref: string | null;
 };
 
 function sourcesOf(value: unknown): SourceRef[] {
@@ -116,10 +120,12 @@ function sourcesOf(value: unknown): SourceRef[] {
   });
 }
 
-// The stored lines in seq order, as the engine's PayLine.
+// The stored lines in seq order, as the engine's PayLine. A line a person typed (0084) carries who
+// typed it and the record it cites, as the engine's line does; any other line has neither field.
 export async function readStoredLines(q: Queryable, settlementId: string): Promise<PayLine[]> {
   const rows = await q.query<LineRow>(
-    `SELECT seq, kind, label, amount_cents, sources, meta FROM settlement_lines
+    `SELECT seq, kind, label, amount_cents, sources, meta, CAST(entered_by AS text) AS entered_by, source_ref
+       FROM settlement_lines
       WHERE tenant_id = current_tenant_id() AND settlement_id = CAST($1 AS uuid)
       ORDER BY seq`,
     [settlementId],
@@ -133,6 +139,9 @@ export async function readStoredLines(q: Queryable, settlementId: string): Promi
       amountCents: cents(whole(r.amount_cents, "line amount"), "line amount"),
       sources: sourcesOf(r.sources),
       ...(meta && typeof meta === "object" ? { meta: meta as PayLine["meta"] } : {}),
+      ...(r.entered_by !== null || r.source_ref !== null
+        ? { enteredBy: r.entered_by, sourceRef: r.source_ref }
+        : {}),
     };
   });
 }
@@ -177,7 +186,9 @@ export type Recheck = {
 };
 
 // The pre-pay recheck: a fresh engine run over the driver's records as they stand now, compared
-// whole with the stored totals and lines, then every cited record checked. Pure past the read.
+// whole with the stored totals and lines, then every cited record checked, then, while
+// flags.namedLines is on, every typed line and insurance line against the records it claims to
+// match (contradiction.ts). Pure past the reads.
 export async function recheckSettlement(
   q: Queryable,
   stored: StoredSettlement,
@@ -196,6 +207,9 @@ export async function recheckSettlement(
     fresh,
   );
   const problems = checkLineSources(lines, stored.id, input.period, sourceRowsOf(input));
+  if (flags.namedLines.enabled) {
+    problems.push(...findContradictions(lines, await readSourceFacts(q, lines, stored.driverId), stored.id));
+  }
   return { fresh, period: input.period, park: parkReasonOf(reconcile, problems) };
 }
 

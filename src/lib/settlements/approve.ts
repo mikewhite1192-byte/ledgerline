@@ -169,7 +169,9 @@ async function prepare(q: Queryable, proposal: ProposalRow, now: Date): Promise<
   const check = await recheckSettlement(q, stored, lines);
   if (check.park !== null) {
     await parkSettlement(q, stored.id, check.park, now);
-    return { kind: "result", result: await failApproved(q, proposal.id, "parked", now) };
+    // A typed line that contradicts its record ends the card with that refusal word itself.
+    const note = check.park === "contradicting_line" ? "contradicting_line" : "parked";
+    return { kind: "result", result: await failApproved(q, proposal.id, note, now) };
   }
   const nowIso = now.toISOString();
   const moved = await q.execute(

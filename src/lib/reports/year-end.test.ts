@@ -667,6 +667,7 @@ describe("year_end_contractors on the Blue Ridge seed plan", () => {
       item_ref: approved ? `correction:${uuid(99)}` : `decoy:${id}`,
       description: "Pay correction",
       settlement_id: st.id,
+      entered_by: null,
     });
     const stub = (n: number, kind: string, label: string, amount: number, sources: { table: string; id: string }[]) => ({
       id: uuid(n),
@@ -677,6 +678,8 @@ describe("year_end_contractors on the Blue Ridge seed plan", () => {
       amount_cents: amount,
       sources,
       meta: null,
+      entered_by: null,
+      source_ref: null,
     });
     const changed: CarrierPlan = {
       ...plan,

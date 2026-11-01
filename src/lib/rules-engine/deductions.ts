@@ -104,7 +104,8 @@ function byItem(a: PayItemRecord, b: PayItemRecord): number {
   );
 }
 
-// One line per pay item of this kind dated in the period. The kind gives the sign.
+// One line per pay item of this kind dated in the period. The kind gives the sign. An item a person
+// typed carries their name and its record onto the line (0084).
 export function itemLines(
   items: readonly PayItemRecord[],
   kind: PayItemKind,
@@ -119,6 +120,12 @@ export function itemLines(
       label: i.subkind ? `${label} (${i.subkind})` : label,
       amountCents: sign === 1 ? i.amountCents : sub(0, i.amountCents),
       sources: [{ table: "pay_items", id: i.id }],
+      ...(i.enteredBy
+        ? {
+            enteredBy: i.enteredBy,
+            sourceRef: i.refTable && i.refId ? `${i.refTable}:${i.refId}` : null,
+          }
+        : {}),
     }));
 }
 

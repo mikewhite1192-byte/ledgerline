@@ -15,6 +15,7 @@ export const PARK_LABELS: Readonly<Record<ParkReason, string>> = {
   advance_overrecovered: "An advance would be taken back for more than is owed",
   schedule_inactive: "A deduction schedule is no longer active this week",
   deficit_overrecovered: "Money the driver owes would be taken back for more than is owed",
+  contradicting_line: "A typed line does not match the record it names",
 };
 
 export function parkLabel(reason: string | null | undefined): string {
@@ -57,6 +58,8 @@ export const SETTLEMENT_OUTCOMES: Readonly<Record<string, string>> = {
   not_paid: "Approved. Payouts are off in this environment, so nothing was sent.",
   no_payout: "Approved with no payout: net pay is $0 and the rest carries to next week.",
   parked: "Parked: the paystub no longer matches its records. Run the week to recompute.",
+  contradicting_line:
+    "Parked: a typed line does not match the record it names, or an insurance line claims days with no day rows. Fix the line or the record, then run the week.",
   stale: "The paystub changed after this was proposed. Run the week for a fresh draft.",
   superseded: "Replaced by a newer draft.",
   disabled: "This is off in this environment.",

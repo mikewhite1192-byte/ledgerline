@@ -38,7 +38,12 @@ export const SOURCE_PROBLEMS = [
 ] as const;
 export type SourceProblemCategory = (typeof SOURCE_PROBLEMS)[number];
 
-export const PARK_REASONS = [...MISMATCH_CATEGORIES, ...SOURCE_PROBLEMS] as const;
+// A line that does not match the record it claims to match (0084, src/lib/settlements/
+// contradiction.ts): checked only while flags.namedLines is on.
+export const CONTRADICTIONS = ["contradicting_line"] as const;
+export type ContradictionCategory = (typeof CONTRADICTIONS)[number];
+
+export const PARK_REASONS = [...MISMATCH_CATEGORIES, ...SOURCE_PROBLEMS, ...CONTRADICTIONS] as const;
 export type ParkReason = (typeof PARK_REASONS)[number];
 
 export function isParkReason(value: unknown): value is ParkReason {
@@ -173,7 +178,7 @@ export type SourceRow =
 // missing (unknown is not zero).
 export type SourceRows = ReadonlyMap<string, SourceRow | null>;
 
-export type SourceProblem = { category: SourceProblemCategory; source: SourceRef };
+export type SourceProblem = { category: SourceProblemCategory | ContradictionCategory; source: SourceRef };
 
 export const rowKey = (s: SourceRef) => `${s.table}:${s.id.toLowerCase()}`;
 

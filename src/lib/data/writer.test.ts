@@ -31,6 +31,8 @@ const line = (meta: Record<string, number> | null, label = "Load X-1") => ({
   amount_cents: 82500,
   sources: [{ table: "loads", id: "00000000-0000-4000-8000-000000000003" }],
   meta,
+  entered_by: null,
+  source_ref: null,
 });
 
 // A fake connection that records each statement and reports `affected(rows)` rows.
@@ -101,7 +103,7 @@ describe("insertStatements", () => {
     expect(s.sql).toContain("CAST($7 AS jsonb), CAST($8 AS jsonb)");
     expect(s.params[6]).toBe('[{"table":"loads","id":"00000000-0000-4000-8000-000000000003"}]');
     expect(s.params[7]).toBe('{"days":5}');
-    expect(s.params[15]).toBeNull();
+    expect(s.params[17]).toBeNull();
   });
 
   it("keeps a statement under the character limit by starting a new one", () => {
