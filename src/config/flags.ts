@@ -1217,8 +1217,8 @@ export const flags: Flags = {
   // On by the owner's call (D-056, D-077, 2026-11-01). A person cancels and a person approves the
   // deficit; the autopilot never approves it.
   cancelledTrip: { enabled: true, startDate: "2026-11-02" },
-  // Off until its own one-line enable PR. One model call per carrier per day; sends nothing.
-  morningDigest: { enabled: false, startDate: "2026-11-02", maxCostCents: 4, maxOutputTokens: 400 },
+  // On by the owner's call (D-071, 2026-11-01). One model call per carrier per day; sends nothing.
+  morningDigest: { enabled: true, startDate: "2026-11-02", maxCostCents: 4, maxOutputTokens: 400 },
 };
 
 applyLocalOverrides(flags);

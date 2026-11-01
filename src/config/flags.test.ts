@@ -114,6 +114,9 @@ const RELEASED_ON = [
   // Released by the owner (D-056, D-077, 2026-11-01): a person cancels a load, and a person approves
   // the card that books its paid advance as money the driver owes. Never the autopilot.
   "cancelledTrip.enabled",
+  // Released by the owner (D-071, 2026-11-01): one short model-written digest per carrier each
+  // morning, capped per call. It sends nothing and moves no money.
+  "morningDigest.enabled",
 ] as const;
 
 // What stays off, each waiting on a missing piece or an outside send the owner has not released.
@@ -133,8 +136,6 @@ const KEPT_OFF = [
   "cardPullback.enabled",
   // The dispatch webhook ships off; its own one-line enable PR turns it on once the key is stored.
   "tmsHook.enabled",
-  // The morning digest ships off; its own one-line enable PR turns it on.
-  "morningDigest.enabled",
   // Named stub lines ship off; their own one-line enable PR turns them on.
   "namedLines.enabled",
 ] as const;
@@ -373,8 +374,8 @@ describe("flags", () => {
     expect(LOCAL_OFF_ONLY as readonly string[]).toContain("cardPullback.enabled");
   });
 
-  it("ships the morning digest off, with a start date and small caps on its one call", () => {
-    expect(flags.morningDigest).toEqual({ enabled: false, startDate: "2026-11-02", maxCostCents: 4, maxOutputTokens: 400 });
+  it("releases the morning digest, with a start date and small caps on its one call, off for the local demo run", () => {
+    expect(flags.morningDigest).toEqual({ enabled: true, startDate: "2026-11-02", maxCostCents: 4, maxOutputTokens: 400 });
     expect(isLocalDate(flags.morningDigest.startDate)).toBe(true);
     // Listed ahead of its release, so the demo-path run keeps it off once it ships on.
     expect(LOCAL_OFF_ONLY as readonly string[]).toContain("morningDigest.enabled");
