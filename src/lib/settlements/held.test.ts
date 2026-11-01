@@ -1,7 +1,15 @@
 import { randomUUID } from "node:crypto";
 import { describe, expect, it } from "vitest";
 import { blueRidgePlan } from "../agent/gateway/__tests__/plan-db";
-import { applyHeld, NOTHING_HELD, settlementInputOf, type DeficitRow, type HeldRecoveries } from "../data/records";
+import { heldByDriver } from "../data/read";
+import {
+  applyHeld,
+  NOTHING_HELD,
+  payDaysOf,
+  settlementInputOf,
+  type DeficitRow,
+  type HeldRecoveries,
+} from "../data/records";
 import { outstandingCents } from "../rules-engine";
 import { carriedItemDate } from "./paid";
 
@@ -107,5 +115,90 @@ describe("carriedItemDate", () => {
 
   it("refuses a drafting week that does not come after the week", () => {
     expect(() => carriedItemDate("2026-11-01", [], "2026-11-01")).toThrow(RangeError);
+  });
+
+  it("never falls before the week holding today, nor inside a later settled week", () => {
+    // Booked in the week of November 16 with no week to draft it: not November 2, a week over
+    // and never opened, but the week the next sweep start opens.
+    expect(carriedItemDate("2026-11-01", [{ start: "2026-11-09", end: "2026-11-15" }], null, "2026-11-16")).toBe("2026-11-16");
+    expect(
+      carriedItemDate(
+        "2026-11-01",
+        [
+          { start: "2026-11-09", end: "2026-11-15" },
+          { start: "2026-11-16", end: "2026-11-22" },
+        ],
+        null,
+        "2026-11-16",
+      ),
+    ).toBe("2026-11-23");
+    // Booked in its own week or the next: the day after the week, as before.
+    expect(carriedItemDate("2026-11-01", [], null, "2026-10-26")).toBe("2026-11-02");
+    expect(carriedItemDate("2026-11-01", [], null, "2026-11-02")).toBe("2026-11-02");
+  });
+});
+
+describe("heldByDriver", () => {
+  const line = (driverId: string, kind: string, id: string, amount: number) => ({
+    driver_id: driverId,
+    kind,
+    sources: JSON.stringify(kind === "escrow" ? [] : [{ table: kind === "advance_recovery" ? "advances" : "driver_deficits", id }]),
+    amount_cents: String(amount),
+  });
+
+  it("sums every driver's held lines from one read, keyed by driver", () => {
+    const [a, b, adv, def] = [randomUUID(), randomUUID(), randomUUID(), randomUUID()];
+    const out = heldByDriver([
+      line(a.toUpperCase(), "advance_recovery", adv, -5000),
+      line(a, "advance_recovery", adv, -2500),
+      line(b, "deficit_recovery", def, -4000),
+      line(b, "escrow", "", -1000),
+    ]);
+    expect(out?.get(a)?.advances.get(adv.toLowerCase())).toBe(7500);
+    expect(out?.get(a)?.escrowCents).toBe(0);
+    expect(out?.get(b)?.deficits.get(def.toLowerCase())).toBe(4000);
+    expect(out?.get(b)?.escrowCents).toBe(1000);
+    expect(heldByDriver([])?.size).toBe(0);
+  });
+
+  it("is unknown (null) when any driver's line does not read", () => {
+    const [a, b] = [randomUUID(), randomUUID()];
+    expect(heldByDriver([line(a, "escrow", "", -1000), { ...line(b, "advance_recovery", "", -500), sources: "[]" }])).toBeNull();
+  });
+});
+
+describe("payDaysOf", () => {
+  const company = rows.drivers.find((d) => d.worker_type === "company");
+  if (!company) throw new Error("the plan has no company driver");
+  const day = { id: randomUUID(), driver_id: company.id, day: "2026-12-01", source: "dispatch" as const, load_id: null };
+  const only = (over: Partial<typeof rows>) => ({
+    ...rows,
+    loads: [],
+    pay_items: [],
+    deduction_schedules: [],
+    driver_days: [day],
+    ...over,
+  });
+
+  it("leaves out a day worked that makes no line on its own", () => {
+    const config = rows.pay_configs.map((c) => ({ ...c, insurance_applies_to: "owner_operator" as const }));
+    expect(payDaysOf(only({ pay_configs: config }))).toEqual([]);
+  });
+
+  it("keeps a day worked that draws a deduction the engine always takes", () => {
+    const config = rows.pay_configs.map((c) => ({ ...c, insurance_applies_to: "all" as const, insurance_per_day_cents: 1500 }));
+    expect(payDaysOf(only({ pay_configs: config, drivers: rows.drivers.map((d) => ({ ...d, own_insurance: false })) }))).toEqual([
+      "2026-12-01",
+    ]);
+  });
+
+  it("keeps a day whose pay rules do not read, as before", () => {
+    expect(payDaysOf(only({ pay_configs: [] }))).toEqual(["2026-12-01"]);
+  });
+
+  it("leaves out a load not delivered", () => {
+    const load = rows.loads.find((l) => l.driver_id !== null && l.delivered_on !== null)!;
+    expect(payDaysOf(only({ driver_days: [], loads: [{ ...load, status: "in_transit" }] }))).toEqual([]);
+    expect(payDaysOf(only({ driver_days: [], loads: [{ ...load, status: "delivered" }] }))).toEqual([load.delivered_on]);
   });
 });

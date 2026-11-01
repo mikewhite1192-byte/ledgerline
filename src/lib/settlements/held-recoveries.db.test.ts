@@ -63,13 +63,14 @@ async function openWeek(start: string): Promise<string> {
   return id;
 }
 
-// A pay item for DRV-1 on a day: tolls paid back (earnings) or another deduction.
-async function item(kind: "reimbursement" | "other_deduction", day: string, cents: number): Promise<void> {
+// A pay item for DRV-1 (or the driver named) on a day: tolls paid back (earnings) or another
+// deduction.
+async function item(kind: "reimbursement" | "other_deduction", day: string, cents: number, driverId = A.driverId): Promise<void> {
   await admin.withTenant(A.tenantId, (q) =>
     q.execute(
       `INSERT INTO pay_items (id, tenant_id, driver_id, kind, subkind, amount_cents, item_date, item_ref, description)
        VALUES (CAST($1 AS uuid), current_tenant_id(), CAST($2 AS uuid), $3, 'tolls', $4, CAST($5 AS date), $6, 'Tolls')`,
-      [randomUUID(), A.driverId, kind, cents, day, `${kind}-${day}`],
+      [randomUUID(), driverId, kind, cents, day, `${kind}-${day}-${driverId}`],
     ),
   );
 }
@@ -136,6 +137,28 @@ const stubOf = async (p: string) =>
     )
   )[0].id;
 
+// One driver's stub in a week.
+const stubFor = async (p: string, driverId: string) =>
+  (
+    await admin.withTenant(A.tenantId, (q) =>
+      q.query<{ id: string }>(
+        `SELECT CAST(id AS text) AS id FROM settlements
+          WHERE tenant_id = current_tenant_id() AND period_id = CAST($1 AS uuid) AND driver_id = CAST($2 AS uuid)`,
+        [p, driverId],
+      ),
+    )
+  )[0]?.id ?? null;
+
+const weekStatus = async (p: string) =>
+  (
+    await admin.withTenant(A.tenantId, (q) =>
+      q.query<{ status: string }>(
+        "SELECT status FROM settlement_periods WHERE tenant_id = current_tenant_id() AND id = CAST($1 AS uuid)",
+        [p],
+      ),
+    )
+  )[0].status;
+
 // What a stub's lines of one kind take, in cents, in line order.
 const taken = async (s: string, kind: string) =>
   (await app.withTenant(A.tenantId, (q) => readStoredLines(q, s))).filter((l) => l.kind === kind).map((l) => -l.amountCents);
@@ -148,7 +171,7 @@ const linesOf = async (s: string) =>
   }));
 
 // The approval's pre-pay recheck must be clean; then the stub is approved and booked as paid.
-async function pay(s: string): Promise<void> {
+async function pay(s: string, now = NOW): Promise<void> {
   const park = await app.withTenant(A.tenantId, async (q) => {
     const stored = await readStoredSettlement(q, s, false);
     if (!stored) throw new Error("no stub");
@@ -158,7 +181,7 @@ async function pay(s: string): Promise<void> {
   await admin.withTenant(A.tenantId, (q) =>
     q.execute("UPDATE settlements SET status = 'approved' WHERE tenant_id = current_tenant_id() AND id = CAST($1 AS uuid)", [s]),
   );
-  expect(await app.withTenant(A.tenantId, (q) => bookPaidSettlement(q, s, new Date(NOW)))).toBe(true);
+  expect(await app.withTenant(A.tenantId, (q) => bookPaidSettlement(q, s, new Date(now)))).toBe(true);
 }
 
 async function balances(advance: string, deficit: string | null) {
@@ -345,6 +368,72 @@ describe("recoveries held across two open weeks", () => {
     await pay(await stubOf(w1));
     // Past the paid week and the week of November 16, which was never opened, into an open week.
     expect(await carriedItems()).toEqual([{ item_date: "2026-11-23", amount: "50000" }]);
+  });
+
+  it("dates a carried shortfall with no week to draft it no earlier than the week holding today", async () => {
+    // Booked on Wednesday November 18 (Chicago): the week of November 9 was paid with no stub of
+    // this driver and the week of November 2 was never opened, so the day after the week (November
+    // 2) is a week over that nothing drafts. The item lands in the week the next sweep start opens.
+    flags.payWeekRoll = { enabled: true };
+    await payConfig();
+    const w0 = await openWeek("2026-10-26");
+    const w2 = await openWeek(W2_START);
+    await item("reimbursement", "2026-10-27", 100_000);
+    await item("other_deduction", "2026-10-28", 150_000);
+    await runWeek(w0);
+    await admin.withTenant(A.tenantId, (q) =>
+      q.execute("UPDATE settlement_periods SET status = 'paid' WHERE tenant_id = current_tenant_id() AND id = CAST($1 AS uuid)", [w2]),
+    );
+    await pay(await stubOf(w0), Date.UTC(2026, 10, 18, 16, 0, 0));
+    expect(await carriedItems()).toEqual([{ item_date: "2026-11-16", amount: "50000" }]);
+  });
+
+  it("keeps a week open that holds a carried shortfall for a driver with no stub in it, so its run drafts it", async () => {
+    // W2 holds only DRV-2's stub. DRV-1's W1 shortfall is dated in W2 (no DRV-1 stub there, so W2
+    // still drafts it); paying DRV-2 must not close W2 on its one stub, or the carry is stranded.
+    await payConfig();
+    const w1 = await openWeek(W1_START);
+    const w2 = await openWeek(W2_START);
+    await item("reimbursement", "2026-11-03", 100_000);
+    await item("other_deduction", "2026-11-04", 150_000);
+    await item("reimbursement", "2026-11-10", 100_000, A.otherDriverId);
+    await runWeek(w2);
+    await runWeek(w1);
+    expect(await stubFor(w2, A.driverId)).toBeNull();
+    await pay((await stubFor(w1, A.driverId))!);
+    expect(await carriedItems()).toEqual([{ item_date: W2_START, amount: "50000" }]);
+    await pay((await stubFor(w2, A.otherDriverId))!);
+    expect(await weekStatus(w2)).toBe("open");
+    // A person's run of the week drafts the carry; once every stub in it is paid, the week closes.
+    await runWeek(w2);
+    const s2 = await stubFor(w2, A.driverId);
+    expect(await taken(s2!, "carried_shortfall")).toEqual([50_000]);
+    await pay(s2!);
+    expect(await weekStatus(w2)).toBe("paid");
+    expect(await weekStatus(w1)).toBe("paid");
+  });
+
+  it("reports the week with a paystub to draft, not an older open week whose only day worked makes no line", async () => {
+    // A company driver worked a day in W1 with no load and no pay item: insurance applies only to
+    // owner operators, so "Run the week" drafts nothing there and W1 never closes. Cash Friday's
+    // week paid next is W2, which holds DRV-2's payable stub.
+    await payConfig();
+    const w1 = await openWeek(W1_START);
+    const w2 = await openWeek(W2_START);
+    await admin.withTenant(A.tenantId, (q) =>
+      q.execute(
+        `INSERT INTO driver_days (id, tenant_id, driver_id, day, source)
+         VALUES (CAST($1 AS uuid), current_tenant_id(), CAST($2 AS uuid), CAST('2026-11-03' AS date), 'dispatch')`,
+        [randomUUID(), A.driverId],
+      ),
+    );
+    await item("reimbursement", "2026-11-10", 100_000, A.otherDriverId);
+    await runWeek(w1);
+    await runWeek(w2);
+    expect(await stubFor(w1, A.driverId)).toBeNull();
+    const previews = await app.withTenant(A.tenantId, async (q) => (await readCashFridayInput(q, "America/Chicago", flags.cashFridayLimits)).previews);
+    expect(previews?.map((p) => p.period.start)).toEqual([W2_START, W2_START]);
+    expect(await weekStatus(w1)).toBe("open");
   });
 
   it("builds the week paid next's preview from what another week's approved stub holds, as the run does", async () => {

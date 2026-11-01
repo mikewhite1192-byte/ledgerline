@@ -54,18 +54,22 @@ export const CARRIED_DESCRIPTION = "Shortfall carried from the week before";
 // in a week that charges it even across a week that was never opened. With no such week yet, the
 // first day after the week, unless a later week can no longer draft it (closed, or holding an
 // approved or paid stub of this driver: a newer week paid before this one); then the first day
-// past every such week in a row. In the normal order that is periodEnd + 1 either way. Each step
-// moves past one week, so the walk ends.
+// past every such week in a row. notBefore (the first day of the week holding the carrier's local
+// today, the week the next sweep start opens) keeps it out of a week already over that was never
+// opened, which nothing would ever draft. In the normal order that is periodEnd + 1 either way.
+// Each step moves past one week, so the walk ends.
 export function carriedItemDate(
   periodEnd: LocalDate,
   settledWeeks: readonly Period[],
   draftingWeek: LocalDate | null = null,
+  notBefore: LocalDate | null = null,
 ): LocalDate {
   if (draftingWeek !== null) {
     if (draftingWeek <= periodEnd) throw new RangeError("the drafting week is not after the week");
     return draftingWeek;
   }
-  let day = addDays(periodEnd, 1);
+  const next = addDays(periodEnd, 1);
+  let day = notBefore !== null && notBefore > next ? notBefore : next;
   for (let i = 0; i <= settledWeeks.length; i += 1) {
     const holding = settledWeeks.find((w) => isWithin(day, w));
     if (!holding) return day;
@@ -81,10 +85,11 @@ export function paidWritesOf(input: {
   // The driver's escrow balance just before this booking.
   openingCents: number;
   periodEnd: LocalDate;
-  // Later weeks that can no longer draft this driver's carried item, and the first day of the
-  // earliest later week that can (carriedItemDate).
+  // Later weeks that can no longer draft this driver's carried item, the first day of the
+  // earliest later week that can, and the earliest day it may fall on (carriedItemDate).
   settledWeeks?: readonly Period[];
   draftingWeek?: LocalDate | null;
+  notBefore?: LocalDate | null;
 }): PaidWrites {
   if (!Number.isSafeInteger(input.openingCents)) throw new RangeError("opening balance is not cents");
   const escrowLines = input.lines.filter((l) => l.kind === "escrow");
@@ -141,9 +146,14 @@ export function paidWritesOf(input: {
             kind: "carried_shortfall",
             subkind: "shortfall",
             amountCents: input.carryForwardCents,
-            // The earliest later week that can still draft it, else the day after the week,
-            // past any later week already settled for this driver.
-            itemDate: carriedItemDate(input.periodEnd, input.settledWeeks ?? [], input.draftingWeek ?? null),
+            // The earliest later week that can still draft it, else the day after the week (never
+            // before the week holding today), past any later week already settled for this driver.
+            itemDate: carriedItemDate(
+              input.periodEnd,
+              input.settledWeeks ?? [],
+              input.draftingWeek ?? null,
+              input.notBefore ?? null,
+            ),
             refTable: "settlements",
             refId: input.settlementId,
             description: CARRIED_DESCRIPTION,

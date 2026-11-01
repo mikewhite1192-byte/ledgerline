@@ -315,6 +315,17 @@ export const HELD_SQL = `SELECT l.kind, CAST(l.sources AS text) AS sources, CAST
    AND ((s.status = 'draft' AND p.period_start < CAST($3 AS date))
         OR (s.status = 'approved' AND s.period_id <> CAST($2 AS uuid)))`;
 
+// HELD_SQL for every driver of the tenant at once, each line with its driver: what Cash Friday's
+// previews read for the week paid next, in one query.
+export const HELD_ALL_SQL = `SELECT CAST(s.driver_id AS text) AS driver_id, l.kind, CAST(l.sources AS text) AS sources,
+       CAST(l.amount_cents AS text) AS amount_cents
+  FROM settlement_lines l
+  JOIN settlements s ON s.tenant_id = l.tenant_id AND s.id = l.settlement_id
+  JOIN settlement_periods p ON p.tenant_id = s.tenant_id AND p.id = s.period_id
+ WHERE l.tenant_id = current_tenant_id() AND l.kind IN ('advance_recovery', 'deficit_recovery', 'escrow')
+   AND ((s.status = 'draft' AND p.period_start < CAST($2 AS date))
+        OR (s.status = 'approved' AND s.period_id <> CAST($1 AS uuid)))`;
+
 // What the driver's other unpaid stubs that come before this one hold on each balance a week
 // draws down (D-090): every draft in an older week, and every approved stub (its payout may
 // already be out, but not yet booked as paid) in any other week. Advance and deficit recoveries
@@ -330,10 +341,27 @@ async function readHeldRecoveries(
   return heldOf(await readHeldLines(q, driverId, period));
 }
 
-type HeldLine = { kind: string; sources: unknown; amount_cents: unknown };
+export type HeldLine = { kind: string; sources: unknown; amount_cents: unknown };
 
 function readHeldLines(q: Queryable, driverId: string, period: { id: string; start: LocalDate }): Promise<HeldLine[]> {
   return q.query<HeldLine>(HELD_SQL, [driverId, period.id, period.start]);
+}
+
+// The held lines of every driver (HELD_ALL_SQL) summed by driver id in lower case. Pure; null when
+// any line does not read, so the previews read unknown rather than a guess.
+export function heldByDriver(rows: readonly (HeldLine & { driver_id: string })[]): Map<string, HeldRecoveries> | null {
+  const byDriver = new Map<string, HeldLine[]>();
+  for (const r of rows) {
+    const key = String(r.driver_id).toLowerCase();
+    byDriver.set(key, [...(byDriver.get(key) ?? []), r]);
+  }
+  const held = new Map<string, HeldRecoveries>();
+  try {
+    for (const [driverId, lines] of byDriver) held.set(driverId, heldOf(lines));
+  } catch {
+    return null;
+  }
+  return held;
 }
 
 // The held lines summed (readHeldRecoveries). Pure; throws on a line that does not read.
@@ -499,18 +527,9 @@ export async function readCashFridayInput(
   // of that week does (readSettlementInput), so the two agree. A held line that does not read
   // makes the previews unknown (held null), never a guess; a database error fails the read.
   const due = dueWeekOf(rows);
-  let held: Map<string, HeldRecoveries> | null = new Map();
-  if (due) {
-    for (const d of rows.drivers) {
-      const lines = await readHeldLines(q, d.id, { id: due.id, start: due.period_start });
-      try {
-        held.set(d.id, heldOf(lines));
-      } catch {
-        held = null;
-        break;
-      }
-    }
-  }
+  const held = due
+    ? heldByDriver(await q.query<HeldLine & { driver_id: string }>(HELD_ALL_SQL, [due.id, due.period_start]))
+    : new Map<string, HeldRecoveries>();
   return cashFridayInputOf(rows, zone, limits, held);
 }
 

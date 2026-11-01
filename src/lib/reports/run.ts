@@ -105,6 +105,8 @@ export async function computeReport(
         "loads",
         "pay_items",
         "driver_days",
+        "pay_configs",
+        "deduction_schedules",
       ]);
       return computeCashNeeded(
         {

@@ -393,7 +393,7 @@ export function chaseOptions(
 }
 
 // The week paid next (D-090): the oldest open week that holds a paystub or a day that carries pay
-// (payDays: a load delivered, a pay item, a day worked), else the newest open week. An open week
+// (payDays: each a day a run of the week drafts a paystub for), else the newest open week. An open week
 // with neither never finishes (the roll-up closes a week only from its stubs, and a run of it
 // makes none), so it never holds the week paid next back while a newer week has pay to run; a
 // week with pay and no stub yet (the seeded week before its first run) still comes first. With

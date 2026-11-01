@@ -3,7 +3,9 @@ import {
   cents,
   ConfigError,
   dueWeek,
+  hardDeductionLines,
   InputError,
+  PAID_STATUSES,
   parsePayConfig,
   sub,
   sum,
@@ -33,8 +35,8 @@ import {
   type SettlementRecord,
   type VendorBillRecord,
 } from "../rules-engine";
-import { localDateOf, type LocalDate, type Period } from "../time/local-date";
-import { checkVersionOf, configFor } from "./config-version";
+import { localDateOf, periodContaining, type LocalDate, type Period } from "../time/local-date";
+import { checkVersionOf, configFor, sortVersions } from "./config-version";
 import type {
   AdvanceRow,
   CashSettingsRow,
@@ -532,19 +534,63 @@ export function factoredInvoiceIds(lines: readonly { invoice_id: string; status:
   return new Set(lines.filter((l) => l.status !== "declined" && l.status !== "failed").map((l) => l.invoice_id));
 }
 
-// The days that carry pay (dueWeek): a load a driver delivered (not cancelled), a pay item, a day
-// worked.
-export function payDaysOf(rows: Pick<TenantRows, "loads" | "pay_items" | "driver_days">): LocalDate[] {
+// The days that carry pay (dueWeek), each one a day "Run the week" drafts a paystub for: a load a
+// driver delivered (delivered or invoiced, as the engine pays it), a pay item (every kind makes a
+// line), and a day worked only where it makes a line on its own (dayDrafts).
+export function payDaysOf(
+  rows: Pick<TenantRows, "loads" | "pay_items" | "driver_days" | "pay_configs" | "drivers" | "deduction_schedules">,
+): LocalDate[] {
+  const drafts = dayDrafts(rows);
   return [
-    ...rows.loads.filter((l) => l.driver_id !== null && l.status !== "cancelled" && l.delivered_on !== null).map((l) => l.delivered_on as LocalDate),
+    ...rows.loads
+      .filter((l) => l.driver_id !== null && l.delivered_on !== null && PAID_STATUSES.includes(l.status))
+      .map((l) => l.delivered_on as LocalDate),
     ...rows.pay_items.map((i) => i.item_date),
-    ...rows.driver_days.map((d) => d.day),
+    ...rows.driver_days.filter(drafts).map((d) => d.day),
   ];
+}
+
+// Whether a day worked drafts a paystub with no load or pay item beside it: only through the
+// deductions the engine always takes (hardDeductionLines: insurance for the drivers it applies to,
+// a lease or other scheduled deduction active that week), since with no gross nothing else makes a
+// line. A company driver's day with no insurance and no schedule drafts nothing, so it never holds
+// the week paid next back. A day whose driver, week or pay rules do not read counts, as it did
+// (unknown is not "drafts nothing"), so the week stays the one reported and its previews decide.
+// One answer per driver and week.
+function dayDrafts(
+  rows: Pick<TenantRows, "driver_days" | "pay_configs" | "drivers" | "deduction_schedules">,
+): (d: DriverDayRow) => boolean {
+  const seen = new Map<string, boolean>();
+  return (d) => {
+    const driver = rows.drivers.find((x) => x.id === d.driver_id);
+    if (!driver) return true;
+    try {
+      const week = periodContaining(d.day, sortVersions(rows.pay_configs)[0].week_start_dow);
+      const key = `${d.driver_id}:${week.start}`;
+      const known = seen.get(key);
+      if (known !== undefined) return known;
+      const lines = hardDeductionLines(
+        payConfigOf(configFor(rows.pay_configs, week.start)),
+        driverOf(driver),
+        week,
+        [],
+        rows.deduction_schedules.filter((x) => x.driver_id === d.driver_id).map(scheduleOf),
+        rows.driver_days.filter((x) => x.driver_id === d.driver_id).map(dayOf),
+      ).lines;
+      seen.set(key, lines.length > 0);
+      return lines.length > 0;
+    } catch {
+      return true;
+    }
+  };
 }
 
 // The week Cash Friday reports (dueWeek, D-090), as its row.
 export function dueWeekOf(
-  rows: Pick<CashFridayRows, "settlement_periods" | "settlements" | "loads" | "pay_items" | "driver_days">,
+  rows: Pick<
+    CashFridayRows,
+    "settlement_periods" | "settlements" | "loads" | "pay_items" | "driver_days" | "pay_configs" | "drivers" | "deduction_schedules"
+  >,
 ): SettlementPeriodRow | null {
   const due = dueWeek(
     rows.settlement_periods.map(periodOf),
@@ -556,8 +602,8 @@ export function dueWeekOf(
 
 // The previews describe the week Cash Friday reports (dueWeekOf), so the pay run total and the
 // previews are one week's. Each driver's preview reads what the driver's other unpaid stubs hold
-// (held, by driver id, from readHeldRecoveries for that week), as a run of the week does, so a
-// preview and the run agree; a driver missing from it holds nothing, and null (the held lines did
+// (held, by driver id in lower case, from heldByDriver for that week), as a run of the week does,
+// so a preview and the run agree; a driver missing from it holds nothing, and null (the held lines did
 // not read) makes the previews null, so the pay run reads unknown.
 function previewsOf(rows: CashFridayRows, held: ReadonlyMap<string, HeldRecoveries> | null): SettlementInput[] | null {
   const due = dueWeekOf(rows);
@@ -567,7 +613,7 @@ function previewsOf(rows: CashFridayRows, held: ReadonlyMap<string, HeldRecoveri
     .filter((d) => d.active_from <= period.end && (d.active_to === null || d.active_to >= period.start))
     .sort((a, b) => (a.code < b.code ? -1 : a.code > b.code ? 1 : 0));
   try {
-    return active.map((d) => settlementInputOf(applyHeld(rows, d.id, held.get(d.id) ?? NOTHING_HELD), d.id, period));
+    return active.map((d) => settlementInputOf(applyHeld(rows, d.id, held.get(d.id.toLowerCase()) ?? NOTHING_HELD), d.id, period));
   } catch (error) {
     if (error instanceof ConfigError || error instanceof InputError) return null;
     throw error;

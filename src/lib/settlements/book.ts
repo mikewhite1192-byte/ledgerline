@@ -3,6 +3,7 @@ import { flags } from "../../config/flags";
 import type { Queryable } from "../db";
 import { NO_LIVE_PULL, readTenant } from "../data/read";
 import { cents } from "../rules-engine";
+import { dayOfWeek, localDateOf, periodContaining } from "../time/local-date";
 import { isUuid } from "../uuid";
 import { paidWritesOf } from "./paid";
 import { readPeriod, readStoredLines, readStoredSettlement } from "./stored";
@@ -49,7 +50,8 @@ export async function bookPaidSettlement(q: Queryable, settlementId: string, now
   // or without a stub of this driver, and an open week where this driver's stub is already
   // approved or paid. The driver's lock above is the one every approval of this driver's stubs
   // takes before its recheck (lockPayDrivers), so no other week's stub of this driver changes
-  // status between this read and the commit.
+  // status between this read and the commit; the later weeks' rows are held FOR SHARE, so no
+  // roll-up closes the week the item lands in before this booking commits (rollUpPeriod).
   const laterWeeks =
     carryForwardCents > 0
       ? await q.query<{ period_start: string; period_end: string; state: string }>(
@@ -61,12 +63,21 @@ export async function bookPaidSettlement(q: Queryable, settlementId: string, now
                        THEN 'settled' ELSE 'drafts' END AS state
              FROM settlement_periods p
             WHERE p.tenant_id = current_tenant_id() AND p.period_start > CAST($2 AS date)
-            ORDER BY p.period_start`,
+            ORDER BY p.period_start
+              FOR SHARE OF p`,
           [stored.driverId, period.start],
         )
       : [];
   const settledWeeks = laterWeeks.filter((w) => w.state === "settled").map((w) => ({ start: w.period_start, end: w.period_end }));
   const draftingWeek = laterWeeks.find((w) => w.state === "drafts")?.period_start ?? null;
+  // With no week to draft it yet, the item never falls in a week already over: the earliest day is
+  // the first of the week holding the carrier's local today, from the same zone (tenants.timezone)
+  // and week shape (every period starts on the pay rules' week start day) the pay week roll opens
+  // that week from. Only while the roll is on, since nothing opens a week otherwise.
+  const notBefore =
+    carryForwardCents > 0 && draftingWeek === null && flags.payWeekRoll.enabled
+      ? periodContaining(localDateOf(now.toISOString(), tenant.timezone), dayOfWeek(period.start)).start
+      : null;
   const writes = paidWritesOf({
     settlementId,
     lines,
@@ -75,6 +86,7 @@ export async function bookPaidSettlement(q: Queryable, settlementId: string, now
     periodEnd: period.end,
     settledWeeks,
     draftingWeek,
+    notBefore,
   });
   const at = now.toISOString();
 
@@ -174,8 +186,15 @@ export async function bookPaidSettlement(q: Queryable, settlementId: string, now
 }
 
 // A period moves forward only: every settlement paid makes it paid; every one approved or paid
-// makes it approved. A period with no settlements stays as it is.
+// makes it approved. A period with no settlements stays as it is, and so does one holding a pay
+// item on no paystub yet for a driver with no paystub in the week (a shortfall carried into it
+// after its stubs were drafted, D-090): only a run of an open week drafts that item, so closing
+// the week would strand it; open, the week stays the one paid next and a person's run drafts it.
+// The period row is locked first, the lock a booking takes on every later week while it dates a
+// carried shortfall (FOR SHARE above), so an item and the roll-up of its week never interleave.
 export async function rollUpPeriod(q: Queryable, periodId: string): Promise<void> {
+  const period = await readPeriod(q, periodId, true);
+  if (!period) return;
   const [counts] = await q.query<{ total: number | string; paid: number | string; settled: number | string }>(
     `SELECT count(*) AS total,
             count(*) FILTER (WHERE status = 'paid') AS paid,
@@ -185,6 +204,17 @@ export async function rollUpPeriod(q: Queryable, periodId: string): Promise<void
   );
   const total = Number(counts?.total ?? 0);
   if (total === 0) return;
+  const unstubbed = await q.query<{ id: string }>(
+    `SELECT i.id FROM pay_items i
+      WHERE i.tenant_id = current_tenant_id() AND i.settlement_id IS NULL
+        AND i.item_date BETWEEN CAST($2 AS date) AND CAST($3 AS date)
+        AND NOT EXISTS (SELECT 1 FROM settlements s
+                         WHERE s.tenant_id = i.tenant_id AND s.period_id = CAST($1 AS uuid)
+                           AND s.driver_id = i.driver_id)
+      LIMIT 1`,
+    [periodId, period.start, period.end],
+  );
+  if (unstubbed.length > 0) return;
   if (Number(counts.paid) === total) {
     await q.execute(
       `UPDATE settlement_periods SET status = 'paid'
