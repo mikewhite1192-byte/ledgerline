@@ -22,10 +22,15 @@ export const dynamic = "force-dynamic";
 const WORKER = { company: "Company driver", owner_operator: "Owner-operator" } as const;
 
 // While driver admin is on (so a just-added driver lands here): the one-line cue above the money
-// panel when the driver has no active card or is not armed, the two steps before an advance.
-function needsSetup(identity: DriverIdentity): boolean {
-  if (!driverAdminOn()) return false;
-  return !identity.armed.on || !identity.cards.some((c) => c.status === "active");
+// panel naming only the steps still missing before an advance (an active card, then arming).
+function setupCue(identity: DriverIdentity): string | null {
+  if (!driverAdminOn()) return null;
+  const noCard = !identity.cards.some((c) => c.status === "active");
+  const notArmed = !identity.armed.on;
+  if (noCard && notArmed) return "Before this driver can take an advance: add a card, then arm them.";
+  if (noCard) return "Before this driver can take an advance: add a card.";
+  if (notArmed) return "Before this driver can take an advance: arm them.";
+  return null;
 }
 
 // One driver: who they are and how they are paid, their recent paystubs and advances. Every
@@ -52,6 +57,7 @@ export default async function DriverRecord({ params }: { params: Promise<{ id: s
     );
   }
   const { record: d, advanceLinks, money } = page.record;
+  const cue = money ? setupCue(money.identity) : null;
   return (
     <SignedInPage tenant={page.shell} current="none" title={d.name} focus={{ table: "drivers", id: d.id, label: d.name }}>
       <PageHeader
@@ -59,9 +65,7 @@ export default async function DriverRecord({ params }: { params: Promise<{ id: s
         description={d.code}
         actions={d.ownInsurance ? <Badge tone="info">Carries own insurance</Badge> : undefined}
       />
-      {money && needsSetup(money.identity) ? (
-        <p className="text-body text-foreground-2">Before this driver can take an advance: add a card, then arm them.</p>
-      ) : null}
+      {cue ? <p className="text-body text-foreground-2">{cue}</p> : null}
       {money ? <DriverMoney identity={money.identity} canAdmin={money.canAdmin} timezone={page.shell.timezone} /> : null}
       <Card>
         <CardBody>
