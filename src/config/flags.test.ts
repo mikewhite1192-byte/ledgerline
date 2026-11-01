@@ -126,6 +126,9 @@ const RELEASED_ON = [
   // Released by the owner (D-071, 2026-11-01): staff mark a paid stub as sent and the agent shows
   // when and by which role. It records a person's send; the app sends nothing.
   "stubSent.enabled",
+  // Released by the owner (D-071, 2026-11-01) once the key was stored: the dispatch system can wake
+  // the desk with a signed call. It reads only, never writes to dispatch, and moves no money.
+  "tmsHook.enabled",
 ] as const;
 
 // What stays off, each waiting on a missing piece or an outside send the owner has not released.
@@ -143,8 +146,6 @@ const KEPT_OFF = [
   "evalRun.enabled",
   // The card pull-back ships off; its own one-line enable PR turns it on.
   "cardPullback.enabled",
-  // The dispatch webhook ships off; its own one-line enable PR turns it on once the key is stored.
-  "tmsHook.enabled",
 ] as const;
 
 // The on/off switches in flags.ts, by path: every top-level boolean and every boolean inside a
@@ -432,8 +433,8 @@ describe("flags", () => {
     expect(flags.loadMovement.enabled).toBe(true);
   });
 
-  it("ships the dispatch webhook off, at 60 calls a minute a carrier, and local mode can never turn it on", () => {
-    expect(flags.tmsHook).toEqual({ enabled: false, hookPerMinute: 60 });
+  it("ships the dispatch webhook on, at 60 calls a minute a carrier, and local mode can never turn it on", () => {
+    expect(flags.tmsHook).toEqual({ enabled: true, hookPerMinute: 60 });
     expect(Number.isSafeInteger(flags.tmsHook.hookPerMinute) && flags.tmsHook.hookPerMinute > 0).toBe(true);
     expect(LOCAL_OVERRIDABLE as readonly string[]).not.toContain("tmsHook.enabled");
     // Listed ahead of its release, so the demo-path run keeps it off once it ships on.
