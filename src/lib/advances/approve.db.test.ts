@@ -11,6 +11,8 @@ import { adminUrl, appUrl } from "../db/test-urls";
 import type { Db, TenantDb } from "../db/types";
 import { dbLedgerStore, type LedgerStore } from "../money/execute";
 import { reconcileMoneyActions } from "../money/reconcile";
+import { MoneyError, type MoneyAction } from "../money/types";
+import { setDriverStatus } from "../drivers/status";
 import {
   addAdvance,
   addCard,
@@ -28,6 +30,7 @@ import { executeProposal, type Executor, type ExecutorRegistry } from "../propos
 import {
   checkAdvancePayouts,
   executeAdvanceProposal,
+  payoutHooksFor,
   payoutReconcileHooks,
   precheckAdvanceProposal,
   retryAdvancePayout,
@@ -1358,6 +1361,123 @@ describe("the advance flow", () => {
       await armDriver(A.session, A.driverId, { armed: true }, services());
       expect(await retryAdvancePayout(A.session, adv.id, deps())).toMatchObject({ ok: true, status: "paid" });
       expect(mock.sendCount).toBe(2);
+    });
+
+    // 0081: the driver's last day, written by the admin login as a hand-built row would be (still
+    // armed), so each gate's own active read is what refuses. NOW is Nov 2 in the carrier's zone.
+    const setLastDay = (day: string | null, driverId = A.driverId) =>
+      admin.withTenant(A.tenantId, (q) =>
+        q.execute("UPDATE drivers SET active_to = CAST($2 AS date) WHERE tenant_id = current_tenant_id() AND id = CAST($1 AS uuid)", [
+          driverId,
+          day,
+        ]),
+      );
+
+    it("refuses a departed driver who is still armed before approving, and writes nothing", async () => {
+      await setLastDay("2026-11-01");
+      const id = await addProposal();
+      expect(await approve(id)).toEqual({ ok: false, category: "driver_inactive", retryable: false });
+      expect(await proposalRow(id)).toMatchObject({ status: "proposed", decided_by: null, money_action_id: null });
+      expect(await flowAdvances()).toEqual([]);
+      expect(await ledger()).toEqual([]);
+      expect(mock.sendCount).toBe(0);
+      // The last day itself is still a working day: with it set to today, the approval pays.
+      await setLastDay("2026-11-02");
+      expect(await approve(id)).toMatchObject({ ok: true, status: "done" });
+      expect(mock.sendCount).toBe(1);
+    });
+
+    it("asks again at the executor: a driver who leaves after the precheck is refused, and nothing is reserved", async () => {
+      const id = await addProposal();
+      const racing: ExecutorRegistry = {
+        advance_payout: Object.assign((...args: Parameters<Executor>) => executeAdvanceProposal(...args), {
+          precheck: async (...args: Parameters<typeof precheckAdvanceProposal>) => {
+            const answer = await precheckAdvanceProposal(...args);
+            await setLastDay("2026-11-01");
+            return answer;
+          },
+        }),
+      };
+      expect(await approve(id, false, { ...deps(), executors: racing })).toEqual({
+        ok: false,
+        category: "driver_inactive",
+        retryable: false,
+      });
+      expect(await flowAdvances()).toEqual([]);
+      expect(await ledger()).toEqual([]);
+      expect(mock.sendCount).toBe(0);
+    });
+
+    it("asks again at a retry: a driver who leaves after a failed payout is not paid until active again", async () => {
+      const id = await addProposal();
+      mock.failNext("rate_limited");
+      expect(await approve(id)).toMatchObject({ ok: false, category: "payout_failed" });
+      const [adv] = await flowAdvances();
+      await setLastDay("2026-11-01");
+      expect(await retryAdvancePayout(A.session, adv.id, deps())).toMatchObject({ ok: false, category: "driver_inactive" });
+      expect(await ledger()).toEqual([expect.objectContaining({ state: "failed", attempt: 1 })]);
+      await setLastDay(null);
+      expect(await retryAdvancePayout(A.session, adv.id, deps())).toMatchObject({ ok: true, status: "paid" });
+      expect(mock.sendCount).toBe(2);
+    });
+
+    it("refuses at the reserve too, on the carrier's date of the action, not the server's", async () => {
+      const proposalId = await addProposal();
+      const advanceId = randomUUID();
+      await admin.withTenant(A.tenantId, (q) =>
+        q.execute(
+          `INSERT INTO advances (id, tenant_id, driver_id, request_ref, requested_at, requested_on, amount_cents, status,
+             source, proposal_id)
+           VALUES (CAST($1 AS uuid), current_tenant_id(), CAST($2 AS uuid), $3, CAST('2026-11-02T03:00:00Z' AS timestamptz),
+             CAST('2026-11-01' AS date), 25000, 'requested', 'ui', CAST($4 AS uuid))`,
+          [advanceId, A.driverId, `REQ-RES-${advanceId.slice(0, 8)}`, proposalId],
+        ),
+      );
+      const card = await activeCard(A.driverId);
+      const action = (createdAt: string) =>
+        ({ subjectId: advanceId, approverMembershipId: A.memberId, createdAt, proposalId: null }) as unknown as MoneyAction;
+      const reserve = (createdAt: string) =>
+        app.withTenant(A.tenantId, (q) => payoutHooksFor(card.id).onReserved(q, action(createdAt)));
+      const status = async () =>
+        (
+          await admin.withTenant(A.tenantId, (q) =>
+            q.query<{ status: string }>("SELECT status FROM advances WHERE tenant_id = current_tenant_id() AND id = CAST($1 AS uuid)", [
+              advanceId,
+            ]),
+          )
+        )[0].status;
+      await setLastDay("2026-11-01");
+      // 16:00 UTC on Nov 2 is Nov 2 in Chicago, a day past the last one.
+      await expect(reserve("2026-11-02T16:00:00.000Z")).rejects.toBeInstanceOf(MoneyError);
+      expect(await status()).toBe("requested");
+      // 04:00 UTC on Nov 2 is still Nov 1 in Chicago, the last day.
+      await reserve("2026-11-02T04:00:00.000Z");
+      expect(await status()).toBe("approved");
+    });
+
+    it("deactivating on the driver's page disarms them; reactivating does not arm, so nothing is paid until an admin arms them", async () => {
+      flags.driverAdmin = { enabled: true };
+      await makeAdmin();
+      const id = await addProposal();
+      expect(
+        await setDriverStatus(A.session, A.driverId, { active: false, effectiveOn: "2026-11-01" }, services()),
+      ).toMatchObject({ ok: true, changed: true, armed: false });
+      expect(await approve(id)).toMatchObject({ ok: false, category: "driver_inactive" });
+      // Armed again by an admin while gone: still refused, by the last day.
+      await armDriver(A.session, A.driverId, { armed: true }, services());
+      expect(await approve(id)).toMatchObject({ ok: false, category: "driver_inactive" });
+      await armDriver(A.session, A.driverId, { armed: false }, services());
+      expect(await setDriverStatus(A.session, A.driverId, { active: true }, services())).toMatchObject({
+        ok: true,
+        changed: true,
+        active: true,
+        armed: false,
+      });
+      expect(await approve(id)).toMatchObject({ ok: false, category: "driver_not_armed" });
+      expect(await ledger()).toEqual([]);
+      await armDriver(A.session, A.driverId, { armed: true }, services());
+      expect(await approve(id)).toMatchObject({ ok: true, status: "done" });
+      expect(mock.sendCount).toBe(1);
     });
 
     it("pays the card the proposal names, never the default in its place, and refuses one that is not the driver's", async () => {

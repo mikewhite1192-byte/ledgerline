@@ -22,9 +22,11 @@ export const dynamic = "force-dynamic";
 const WORKER = { company: "Company driver", owner_operator: "Owner-operator" } as const;
 
 // While driver admin is on (so a just-added driver lands here): the one-line cue above the money
-// panel naming only the steps still missing before an advance (an active card, then arming).
+// panel naming only the steps still missing before an advance (an active card, then arming). A
+// driver with a last day on file gets none: they cannot be armed until reactivated, which the money
+// panel says.
 function setupCue(identity: DriverIdentity): string | null {
-  if (!driverAdminOn()) return null;
+  if (!driverAdminOn() || identity.activeTo !== null) return null;
   const noCard = !identity.cards.some((c) => c.status === "active");
   const notArmed = !identity.armed.on;
   if (noCard && notArmed) return "Before this driver can take an advance: add a card, then arm them.";
@@ -35,8 +37,8 @@ function setupCue(identity: DriverIdentity): string | null {
 
 // One driver: who they are and how they are paid, their recent paystubs and advances. Every
 // paystub line cites its driver, so this is where those links land. While advances are on, the
-// money panel too (armed, the ids other systems know them by, the cards on file), and each
-// advance links to its record.
+// money panel too (armed, the ids other systems know them by, the cards on file, and while
+// driver admin is on the driver's status), and each advance links to its record.
 export default async function DriverRecord({ params }: { params: Promise<{ id: string }> }) {
   const { id } = await params;
   const page = await readRecordPage(id, async (q, driverId, today, session) => {
@@ -46,7 +48,7 @@ export default async function DriverRecord({ params }: { params: Promise<{ id: s
     const identity = await readDriverIdentity(q, driverId);
     // Read only: any member's role, a demo visitor's too (its writes are refused on the routes).
     const role = await readRole(q, session);
-    return { record, advanceLinks: true, money: identity ? { identity, canAdmin: role === "admin" } : null };
+    return { record, advanceLinks: true, money: identity ? { identity, canAdmin: role === "admin", today } : null };
   });
   if (page.kind === "problem") return <NoCarrierPage problem={page.problem} />;
   if (page.kind === "missing") {
@@ -66,7 +68,15 @@ export default async function DriverRecord({ params }: { params: Promise<{ id: s
         actions={d.ownInsurance ? <Badge tone="info">Carries own insurance</Badge> : undefined}
       />
       {cue ? <p className="text-body text-foreground-2">{cue}</p> : null}
-      {money ? <DriverMoney identity={money.identity} canAdmin={money.canAdmin} timezone={page.shell.timezone} /> : null}
+      {money ? (
+        <DriverMoney
+          identity={money.identity}
+          canAdmin={money.canAdmin}
+          timezone={page.shell.timezone}
+          statusAdminOn={driverAdminOn()}
+          today={money.today}
+        />
+      ) : null}
       <Card>
         <CardBody>
           <Facts

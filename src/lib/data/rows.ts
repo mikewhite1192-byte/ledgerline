@@ -83,6 +83,17 @@ export type DriverArmEventRow = {
   source: "seed" | "ui";
 };
 
+// One deactivation (active false) or reactivation (active true) of a driver, always a person's
+// (0081). The seed plans none.
+export type DriverStatusEventRow = {
+  id: string;
+  driver_id: string;
+  active: boolean;
+  effective_on: string;
+  note: string | null;
+  membership_id: string;
+};
+
 export type LoadRow = {
   id: string;
   load_number: string;
@@ -807,6 +818,7 @@ export type TenantRows = {
   driver_cards: DriverCardRow[];
   driver_identities: DriverIdentityRow[];
   driver_arm_events: DriverArmEventRow[];
+  driver_status_events: DriverStatusEventRow[];
   loads: LoadRow[];
   load_events: LoadEventRow[];
   tms_connections: TmsConnectionRow[];

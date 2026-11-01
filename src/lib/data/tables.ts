@@ -2,7 +2,8 @@
 // and 0005, the moves of a load from 0071 (one per seeded status change, right after loads), the
 // dispatch mirror from 0075 (the synthetic feed's snapshot at the seeded instant, after the
 // loads, customers and drivers it links to; the sync's runtime columns are not listed), the outside text and its screenings from 0008, the fuel cards on file from 0017, the
-// driver identity map and arming log from 0027, the money codes from 0048 (planned empty; it names
+// driver identity map and arming log from 0027, the status log from 0081 (planned empty: only a
+// person deactivates or reactivates a driver), the money codes from 0048 (planned empty; it names
 // pay items and load charges, so it goes before them on a delete), the card provider's statement
 // and the card check's runs and differences from 0046 (the seed writes no run and no difference;
 // the replace, and so the demo reset, clears them), the collection reminders from 0041 (seeded
@@ -35,6 +36,7 @@ export const TENANT_TABLES = [
   "driver_cards",
   "driver_identities",
   "driver_arm_events",
+  "driver_status_events",
   "loads",
   "load_events",
   "tms_connections",
@@ -81,13 +83,15 @@ export const TENANT_TABLES = [
 export type TenantTable = (typeof TENANT_TABLES)[number];
 
 // The seeded tables the app role may add to but never delete from: the arming log is append-only
-// (0027), and the phone line's calls, segments and turns are the record of a call (0068). The
-// replace leaves them out of its deletes; the seed clears them through the admin login before the
-// replace (clearTenantArmLog, and the calls with the agent's records), and a row written after
-// that clear goes with its driver (the foreign keys cascade: a call names its driver, a segment
-// its call, a turn its segment).
+// (0027), the status log too (0081), and the phone line's calls, segments and turns are the record
+// of a call (0068). The replace leaves them out of its deletes; the seed clears them through the
+// admin login before the replace (clearTenantArmLog, and the calls with the agent's records), and a
+// row written after that clear goes with its driver (the foreign keys cascade: a call or a status
+// change names its driver, a segment its call, a turn its segment). The status log is never
+// seeded, so its rows only ever go that way.
 export const APP_KEEPS_TABLES: ReadonlySet<TenantTable> = new Set<TenantTable>([
   "driver_arm_events",
+  "driver_status_events",
   "calls",
   "call_segments",
   "call_turns",
@@ -171,6 +175,17 @@ export const TABLE_SPECS: Record<TenantTable, TableSpec> = {
       ["note", "text"],
       ["membership_id", "uuid"],
       ["source", "text"],
+    ],
+  },
+  driver_status_events: {
+    table: "driver_status_events",
+    columns: [
+      ["id", "uuid"],
+      ["driver_id", "uuid"],
+      ["active", "bool"],
+      ["effective_on", "date"],
+      ["note", "text"],
+      ["membership_id", "uuid"],
     ],
   },
   loads: {

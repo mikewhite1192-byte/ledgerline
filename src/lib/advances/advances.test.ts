@@ -23,6 +23,7 @@ import {
   outcomeSentence,
   panelSentence,
   refusalSentence,
+  statusSentence,
   takeBackSentence,
 } from "./reasons";
 import {
@@ -151,6 +152,7 @@ describe("the sentences a person sees", () => {
         "before_start",
         "card_not_drivers",
         "disabled",
+        "driver_inactive",
         "driver_not_armed",
         "eligibility_unavailable",
         "load_not_drivers",
@@ -196,9 +198,21 @@ describe("the sentences a person sees", () => {
     expect(takeBackSentence("Error: socket hang up")).toBe(outcomeSentence("unavailable"));
     expect(panelSentence("role")).toBe("Only an admin can arm a driver or change their cards.");
     expect(panelSentence("identity_taken")).toBe("That id already belongs to another driver.");
+    expect(panelSentence("driver_inactive")).toBe("This driver is deactivated. Reactivate them before arming.");
     expect(panelSentence("card_not_drivers")).toContain("not one of this driver's active cards");
     expect(panelSentence("constructor")).toBe(panelSentence("unavailable"));
     expect(panelSentence("Error: socket hang up at 10.0.0.1")).toBe(panelSentence("unavailable"));
+    expect(statusSentence("role")).toBe("Only an admin can deactivate or reactivate a driver.");
+    expect(statusSentence("disabled")).toBe("Driver changes are switched off.");
+    expect(statusSentence("unauthenticated")).toBe(panelSentence("unauthenticated"));
+    expect(statusSentence("constructor")).toBe(panelSentence("unavailable"));
+  });
+
+  it("says plainly when a departed driver is refused money", () => {
+    expect(outcomeSentence("driver_inactive")).toBe(
+      "This driver is no longer active with the carrier, so nothing was paid.",
+    );
+    expect(ADVANCE_APPROVE_NOTICE.driver_inactive).toBe(outcomeSentence("driver_inactive"));
   });
 
   it("reads a decision note from its codes only", () => {

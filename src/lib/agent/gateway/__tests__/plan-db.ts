@@ -124,11 +124,13 @@ export function planDb(plan: CarrierPlan, extra?: Handler): FakeDb {
         })
         .sort((x, y) => (x.code === y.code ? (x.id < y.id ? -1 : 1) : x.code < y.code ? -1 : 1));
     }
-    // The money-code check's reads (data/read.ts readMoneyCodeInput): the driver's switch, the
+    // The money-code check's reads (data/read.ts readMoneyCodeInput): the driver's arm and active state, the
     // load, and the recent codes or those citing the same evidence (none in a plan unless a test
     // adds them).
     if (sql === MONEY_CODE_DRIVER_SQL) {
-      return plan.rows.drivers.filter((d) => d.id === params[0]).map((d) => ({ money_armed: d.money_armed }));
+      return plan.rows.drivers
+        .filter((d) => d.id === params[0])
+        .map((d) => ({ money_armed: d.money_armed, active_from: d.active_from, active_to: d.active_to }));
     }
     if (sql === MONEY_CODE_LOAD_SQL) {
       return plan.rows.loads

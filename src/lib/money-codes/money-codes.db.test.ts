@@ -10,13 +10,15 @@ import type { Db, Queryable, TenantDb } from "../db/types";
 import { CONFIDENCE_FIELDS } from "../documents/types";
 import { readBySubject } from "../money/read";
 import { clearLedger, dropTenant, makeTenant, setArmed, sqlStateOf, type Fixture } from "../money/test-db";
-import { executeProposal } from "../proposals/execute";
+import { executeProposal, type ExecutorRegistry } from "../proposals/execute";
 import { checkMoneyCode } from "../rules-engine/money-codes";
 import { settleDriver } from "../rules-engine/settlement";
 import {
   chargeItemRef,
   checkPendingCode,
+  executeMoneyCodeProposal,
   finishIssuedCode,
+  precheckMoneyCode,
   revealMoneyCode,
   reimbursementItemRef,
   type MoneyCodeDeps,
@@ -750,6 +752,112 @@ describe("money codes against the database", () => {
     expect(await codeRows()).toEqual([]);
     expect(await ledger()).toEqual([]);
     expect(await payItems()).toEqual([]);
+  });
+
+  it("refuses a driver past their last day, still armed, at the request, at the approval and at the executor", async () => {
+    const loadId = await addLoadOnTheRoad(A);
+    const proposalId = await ask(A, loadId, 15_000);
+    const setLastDay = (day: string | null) =>
+      admin.withTenant(A.tenantId, (q) =>
+        q.execute("UPDATE drivers SET active_to = CAST($2 AS date) WHERE tenant_id = current_tenant_id() AND id = CAST($1 AS uuid)", [
+          A.driverId,
+          day,
+        ]),
+      );
+    // NOW is Nov 2 in the carrier's zone: a last day of Nov 1 has passed.
+    await setLastDay("2026-11-01");
+    expect(await approve(proposalId)).toEqual({ ok: false, category: "driver_inactive", retryable: false });
+    expect(await proposalStatus(proposalId)).toBe("proposed");
+    // A new request from the form: the engine reads the departed driver as not armed.
+    const input = await app.withTenant(A.tenantId, (q) =>
+      readMoneyCodeInput(
+        q,
+        {
+          driverId: A.driverId,
+          loadId,
+          purpose: "lumper",
+          amountCents: 12_000,
+          source: "form",
+          documentId: null,
+          voiceNoteId: null,
+          capCents: flags.moneyCodes.capCents,
+          perDriverPerDay: flags.moneyCodes.perDriverPerDay,
+        },
+        new Date(NOW).toISOString(),
+      ),
+    );
+    expect(input.driverArmed).toBe(false);
+    // Left after the precheck: the executor asks again under the driver lock.
+    await setLastDay(null);
+    const racing: ExecutorRegistry = {
+      money_code: Object.assign((...args: Parameters<typeof executeMoneyCodeProposal>) => executeMoneyCodeProposal(...args), {
+        precheck: async (...args: Parameters<typeof precheckMoneyCode>) => {
+          const answer = await precheckMoneyCode(...args);
+          await setLastDay("2026-11-01");
+          return answer;
+        },
+      }),
+    };
+    expect(await approve(proposalId, A.session, deps({ executors: racing }))).toEqual({
+      ok: false,
+      category: "driver_inactive",
+      retryable: false,
+    });
+    expect(await codeRows()).toEqual([]);
+    expect(await ledger()).toEqual([]);
+    expect(await payItems()).toEqual([]);
+  });
+
+  // The executor's own check passes and commits; the change lands after it and before the reserve
+  // (in the issuer's first ready check, which the money executor asks before it reserves). The
+  // reserve asks the driver again, so the reservation rolls back and the issuer is never called.
+  const refusedAtTheReserve = async (change: () => Promise<unknown>) => {
+    const loadId = await addLoadOnTheRoad(A);
+    const proposalId = await ask(A, loadId, 15_000);
+    let changed = false;
+    const sends: string[] = [];
+    const racing: MoneyCodeIssuer = {
+      ...issuer,
+      ready: async () => {
+        if (!changed) {
+          changed = true;
+          await change();
+        }
+        return issuer.ready();
+      },
+      issueMoneyCode: (req, ctx) => {
+        sends.push(req.actionId);
+        return issuer.issueMoneyCode(req, ctx);
+      },
+    };
+    expect(await approve(proposalId, A.session, deps({ issuer: racing }))).toEqual({
+      ok: false,
+      category: "code_unavailable",
+      retryable: false,
+    });
+    expect(changed).toBe(true);
+    expect(sends).toEqual([]);
+    expect(issuerLog).toEqual([]);
+    // Nothing reserved, no lines, and the code and its proposal end failed, not left issuing.
+    expect(await ledger()).toEqual([]);
+    expect(await payItems()).toEqual([]);
+    expect(await lumpers()).toEqual([]);
+    expect((await codeRows()).map((c) => c.status)).toEqual(["failed"]);
+    expect(await proposalStatus(proposalId)).toBe("failed");
+  };
+
+  it("a driver deactivated after the executor's check and before the reserve gets no code and no issuer call", async () => {
+    await refusedAtTheReserve(() =>
+      admin.withTenant(A.tenantId, (q) =>
+        q.execute("UPDATE drivers SET active_to = CAST('2026-11-01' AS date) WHERE tenant_id = current_tenant_id() AND id = CAST($1 AS uuid)", [
+          A.driverId,
+        ]),
+      ),
+    );
+  });
+
+  it("a driver disarmed after the executor's check and before the reserve gets no code and no issuer call", async () => {
+    await refusedAtTheReserve(() => setArmed(admin, A, A.driverId, false));
   });
 
   it("the code is shown only while it is good", async () => {

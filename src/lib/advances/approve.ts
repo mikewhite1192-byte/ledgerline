@@ -3,6 +3,7 @@ import { flags } from "../../config/flags";
 import type { Session } from "../auth/claims";
 import { DbError, getDb, type Queryable, type TenantDb } from "../db";
 import { readAdvanceInput } from "../data/read";
+import { readDriverMoneyState } from "../drivers/active";
 import { DEFAULT_TIMEOUT_MS, executeMoneyAction, type MoneyDeps, type MoneyHooks } from "../money/execute";
 import { isCanonicalUuid } from "../money/keys";
 import { readBySubject, readTenantZone } from "../money/read";
@@ -88,10 +89,10 @@ function steadyOf(deps: AdvanceDeps): () => number {
 // In the reserve transaction: the advance becomes approved, naming the member whose approval
 // reserved it, records the fuel card this attempt pays (every new attempt records its own), and
 // the proposal records its first ledger row. The card must still be one of the driver's active
-// cards, the driver must still be armed to receive money, and the advance's load must not be
-// cancelled, asked here because this is the transaction the payout is reserved in (a new attempt
-// only: a row already reserved goes on and is read back by its key). Must change the advance or
-// throw; a throw rolls the reservation back.
+// cards, the driver must still be armed and active (on the carrier's date of the action) to
+// receive money, and the advance's load must not be cancelled, asked here because this is the
+// transaction the payout is reserved in (a new attempt only: a row already reserved goes on and is
+// read back by its key). Must change the advance or throw; a throw rolls the reservation back.
 async function onPayoutReserved(q: Queryable, action: MoneyAction, cardId: string | null): Promise<void> {
   if (!isCanonicalUuid(cardId)) throw new MoneyError("validation");
   const changed = await q.execute(
@@ -105,9 +106,12 @@ async function onPayoutReserved(q: Queryable, action: MoneyAction, cardId: strin
         AND EXISTS (SELECT 1 FROM driver_cards c
                      WHERE c.tenant_id = current_tenant_id() AND c.id = CAST($4 AS uuid)
                        AND c.driver_id = advances.driver_id AND c.status = 'active')
-        AND EXISTS (SELECT 1 FROM drivers d
+        AND EXISTS (SELECT 1 FROM drivers d JOIN tenants t ON t.id = d.tenant_id
                      WHERE d.tenant_id = current_tenant_id() AND d.id = advances.driver_id
-                       AND d.money_armed)
+                       AND d.money_armed
+                       AND d.active_from <= CAST((CAST($3 AS timestamptz) AT TIME ZONE t.timezone) AS date)
+                       AND (d.active_to IS NULL
+                            OR d.active_to >= CAST((CAST($3 AS timestamptz) AT TIME ZONE t.timezone) AS date)))
         AND NOT EXISTS (SELECT 1 FROM loads l
                          WHERE l.tenant_id = current_tenant_id() AND l.id = advances.load_id
                            AND l.status = 'cancelled')`,
@@ -205,16 +209,20 @@ async function payoutRows(q: Queryable, advanceId: string): Promise<MoneyAction[
   return (await readBySubject(q, "advances", advanceId)).filter((a) => a.kind === "advance_payout");
 }
 
-// Whether the driver is armed to receive money: null when there is no such driver here. Only
-// true arms; the column is never null, and anything else reads as not armed.
-async function driverArmed(q: Queryable, driverId: string, lock: boolean): Promise<boolean | null> {
-  const rows = await q.query<{ money_armed: boolean }>(
-    `SELECT money_armed FROM drivers WHERE tenant_id = current_tenant_id() AND id = CAST($1 AS uuid)${
-      lock ? " FOR UPDATE" : ""
-    }`,
-    [driverId],
-  );
-  return rows.length === 1 ? rows[0].money_armed === true : null;
+// Whether money may go to the driver on `today`: armed AND active that day (src/lib/drivers/active.ts),
+// null when there is no such driver here. The refusal names which: driver_inactive for a driver
+// past their last day (or before their first), driver_not_armed for one not armed.
+async function driverMoneyRefusal(
+  q: Queryable,
+  driverId: string,
+  today: string,
+  lock: boolean,
+): Promise<"not_found" | "driver_inactive" | "driver_not_armed" | null> {
+  const state = await readDriverMoneyState(q, driverId, today, lock);
+  if (state === null) return "not_found";
+  if (state === "inactive") return "driver_inactive";
+  if (state === "not_armed") return "driver_not_armed";
+  return null;
 }
 
 // The card and the load a proposal names, when it names them (validProposal has checked both are
@@ -334,9 +342,8 @@ export async function precheckAdvanceProposal(
   const zone = await readTenantZone(q);
   const refusal = payoutGate(p.amountCents, localDateOf(nowIso, zone));
   if (refusal) return no(refusal);
-  const armed = await driverArmed(q, p.subjectId, false);
-  if (armed === null) return no("not_found");
-  if (!armed) return no("driver_not_armed");
+  const notPayable = await driverMoneyRefusal(q, p.subjectId, localDateOf(nowIso, zone), false);
+  if (notPayable) return no(notPayable);
   const cardId = namedCard(p);
   if (!(await readPayoutCard(q, p.subjectId, cardId))) return no(cardId ? "card_not_drivers" : "no_card");
   const loadId = namedLoad(p);
@@ -438,11 +445,10 @@ async function prepare(
   const zone = await readTenantZone(q);
   const refusal = payoutGate(p.amountCents, localDateOf(nowIso, zone));
   if (refusal) throw new Stop(refusal);
-  // The arm state under the driver lock: arming takes the same lock, so it cannot change between
-  // this read and the commit.
-  const armed = await driverArmed(q, p.subjectId, true);
-  if (armed === null) throw new Stop("not_found");
-  if (!armed) throw new Stop("driver_not_armed");
+  // The arm and active state under the driver lock: arming and a status change take the same
+  // lock, so neither can change between this read and the commit.
+  const notPayable = await driverMoneyRefusal(q, p.subjectId, localDateOf(nowIso, zone), true);
+  if (notPayable) throw new Stop(notPayable);
 
   let advance = await readFlowAdvanceByProposal(q, p.id);
   // A load cancelled since the card: nothing is paid on it while no payout is reserved (a new
@@ -819,10 +825,9 @@ export async function retryAdvancePayout(
       const zone = await readTenantZone(q);
       const refusal = payoutGate(advance.amountCents, localDateOf(now.toISOString(), zone));
       if (refusal) throw new Stop(refusal);
-      // Armed, asked under the driver lock (the reserve asks it once more).
-      const armed = await driverArmed(q, advance.driverId, true);
-      if (armed === null) throw new Stop("not_found");
-      if (!armed) throw new Stop("driver_not_armed");
+      // Armed and active, asked under the driver lock (the reserve asks it once more).
+      const notPayable = await driverMoneyRefusal(q, advance.driverId, localDateOf(now.toISOString(), zone), true);
+      if (notPayable) throw new Stop(notPayable);
       // The card the proposal named, refused once it is no longer one of the driver's active cards
       // (never swapped for the default); with none named, the driver's current default, not the
       // failed attempt's: a declined card is usually the one being replaced. The new attempt
