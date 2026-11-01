@@ -8,6 +8,7 @@ import { Card, CardBody, CardDescription, CardHeader, CardTitle } from "@/compon
 import { Field } from "@/components/ui/field";
 import { InlineAlert } from "@/components/ui/inline-alert";
 import { controlClass, Input } from "@/components/ui/input";
+import type { ActivationChecklist, ActivationStep } from "@/lib/advances/activation";
 import type { DriverIdentity, IdentityCard } from "@/lib/advances/identity";
 import { panelSentence, statusSentence } from "@/lib/advances/reasons";
 import { cn } from "@/lib/cn";
@@ -21,6 +22,9 @@ import { formatInstant, formatLocalDate } from "@/lib/format/dates";
 // provider. While driver admin is on (statusAdminOn, read server side by the page, with the
 // carrier's today), a Status row too: whether the driver is still active and, for an admin,
 // Deactivate (which also disarms) or Reactivate (which never arms). With it off the row is not shown.
+// While the activation checklist is on and the driver is not armed (activation, read server side by
+// the page), a "Before arming" list too: each step Done or Not done, and for an admin a Record
+// button on each step not done. With it null nothing of it is shown.
 
 export type PanelSend = (path: string, body: Record<string, unknown>) => Promise<{ ok: boolean; error: string | null }>;
 
@@ -51,7 +55,14 @@ export function holderWords(card: Pick<IdentityCard, "holderKind" | "portalName"
   return "In the driver's name";
 }
 
-type Pending = "arm" | "status" | "id" | "card" | `default:${string}` | `close:${string}`;
+type Pending = "arm" | "status" | "id" | "card" | `default:${string}` | `close:${string}` | `step:${ActivationStep}`;
+
+// The checklist's rows, in the order the arm asks for them.
+const ACTIVATION_ROWS: readonly [ActivationStep, string][] = [
+  ["identity_confirmed", "Identity confirmed"],
+  ["zero_test_sent", "Zero test sent"],
+  ["hand_load_acknowledged", "Hand loads acknowledged"],
+];
 
 const DATE = /^[0-9]{4}-[0-9]{2}-[0-9]{2}$/;
 
@@ -69,6 +80,7 @@ export function DriverMoneyPanel({
   timezone,
   statusAdminOn = false,
   today,
+  activation = null,
   send = postJson,
   onDone,
 }: {
@@ -78,6 +90,8 @@ export function DriverMoneyPanel({
   // The driver admin switch and the carrier's today (YYYY-MM-DD), both from the page.
   statusAdminOn?: boolean;
   today?: string;
+  // The activation checklist from the page, or null while it is off or the driver is armed.
+  activation?: ActivationChecklist | null;
   send?: PanelSend;
   onDone?: () => void;
 }) {
@@ -206,6 +220,39 @@ export function DriverMoneyPanel({
           <h3 id={`${uid}-armed`} className="text-small text-muted-foreground">
             Armed to receive money
           </h3>
+          {activation ? (
+            <div className="grid gap-1.5">
+              <p className="text-small text-muted-foreground">Before arming</p>
+              <ul className="grid gap-1.5">
+                {ACTIVATION_ROWS.map(([step, label]) => {
+                  const done = activation.steps[step] === true;
+                  // A step names the card shown here, so a card changed since the page loaded is
+                  // refused (card_changed). With no card there is nothing to record against.
+                  const shown = activation.card;
+                  return (
+                    <li key={step} className="flex flex-wrap items-center gap-2 text-body text-foreground">
+                      <span>{label}</span>
+                      <span className="text-muted-foreground">{done ? "Done" : "Not done"}</span>
+                      {canAdmin && !done && shown ? (
+                        <Button
+                          variant="outline"
+                          size="sm"
+                          pending={pending === `step:${step}`}
+                          pendingLabel="Saving"
+                          disabled={busy}
+                          onClick={() =>
+                            run(`step:${step}`, `${base}/activation-steps`, { step, cardId: shown.id }, `Recorded: ${label.toLowerCase()}.`)
+                          }
+                        >
+                          Record
+                        </Button>
+                      ) : null}
+                    </li>
+                  );
+                })}
+              </ul>
+            </div>
+          ) : null}
           <div className="flex flex-wrap items-center gap-3">
             {identity.armed.on ? (
               <Badge tone="success">{since ? `Armed since ${since}` : "Armed"}</Badge>

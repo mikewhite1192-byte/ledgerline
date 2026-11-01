@@ -389,10 +389,11 @@ describe("the demo reset", () => {
         [randomUUID(), load.id, detention],
       ),
     );
-    // A person disarming a driver, deactivating them (0081) and adding the id the dispatch system
-    // knows them by (0027). The app role cannot delete the arming log or the status log, so the
-    // reset's replace removes them with their drivers (the foreign keys cascade) and writes the
-    // plan's arming log again; the status log is never seeded, so it comes back empty.
+    // A person disarming a driver, deactivating them (0081), recording an activation step on their
+    // card (0085) and adding the id the dispatch system knows them by (0027). The app role cannot
+    // delete the arming log, the status log or the steps, so the reset's replace removes them with
+    // their drivers and cards (the foreign keys cascade) and writes the plan's arming log again; the
+    // status log and the steps are never seeded, so they come back empty.
     await app.withTenant(tenantId, async (q) => {
       await q.execute(
         `INSERT INTO driver_arm_events (id, tenant_id, driver_id, armed, note, membership_id, source)
@@ -404,6 +405,14 @@ describe("the demo reset", () => {
         `INSERT INTO driver_status_events (id, tenant_id, driver_id, active, effective_on, note, membership_id, created_at)
          VALUES (CAST($1 AS uuid), current_tenant_id(), CAST($2 AS uuid), false, DATE '2026-11-01', 'Left after a call',
            (SELECT id FROM memberships WHERE tenant_id = current_tenant_id() AND cognito_sub = $3), now())`,
+        [randomUUID(), other.id, session.sub],
+      );
+      await q.execute(
+        `INSERT INTO driver_activation_steps (id, tenant_id, driver_id, card_id, step, note, membership_id)
+         SELECT CAST($1 AS uuid), current_tenant_id(), c.driver_id, c.id, 'identity_confirmed', 'Checked the license',
+           (SELECT id FROM memberships WHERE tenant_id = current_tenant_id() AND cognito_sub = $3)
+           FROM driver_cards c WHERE c.tenant_id = current_tenant_id() AND c.driver_id = CAST($2 AS uuid)
+          ORDER BY c.id LIMIT 1`,
         [randomUUID(), other.id, session.sub],
       );
       await q.execute(
@@ -815,6 +824,8 @@ describe("the demo reset", () => {
       expect(preview.current.driver_arm_events).toBe(planA.rows.driver_arm_events.length + 1);
       expect(preview.current.driver_status_events).toBe(1);
       expect(planA.rows.driver_status_events).toEqual([]);
+      expect(preview.current.driver_activation_steps).toBe(1);
+      expect(planA.rows.driver_activation_steps).toEqual([]);
       expect(preview.current.driver_identities).toBe(planA.rows.driver_identities.length + 1);
       expect(preview.current.briefs).toBe(planA.rows.briefs.length + 1);
       expect(preview.current.cash_checks).toBe(1);
@@ -863,6 +874,8 @@ describe("the demo reset", () => {
       expect(pick(report.after, TENANT_TABLES)).toEqual(countRows(planA.rows));
       // The status row the app role wrote went with its driver through the cascade.
       expect(report.after.driver_status_events).toBe(0);
+      // So did the activation step, with its driver and card.
+      expect(report.after.driver_activation_steps).toBe(0);
       expect(pick(report.after, CLEARED_TABLES)).toEqual(
         Object.fromEntries(CLEARED_TABLES.map((t) => [t, 0])),
       );

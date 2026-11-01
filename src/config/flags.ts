@@ -908,6 +908,17 @@ export type Flags = {
   // day whatever this switch says. Moves no money. The pages, the routes and the services each
   // ask enabled themselves.
   driverAdmin: { enabled: boolean };
+  // The activation checklist (docs: design-s9, 0085): before an admin arms a driver who is not
+  // armed, three steps are on record with a person's name for the driver's default card
+  // (driver_activation_steps): identity confirmed against the card on file, a zero-dollar test sent
+  // to it, and its loads acknowledged (POST /api/drivers/[id]/activation-steps,
+  // src/lib/advances/activation.ts). Code refuses the arm while a step is missing, while the card's
+  // statement names someone else, or while a load on the driver's cards has no record and no
+  // ruling. Only the false-to-true arm reads it: a driver armed today stays armed. Moves no money.
+  // Asked by the route, the service and armDriver, each itself; off, arming is exactly as before
+  // and the agent's get_driver_identity shows activation null. No start date: it only ever refuses
+  // an arm.
+  activationChecklist: { enabled: boolean };
   // The cancelled trip (docs: RECOVERY, 0080): a person may cancel a planned or in-transit load
   // (POST /api/loads/[id]/move with to "cancelled", or a load_move card from the dispatch sync's
   // withdrawn status, approved), and the desk then drafts one deficit_book card per paid advance
@@ -1214,6 +1225,8 @@ export const flags: Flags = {
   // On by the owner's call (D-074, D-077, 2026-11-01). Adds a driver (not armed, no card),
   // deactivates (disarms) and reactivates (never arms) one; moves no money.
   driverAdmin: { enabled: true },
+  // Off until its own one-line enable PR. Only refuses an arm; nothing is paid or sent.
+  activationChecklist: { enabled: false },
   // On by the owner's call (D-056, D-077, 2026-11-01). A person cancels and a person approves the
   // deficit; the autopilot never approves it.
   cancelledTrip: { enabled: true, startDate: "2026-11-02" },

@@ -208,6 +208,36 @@ describe("the sentences a person sees", () => {
     expect(statusSentence("constructor")).toBe(panelSentence("unavailable"));
   });
 
+  it("gives every activation checklist refusal its own sentence, never the fallback", () => {
+    const fallback = panelSentence("unavailable");
+    expect(panelSentence("identity_confirm")).toBe("Confirm this driver's identity against the card on file before arming.");
+    expect(panelSentence("activate_without_zero_test")).toBe(
+      "Send the zero-dollar test to the card and record it before arming.",
+    );
+    expect(panelSentence("activate_after_hand_load")).toBe(
+      "Acknowledge the card's loads before arming; a load with no record behind it needs a ruling first.",
+    );
+    expect(panelSentence("identity_mismatch")).toBe(
+      "The card statement names someone else. Fix the card on file before confirming.",
+    );
+    expect(panelSentence("hand_load_open")).toBe("A load on this driver's card still waits for a ruling.");
+    expect(panelSentence("no_card")).toBe("Add an active card first; the checklist is about that card.");
+    expect(panelSentence("card_changed")).toBe(
+      "The driver's card changed since this page loaded. Reload and check the new card.",
+    );
+    for (const code of [
+      "identity_confirm",
+      "activate_without_zero_test",
+      "activate_after_hand_load",
+      "identity_mismatch",
+      "hand_load_open",
+      "no_card",
+      "card_changed",
+    ]) {
+      expect(panelSentence(code), code).not.toBe(fallback);
+    }
+  });
+
   it("says plainly when a departed driver is refused money", () => {
     expect(outcomeSentence("driver_inactive")).toBe(
       "This driver is no longer active with the carrier, so nothing was paid.",

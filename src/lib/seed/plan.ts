@@ -1204,6 +1204,7 @@ export function buildCarrierPlan(carrier: DemoCarrier, anchor: LocalDate): Carri
     driver_identities: driverIdentities(parity, drivers, prefix),
     driver_arm_events: armEvents(parity, drivers),
     driver_status_events: [],
+    driver_activation_steps: [],
     loads,
     load_events: [],
     tms_connections: [],

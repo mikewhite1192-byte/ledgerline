@@ -94,6 +94,17 @@ export type DriverStatusEventRow = {
   membership_id: string;
 };
 
+// One activation step an admin recorded on one of a driver's cards before arming them (0085):
+// identity confirmed, zero test sent or loads acknowledged. The seed plans none.
+export type DriverActivationStepRow = {
+  id: string;
+  driver_id: string;
+  card_id: string;
+  step: "identity_confirmed" | "zero_test_sent" | "hand_load_acknowledged";
+  note: string | null;
+  membership_id: string;
+};
+
 export type LoadRow = {
   id: string;
   load_number: string;
@@ -824,6 +835,7 @@ export type TenantRows = {
   driver_identities: DriverIdentityRow[];
   driver_arm_events: DriverArmEventRow[];
   driver_status_events: DriverStatusEventRow[];
+  driver_activation_steps: DriverActivationStepRow[];
   loads: LoadRow[];
   load_events: LoadEventRow[];
   tms_connections: TmsConnectionRow[];

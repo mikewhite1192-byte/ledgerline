@@ -7,6 +7,7 @@ import { StatusBadge } from "@/components/app/status-badge";
 import { Day, Facts, RecordLink } from "@/components/invoices/cells";
 import { Badge } from "@/components/ui/badge";
 import { Card, CardBody } from "@/components/ui/card";
+import { activationOn, checklistForPage, readActivationChecklist, type ActivationChecklist } from "@/lib/advances/activation";
 import { readDriverIdentity, type DriverIdentity } from "@/lib/advances/identity";
 import { advancesOn } from "@/lib/advances/switches";
 import { readRole } from "@/lib/auth/role";
@@ -24,21 +25,25 @@ const WORKER = { company: "Company driver", owner_operator: "Owner-operator" } a
 // While driver admin is on (so a just-added driver lands here): the one-line cue above the money
 // panel naming only the steps still missing before an advance (an active card, then arming). A
 // driver with a last day on file gets none: they cannot be armed until reactivated, which the money
-// panel says.
-function setupCue(identity: DriverIdentity): string | null {
+// panel says. While the activation checklist is on and a step is still missing, arming waits on it.
+function setupCue(identity: DriverIdentity, activation: ActivationChecklist | null): string | null {
   if (!driverAdminOn() || identity.activeTo !== null) return null;
   const noCard = !identity.cards.some((c) => c.status === "active");
   const notArmed = !identity.armed.on;
   if (noCard && notArmed) return "Before this driver can take an advance: add a card, then arm them.";
   if (noCard) return "Before this driver can take an advance: add a card.";
+  if (notArmed && activation !== null && activation.blockers.length > 0) {
+    return "Before this driver can take an advance: complete the activation checklist, then arm them.";
+  }
   if (notArmed) return "Before this driver can take an advance: arm them.";
   return null;
 }
 
 // One driver: who they are and how they are paid, their recent paystubs and advances. Every
 // paystub line cites its driver, so this is where those links land. While advances are on, the
-// money panel too (armed, the ids other systems know them by, the cards on file, and while
-// driver admin is on the driver's status), and each advance links to its record.
+// money panel too (armed, the ids other systems know them by, the cards on file, while driver admin
+// is on the driver's status, and while the activation checklist is on and the driver is not armed
+// and has no last day, the checklist), and each advance links to its record.
 export default async function DriverRecord({ params }: { params: Promise<{ id: string }> }) {
   const { id } = await params;
   const page = await readRecordPage(id, async (q, driverId, today, session) => {
@@ -48,7 +53,16 @@ export default async function DriverRecord({ params }: { params: Promise<{ id: s
     const identity = await readDriverIdentity(q, driverId);
     // Read only: any member's role, a demo visitor's too (its writes are refused on the routes).
     const role = await readRole(q, session);
-    return { record, advanceLinks: true, money: identity ? { identity, canAdmin: role === "admin", today } : null };
+    // Shown only when its card is the one the identity read labels Default (checklistForPage).
+    const activation =
+      identity && activationOn() && !identity.armed.on && identity.activeTo === null
+        ? checklistForPage(identity.cards, await readActivationChecklist(q, driverId))
+        : null;
+    return {
+      record,
+      advanceLinks: true,
+      money: identity ? { identity, canAdmin: role === "admin", today, activation } : null,
+    };
   });
   if (page.kind === "problem") return <NoCarrierPage problem={page.problem} />;
   if (page.kind === "missing") {
@@ -59,7 +73,7 @@ export default async function DriverRecord({ params }: { params: Promise<{ id: s
     );
   }
   const { record: d, advanceLinks, money } = page.record;
-  const cue = money ? setupCue(money.identity) : null;
+  const cue = money ? setupCue(money.identity, money.activation) : null;
   return (
     <SignedInPage tenant={page.shell} current="none" title={d.name} focus={{ table: "drivers", id: d.id, label: d.name }}>
       <PageHeader
@@ -75,6 +89,7 @@ export default async function DriverRecord({ params }: { params: Promise<{ id: s
           timezone={page.shell.timezone}
           statusAdminOn={driverAdminOn()}
           today={money.today}
+          activation={money.activation}
         />
       ) : null}
       <Card>
