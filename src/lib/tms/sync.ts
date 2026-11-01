@@ -76,6 +76,8 @@ type Miss = { n: number; u: string };
 type Walk = { passStartedAt: string; below: ListBookmark | null; misses: Record<string, Miss> };
 
 const ISO_MS = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$/;
+// How long a wake-up for a party whose read keeps failing stays waiting (TMS-MIRROR T4).
+export const PARTY_RETRY_MS = 60 * 60_000;
 const isIso = (v: unknown): v is string => typeof v === "string" && ISO_MS.test(v);
 const ms = (v: string) => parseInstant(v);
 const iso = (v: string) => new Date(parseInstant(v)).toISOString();
@@ -402,7 +404,9 @@ export async function pullTms(
       continue;
     }
     // A customer or a driver: the party read, then its row (by whole external id) and the mark in
-    // one transaction. A party gone, of another kind, or failing is marked too: one read per send.
+    // one transaction. A party gone or of another kind is marked too: one read per send. A failed
+    // read is unknown, not a read, so the wake-up stays waiting for the next wake, until it is
+    // PARTY_RETRY_MS old; then it is marked, so a party the feed keeps failing is not read forever.
     out.read += 1;
     const kind = w.recordType;
     let party: TmsPartyRecord | null = null;
@@ -412,6 +416,7 @@ export async function pullTms(
     } catch (err) {
       if (!(err instanceof TmsSourceError)) throw err;
       out.failed += 1;
+      if (Date.parse(nowIso) - Date.parse(w.receivedAt) < PARTY_RETRY_MS) continue;
     }
     const found = party;
     await write(async (q) => {

@@ -6,7 +6,7 @@ import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } 
 import { flags } from "../../config/flags";
 import { validated } from "../adapters/tms-source";
 import { createSyntheticSource } from "../adapters/tms-source/synthetic";
-import type { TmsSource } from "../adapters/tms-source/types";
+import { TmsSourceError, type TmsSource } from "../adapters/tms-source/types";
 import { appendLine } from "../desk/log";
 import { createPgDb } from "../db/pg";
 import { splitSql } from "../db/sql-split";
@@ -14,7 +14,7 @@ import { adminUrl, appUrl } from "../db/test-urls";
 import type { Db, Queryable } from "../db/types";
 import { dropTenant, makeTenant, sqlStateOf, type Fixture } from "../money/test-db";
 import { syntheticLabelMap } from "./status";
-import { pullTms } from "./sync";
+import { PARTY_RETRY_MS, pullTms } from "./sync";
 import { acceptWakeUp, MAX_WAITING, wakeUpFor, type WakeUp } from "./wakeups";
 
 // The webhook's wake-ups against a fresh database, as the app's role, with a fixed clock passed to
@@ -185,6 +185,22 @@ describe("the dispatch webhook's wake-ups", () => {
       ["CUST-1", true],
       ["CUST-404", true],
     ]);
+  });
+
+  it("keeps a party wake-up waiting while its read fails, and marks it once it is an hour old", async () => {
+    const f = await carrier("wake-party-fail");
+    await send(f, { recordType: "driver", externalId: "DRV-9" }, NOW);
+    const failing: TmsSource = {
+      ...countingSource([]),
+      readParty: async () => {
+        throw new TmsSourceError("server_error");
+      },
+    };
+    const first = await pull(f, new Date(NOW.getTime() + MIN), failing);
+    expect(first).toMatchObject({ ran: true, failed: 1 });
+    expect(await waiting(f)).toEqual([{ external_id: "DRV-9", sent: 1, processed: false }]);
+    await pull(f, new Date(NOW.getTime() + PARTY_RETRY_MS), failing);
+    expect(await waiting(f)).toEqual([{ external_id: "DRV-9", sent: 1, processed: true }]);
   });
 
   it("does not take a wake-up past the carrier's waiting cap, and coalesces the same one still", async () => {

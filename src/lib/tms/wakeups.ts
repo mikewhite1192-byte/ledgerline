@@ -107,7 +107,7 @@ export async function acceptWakeUp(
   return { queued, withinRate };
 }
 
-export type Waiting = WakeUp & { id: string; sent: number };
+export type Waiting = WakeUp & { id: string; sent: number; receivedAt: string };
 
 // The sync's first step: up to `limit` waiting wake-ups, oldest first. Processed rows older than a
 // day are removed here too (the caller runs it under the lease).
@@ -118,8 +118,9 @@ export async function waitingWakeUps(q: Queryable, input: { nowIso: string; limi
         AND processed_at < CAST($1 AS timestamptz) - interval '1 day'`,
     [input.nowIso],
   );
-  const rows = await q.query<{ id: string; record_type: string; external_id: string; sent: number }>(
-    `SELECT CAST(id AS text) AS id, record_type, external_id, CAST(sent AS integer) AS sent FROM tms_wakeups
+  const rows = await q.query<{ id: string; record_type: string; external_id: string; sent: number; received_at: string }>(
+    `SELECT CAST(id AS text) AS id, record_type, external_id, CAST(sent AS integer) AS sent,
+            to_char(received_at AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"') AS received_at FROM tms_wakeups
       WHERE tenant_id = current_tenant_id() AND processed_at IS NULL
       ORDER BY received_at, id LIMIT $1`,
     [input.limit],
@@ -127,7 +128,7 @@ export async function waitingWakeUps(q: Queryable, input: { nowIso: string; limi
   const out: Waiting[] = [];
   for (const r of rows) {
     const w = readWakeUp({ recordType: r.record_type, externalId: r.external_id });
-    if (w) out.push({ ...w, id: r.id, sent: Number(r.sent) });
+    if (w) out.push({ ...w, id: r.id, sent: Number(r.sent), receivedAt: r.received_at });
   }
   return out;
 }
