@@ -797,6 +797,16 @@ export type Flags = {
     pageSize: number;
     demoFaultsEnabled: boolean;
   };
+  // The dispatch system's webhook (docs: TMS-MIRROR T4, 0083, owner D-071): POST
+  // /api/internal/tms-hook/<tenant>?token=<key> is a wake-up only. It reads two fields of the body
+  // (record type and external id), keeps one tms_wakeups row per record while it waits, and wakes
+  // the desk by 'webhook' under the loop's own lease; the next sync re-reads those records in full
+  // first. Nothing in the payload is trusted for content. At most hookPerMinute calls a minute are
+  // taken per carrier, then 429 (the wake-up is still kept, once). The route answers 409 unless
+  // enabled and tmsSync.enabled are both on, and reads the key (TMS_HOOK_KEY_SECRET_NAME) only
+  // after both. Settings > Demo's "Fire a wake-up twice" needs it too. It ships off; its own
+  // one-line PR turns it on, after the owner stores the key.
+  tmsHook: { enabled: boolean; hookPerMinute: number };
   // The invoice on finalize (docs: TMS-MIRROR, S3): when a mirrored status event says the dispatch
   // system finalized one of our delivered loads, the desk loop's tms_event source drafts that load's
   // one invoice_post card from our own loads row, the same card Refresh on the invoice queue drafts
@@ -1161,6 +1171,9 @@ export const flags: Flags = {
     // On by the owner's call (D-071, 2026-10-31): the panel shows; every fault itself starts off.
     demoFaultsEnabled: true,
   },
+  // Off until its own one-line enable PR, after the owner stores payday-copilot/tms-hook-key.
+  // A wake-up only: it reads, never writes to the dispatch system, and moves no money.
+  tmsHook: { enabled: false, hookPerMinute: 60 },
   // On by the owner's call (D-071, 2026-10-31). It only drafts a card; approving it goes through the usual gate.
   tmsFinalizeInvoice: { enabled: true, startDate: "2026-10-31" },
   // On by the owner's call (D-071): Yes still goes through the usual approve route and gate.

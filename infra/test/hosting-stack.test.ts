@@ -23,6 +23,7 @@ import {
   REPOSITORY_URL,
   STRIPE_SECRET_KEY_SECRET_NAME,
   SWEEP_INTERNAL_KEY_SECRET_NAME,
+  TMS_HOOK_KEY_SECRET_NAME,
 } from "../lib/hosting-stack";
 import { JUDGE_SECRET_NAME } from "../../scripts/lib/demo-logins";
 import { asArray, joined, policyStatements, synthAll } from "./synth";
@@ -154,7 +155,7 @@ describe("HostingStack", () => {
     expect(secret.Action).toBe("secretsmanager:GetSecretValue");
     // The policy minimizer orders resources, so they are matched by content, not position.
     const resources = asArray(secret.Resource);
-    expect(resources).toHaveLength(10);
+    expect(resources).toHaveLength(11);
     const appSecret = resources.filter((r) =>
       JSON.stringify(r).includes("PublishOutputRefAppSecret"),
     );
@@ -177,6 +178,7 @@ describe("HostingStack", () => {
         `${secretArn}${STRIPE_SECRET_KEY_SECRET_NAME}-??????`,
         `${secretArn}${SWEEP_INTERNAL_KEY_SECRET_NAME}-??????`,
         `${secretArn}${INBOUND_INTERNAL_KEY_SECRET_NAME}-??????`,
+        `${secretArn}${TMS_HOOK_KEY_SECRET_NAME}-??????`,
         `${secretArn}${JUDGE_LOGIN_SECRET_NAME}-??????`,
       ].sort(),
     );
@@ -194,7 +196,7 @@ describe("HostingStack", () => {
     }
   });
 
-  it("sets the compute role and the twenty-five fixed server settings on the main branch", () => {
+  it("sets the compute role and the twenty-six fixed server settings on the main branch", () => {
     const [computeId] = role("ComputeRole");
     const branches = Object.values(template.findResources("AWS::Amplify::Branch"));
     expect(branches).toHaveLength(1);
@@ -206,8 +208,8 @@ describe("HostingStack", () => {
     expect(vars.map((e) => e.Name)).toEqual(
       BRANCH_ENV_NAMES.filter((n) => !OPTIONAL_BRANCH_ENV_NAMES.includes(n)),
     );
-    expect(BRANCH_ENV_NAMES).toHaveLength(29);
-    expect(vars).toHaveLength(25);
+    expect(BRANCH_ENV_NAMES).toHaveLength(30);
+    expect(vars).toHaveLength(26);
 
     // Each value, followed to the stack that exports it, is the resource it names: the cluster,
     // the app's own database login (never the admin secret), the user pool and its client.
@@ -241,9 +243,11 @@ describe("HostingStack", () => {
       STRIPE_SECRET_KEY_SECRET_NAME,
       SWEEP_INTERNAL_KEY_SECRET_NAME,
       INBOUND_INTERNAL_KEY_SECRET_NAME,
+      TMS_HOOK_KEY_SECRET_NAME,
       JUDGE_LOGIN_SECRET_NAME,
     });
     expect(INBOUND_INTERNAL_KEY_SECRET_NAME).toBe("payday-copilot/inbound-internal-key");
+    expect(TMS_HOOK_KEY_SECRET_NAME).toBe("payday-copilot/tms-hook-key");
     expect(FIREWORKS_API_KEY_SECRET_NAME).toBe("payday-copilot/fireworks-api-key");
     // Names only: no variable carries a key, a token or a secret; the *_SECRET_NAME and
     // *_SECRET_ARN ones carry where a secret is stored.
@@ -259,6 +263,7 @@ describe("HostingStack", () => {
       "FIREWORKS_API_KEY",
       "SWEEP_INTERNAL_KEY",
       "INBOUND_INTERNAL_KEY",
+      "TMS_HOOK_KEY",
       "JUDGE_LOGIN_PASSWORD",
     ]) {
       expect(BRANCH_ENV_NAMES).not.toContain(raw);

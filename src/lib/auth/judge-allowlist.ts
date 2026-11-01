@@ -26,6 +26,8 @@ export const NO_CARRIER_LOGIN: Readonly<Record<string, string>> = {
   "POST /api/internal/sweep": "the sweep runner's service token; a browser session is never read",
   "POST /api/internal/desk": "the desk kicker's sweep key (x-sweep-key); a browser session is never read",
   "POST /api/internal/inbound": "the inbound mail poster's service key; a browser session is never read",
+  "POST /api/internal/tms-hook/[tenant]":
+    "the dispatch system's webhook token (?token=); a browser session is never read",
   "POST /portal/sign-in": "the fictional broker portal's one-time code, not a carrier login",
 };
 

@@ -4,7 +4,9 @@
 // flags.tmsSync.demoFaultsEnabled is on, and only the synthetic feed (synthetic.ts) reads them:
 // the sync never knows a fault exists. All false by default. Pure; safe to import in the browser.
 //
-// duplicate_wakeups (the same wake-up three times) joins this list with the webhook wake-up table.
+// duplicate_wakeups is not a switch here: it is the dispatch webhook's own repeat, shown by
+// Settings > Demo's "Fire a wake-up twice" (POST /api/demo/tms-wakeup), which sends one wake-up
+// twice and keeps one tms_wakeups row, so the next sync reads the load once.
 
 import { formatCents } from "../../format/money";
 

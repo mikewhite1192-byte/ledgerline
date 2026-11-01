@@ -278,6 +278,9 @@ describe("the money invariants on a real database", { timeout: 60_000 }, () => {
     "card_pullbacks",
     // A driver deactivated by a person (0081): no seed, the driver's page writes it.
     "driver_status_events",
+    // A dispatch-system wake-up and its minute's count (0083): no seed, the webhook writes them.
+    "tms_wakeups",
+    "tms_hook_minutes",
   ];
 
   it("all five pass with a row in every tenant table for both carriers, and the probe reads them", async () => {
@@ -581,6 +584,17 @@ describe("the money invariants on a real database", { timeout: 60_000 }, () => {
            VALUES (CAST($1 AS uuid), current_tenant_id(), CAST($2 AS uuid), false, DATE '2026-11-02',
              'invariants-test', CAST($3 AS uuid))`,
           [randomUUID(), c.driver, c.membership],
+        );
+        // A wake-up the dispatch system sent and the minute it was counted in, as the webhook
+        // writes them (0083).
+        await q.execute(
+          `INSERT INTO tms_wakeups (id, tenant_id, record_type, external_id, received_at)
+           VALUES (CAST($1 AS uuid), current_tenant_id(), 'load', 'invariants-test', TIMESTAMPTZ '2026-11-02T15:00:00Z')`,
+          [randomUUID()],
+        );
+        await q.execute(
+          `INSERT INTO tms_hook_minutes (tenant_id, minute_at, accepted)
+           VALUES (current_tenant_id(), TIMESTAMPTZ '2026-11-02T15:00:00Z', 1)`,
         );
         await q.execute(
           `INSERT INTO driver_identities (id, tenant_id, driver_id, system, external_id, source)
