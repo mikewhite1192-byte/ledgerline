@@ -13,7 +13,7 @@ export const NEW_LOAD_MESSAGES: Record<NewLoadCategory, string> = {
   forbidden: "Only a member of this carrier can create its loads. Nothing was created.",
   not_demo: "This carrier is not a demo carrier. Nothing was created.",
   bad_request:
-    "Check each field: a load number of 2 to 40 letters, digits or dashes, two-letter states, whole miles and a rate in dollars. Nothing was created.",
+    "Check each field: a load number of 2 to 40 letters, digits or dashes, a place from each list, whole miles and a rate in dollars. Nothing was created.",
   unreadable: "Could not reach the database. Nothing was created. Try again in a moment.",
   unknown: "The load did not confirm, so it may have been created. Open the board before trying again.",
   failed: "The load failed a check and was undone. Nothing was created.",
@@ -23,25 +23,30 @@ export const NEW_LOAD_MESSAGES: Record<NewLoadCategory, string> = {
   unknown_customer: "Pick a customer from the list. Nothing was created.",
   unknown_driver: "Pick a driver from the list, or none. Nothing was created.",
   bad_date:
-    "The pickup must be from 7 days back to 14 days ahead, and the delivery on or after it, at most 14 days later. Nothing was created.",
+    "The pickup must be today or up to 2 days back, and the delivery on or after it, at most 14 days later. Nothing was created.",
 };
 
 type Choice = { value: string; label: string };
 
-function StopFields({ kind, defaultOn }: { kind: "pickup" | "delivery"; defaultOn: string }) {
+function StopFields({ kind, defaultOn, places }: { kind: "pickup" | "delivery"; defaultOn: string; places: Choice[] }) {
   const word = kind === "pickup" ? "Pickup" : "Delivery";
   return (
     <fieldset className="grid gap-3">
       <legend className="text-body text-foreground">{word}</legend>
       <div className="flex flex-wrap gap-3">
-        <Field id={`${kind}-name`} label="Place name">
-          {(c) => <Input {...c} name={`${kind}Name`} required maxLength={80} />}
-        </Field>
-        <Field id={`${kind}-city`} label="City">
-          {(c) => <Input {...c} name={`${kind}City`} required maxLength={80} />}
-        </Field>
-        <Field id={`${kind}-state`} label="State">
-          {(c) => <Input {...c} name={`${kind}State`} required maxLength={2} className="w-20" />}
+        <Field id={`${kind}-place`} label="Place">
+          {(c) => (
+            <select {...c} name={`${kind}Place`} className={controlClass} defaultValue="" required>
+              <option value="" disabled>
+                Pick a place
+              </option>
+              {places.map((p) => (
+                <option key={p.value} value={p.value}>
+                  {p.label}
+                </option>
+              ))}
+            </select>
+          )}
         </Field>
         <Field id={`${kind}-on`} label="Date">
           {(c) => <Input {...c} type="date" name={`${kind}On`} required defaultValue={defaultOn} />}
@@ -56,11 +61,13 @@ export function NewLoadForm({
   today,
   customers,
   drivers,
+  places,
 }: {
   suggestedNumber: string;
   today: string;
   customers: Choice[];
   drivers: Choice[];
+  places: Choice[];
 }) {
   const [state, action, pending] = useActionState<NewLoadState, FormData>(createLoadAction, null);
   return (
@@ -84,8 +91,8 @@ export function NewLoadForm({
           )}
         </Field>
       </div>
-      <StopFields kind="pickup" defaultOn={today} />
-      <StopFields kind="delivery" defaultOn={today} />
+      <StopFields kind="pickup" defaultOn={today} places={places} />
+      <StopFields kind="delivery" defaultOn={today} places={places} />
       <div className="flex flex-wrap gap-3">
         <Field id="new-miles" label="Loaded miles">
           {(c) => <Input {...c} name="miles" inputMode="numeric" required maxLength={4} />}

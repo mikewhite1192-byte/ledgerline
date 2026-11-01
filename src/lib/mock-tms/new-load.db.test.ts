@@ -316,6 +316,11 @@ describe("a new load in the sample dispatch system", () => {
       category: "bad_date",
     });
     expect(await create(f, { ...late, delivery: { ...late.delivery, on: "2026-11-02" } })).toEqual({ ok: false, category: "bad_date" });
+    // Tomorrow is out too: a pickup completed today would fall outside the desk's pickup paper window.
+    expect(await create(f, { ...late, pickup: { ...late.pickup, on: "2026-11-04" }, delivery: { ...late.delivery, on: "2026-11-04" } })).toEqual({
+      ok: false,
+      category: "bad_date",
+    });
     expect(await counted()).toEqual({ ...before, loads: before.loads + 1 });
 
     // The cap counts only loads made here: one made, a cap of two takes one more and refuses the next.

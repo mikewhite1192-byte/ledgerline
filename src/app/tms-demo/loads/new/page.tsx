@@ -6,7 +6,7 @@ import { Card, CardBody, CardDescription, CardHeader, CardTitle } from "@/compon
 import { flags } from "@/config/flags";
 import { DbError } from "@/lib/db";
 import { formatPeriod } from "@/lib/format/dates";
-import { readNewLoadForm, type NewLoadFormView } from "@/lib/mock-tms/new-load";
+import { NEW_LOAD_PLACES, placeLabel, readNewLoadForm, type NewLoadFormView } from "@/lib/mock-tms/new-load";
 import { demoCarrierOf } from "@/lib/seed/reset";
 import { ForbiddenError, withRequestTenant } from "@/lib/tenant/context";
 import { NewLoadForm } from "./new-load-form";
@@ -59,6 +59,7 @@ export default async function NewMockLoadPage() {
             <>
               <ul className="grid gap-1 text-body text-foreground-2">
                 <li>LedgerLine links this load by its number on the next sync.</li>
+                <li>The pickup date is today or up to two days back, so a pickup completed today moves the load.</li>
                 <li>
                   {view.form.openWeek === null
                     ? "A paystub drafts only for a delivery inside an open pay week, and none is open now."
@@ -71,6 +72,7 @@ export default async function NewMockLoadPage() {
                 today={view.form.today}
                 customers={view.form.customers.map((c) => ({ value: c.code, label: c.name }))}
                 drivers={view.form.drivers.map((d) => ({ value: d.externalId, label: d.name }))}
+                places={NEW_LOAD_PLACES.map((p) => ({ value: placeLabel(p), label: placeLabel(p) }))}
               />
             </>
           )}

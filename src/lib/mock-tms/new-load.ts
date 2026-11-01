@@ -1,7 +1,8 @@
 import { randomUUID } from "node:crypto";
-import { CITY, LOAD_NUMBER, STATE } from "../ratecon/args";
+import { LOAD_NUMBER } from "../ratecon/args";
 import { SYNTHETIC_LABELS } from "../tms/status";
-import { DbError, type Queryable } from "../db";
+import type { Queryable } from "../db";
+import { PICKUP_WINDOW } from "../loads/paperwork";
 import { addDays, daysBetween, isLocalDate, localDateOf, type Instant, type LocalDate } from "../time/local-date";
 import { changeAt } from "./clock";
 import { applyMockAction, WHO_WORDS, type MockWho } from "./store";
@@ -20,18 +21,34 @@ import { applyMockAction, WHO_WORDS, type MockWho } from "./store";
 const L = SYNTHETIC_LABELS;
 const CUSTOMER_CODE = /^[A-Z0-9-]{2,20}$/;
 const DRIVER_ID = /^[A-Za-z0-9._-]{1,40}$/;
-const STOP_NAME = /^[A-Za-z0-9][A-Za-z0-9 .,'&#()/-]{0,79}$/;
 const MONEY = /^\d{1,6}(\.\d{1,2})?$/;
 const MILES = /^\d{1,4}$/;
-// How far from the carrier's today a pickup may be, and how long a load may run.
-export const PICKUP_DAYS_BACK = 7;
-export const PICKUP_DAYS_AHEAD = 14;
+// How far from the carrier's today a pickup may be: today or up to the pickup paper window's days
+// after (src/lib/loads/paperwork.ts), so a pickup and a delivery completed today both fall in the
+// desk's windows and the desk moves the load. And how long a load may run.
+export const PICKUP_DAYS_BACK = PICKUP_WINDOW.after;
+export const PICKUP_DAYS_AHEAD = 0;
 export const MAX_RUN_DAYS = 14;
 // The stop windows a new load gets, in the carrier's local time.
 const WINDOW_FROM = "T08:00";
 const WINDOW_TO = "T16:00";
 
 export type NewLoadStop = { name: string; city: string; state: string; on: LocalDate };
+
+// The places a stop may be, a fixed list: every visitor to a shared demo carrier sees its loads, so
+// a place is picked, never typed. The form sends a place's whole label back.
+export const NEW_LOAD_PLACES: readonly { name: string; city: string; state: string }[] = [
+  { name: "Joliet Yard", city: "Joliet", state: "IL" },
+  { name: "Gary Dock", city: "Gary", state: "IN" },
+  { name: "Columbus Yard", city: "Columbus", state: "OH" },
+  { name: "Memphis Dock", city: "Memphis", state: "TN" },
+  { name: "Dallas Yard", city: "Dallas", state: "TX" },
+  { name: "Atlanta Dock", city: "Atlanta", state: "GA" },
+  { name: "Kansas City Yard", city: "Kansas City", state: "MO" },
+  { name: "Denver Dock", city: "Denver", state: "CO" },
+];
+
+export const placeLabel = (p: { city: string; state: string }): string => `${p.city}, ${p.state}`;
 
 export type NewLoadInput = {
   loadNumber: string;
@@ -50,7 +67,8 @@ export type NewLoadResult =
   | { ok: true; externalId: string; reference: string; loadId: string; at: Instant }
   | { ok: false; category: NewLoadRefusal };
 
-// A refusal met after the first write: thrown so the transaction rolls both sides back.
+// A refusal met after the first write, or a write that reported no row: thrown so the transaction
+// rolls both sides back.
 export class NewLoadUndone extends Error {
   constructor() {
     super("new load undone");
@@ -74,19 +92,16 @@ export function centsOf(raw: string): number | null {
 }
 
 function stopOf(form: FormLike, prefix: "pickup" | "delivery"): NewLoadStop | null {
-  const name = field(form, `${prefix}Name`);
-  const city = field(form, `${prefix}City`);
-  const state = field(form, `${prefix}State`)?.toUpperCase() ?? null;
+  const label = field(form, `${prefix}Place`);
+  const place = NEW_LOAD_PLACES.find((p) => placeLabel(p) === label);
   const on = field(form, `${prefix}On`);
-  if (name === null || !STOP_NAME.test(name)) return null;
-  if (city === null || !CITY.test(city)) return null;
-  if (state === null || !STATE.test(state)) return null;
-  if (!isLocalDate(on)) return null;
-  return { name, city, state, on };
+  if (place === undefined || !isLocalDate(on)) return null;
+  return { name: place.name, city: place.city, state: place.state, on };
 }
 
-// The form as typed, every value checked for shape; null for anything outside these shapes. The
-// dates' range against the carrier's today is checked in createMockLoad, which reads the zone.
+// The form as typed, every value checked for shape and each place against the fixed list by its
+// whole label; null for anything else. The dates' range against the carrier's today is checked in
+// createMockLoad, which reads the zone.
 export function parseNewLoad(form: FormLike): NewLoadInput | null {
   const loadNumber = field(form, "loadNumber")?.toUpperCase() ?? null;
   if (loadNumber === null || !LOAD_NUMBER.test(loadNumber)) return null;
@@ -117,8 +132,8 @@ export function parseNewLoad(form: FormLike): NewLoadInput | null {
   };
 }
 
-// A pickup from seven days back to fourteen ahead of the carrier's today, and a delivery on or after
-// it, at most fourteen days later.
+// A pickup from two days back to the carrier's today, and a delivery on or after it, at most
+// fourteen days later.
 export function datesFit(pickupOn: LocalDate, deliveryOn: LocalDate, today: LocalDate): boolean {
   if (pickupOn < addDays(today, -PICKUP_DAYS_BACK) || pickupOn > addDays(today, PICKUP_DAYS_AHEAD)) return false;
   return deliveryOn >= pickupOn && daysBetween(pickupOn, deliveryOn) <= MAX_RUN_DAYS;
@@ -128,7 +143,8 @@ const ts = (column: string) => `to_char(${column} AT TIME ZONE 'UTC', 'YYYY-MM-D
 
 async function one(q: Queryable, sql: string, params: (string | number | null)[]): Promise<void> {
   const n = await q.execute(sql, params);
-  if (n !== 1) throw new DbError("unknown");
+  // Inside the transaction, so it rolls back: a plain failure, never a maybe-written one.
+  if (n !== 1) throw new NewLoadUndone();
 }
 
 export async function createMockLoad(
