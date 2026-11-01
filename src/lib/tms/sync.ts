@@ -29,6 +29,7 @@ import {
   type MirrorFlag,
 } from "./mirror";
 import { isFinalized, readLabelMap, type TmsStatusCode } from "./status";
+import { markWakeUp, waitingWakeUps } from "./wakeups";
 
 // TMS-MIRROR (0075): the sync. A step at the top of the desk loop's discovery (and Settings >
 // Demo's Sync dispatch now), run by the holder of the desk loop's lease. It walks the TMS list
@@ -322,8 +323,15 @@ export async function pullTms(
     return { kind: "ok", record: load.value, history, documents: docs.value, lines: lines.value, driver };
   };
 
-  // One candidate: the full read, then one write transaction (or the failure bookkeeping).
-  const handle = async (externalId: string, listed: TmsListRow | null, mirrored: boolean): Promise<void> => {
+  // One candidate: the full read, then one write transaction (or the failure bookkeeping). `also`
+  // runs inside that same transaction (a wake-up's mark), or in one of its own when the outcome
+  // writes nothing else.
+  const handle = async (
+    externalId: string,
+    listed: TmsListRow | null,
+    mirrored: boolean,
+    also?: (q: Queryable) => Promise<unknown>,
+  ): Promise<void> => {
     out.read += 1;
     let r: FullRead;
     try {
@@ -332,24 +340,86 @@ export async function pullTms(
       if (!(err instanceof TmsSourceError)) throw err;
       out.failed += 1;
       if (mirrored) {
-        await write((q) => bumpAttempts(q, externalId, listed?.updatedAt ?? null));
-      } else if (listed) {
+        await write(async (q) => {
+          await bumpAttempts(q, externalId, listed?.updatedAt ?? null);
+          if (also) await also(q);
+        });
+        return;
+      }
+      if (listed) {
         const prev = walk.misses[externalId];
         delete walk.misses[externalId];
         walk.misses[externalId] = { n: Math.min((prev?.n ?? 0) + 1, MAX_ATTEMPTS), u: iso(listed.updatedAt) };
         const keys = Object.keys(walk.misses);
         for (const k of keys.slice(0, Math.max(0, keys.length - MAX_MISSES))) delete walk.misses[k];
       }
+      if (also) await write(also);
       return;
     }
     if (r.kind === "gone") {
-      if (mirrored && (await write((q) => tombstone(q, session, externalId, run.now)))) out.gone += 1;
+      if (mirrored) {
+        const gone = await write(async (q) => {
+          const t = await tombstone(q, session, externalId, run.now);
+          if (also) await also(q);
+          return t;
+        });
+        if (gone) out.gone += 1;
+      } else if (also) {
+        await write(also);
+      }
       return;
     }
-    const wrote = await write((q) => writeLoad(q, { r, listed, labelMap, zone, nowIso, cooloffMinutes: connection.finalizeCooloffMinutes, newId }));
+    const wrote = await write(async (q) => {
+      const done = await writeLoad(q, { r, listed, labelMap, zone, nowIso, cooloffMinutes: connection.finalizeCooloffMinutes, newId });
+      if (also) await also(q);
+      return done;
+    });
     delete walk.misses[externalId];
     if (wrote) out.written += 1;
   };
+
+  // Wake-ups first (TMS-MIRROR T4): each record the dispatch system named is read again in full
+  // before the walk, at most half the wake's reads, so a stream of wake-ups never starves the walk.
+  // Each is marked processed in the transaction that records its read, so one the deadline stops
+  // waits for the next wake, and one read once is never read again for the same send. A gone load
+  // is not read again (the tombstone stands); a resting load is, as its rest allows (read_failed).
+  const woken = await write((q) => waitingWakeUps(q, { nowIso, limit: Math.ceil(s.maxReadsPerWake / 2) }));
+  for (const w of woken) {
+    if (out.read >= s.maxReadsPerWake || outOfTime()) break;
+    const mark = (q: Queryable) => markWakeUp(q, w, nowIso);
+    if (w.recordType === "load") {
+      const [state] = await inTenant((q) =>
+        q.query<MirrorState>(
+          `SELECT ${STATE_COLUMNS} FROM tms_loads WHERE tenant_id = current_tenant_id() AND external_id = $1`,
+          [w.externalId],
+        ),
+      );
+      if (state?.gone) {
+        await write(mark);
+        continue;
+      }
+      await handle(w.externalId, null, state !== undefined, mark);
+      continue;
+    }
+    // A customer or a driver: the party read, then its row (by whole external id) and the mark in
+    // one transaction. A party gone, of another kind, or failing is marked too: one read per send.
+    out.read += 1;
+    const kind = w.recordType;
+    let party: TmsPartyRecord | null = null;
+    try {
+      const p = await read((ctx) => source.readParty(ctx, kind, w.externalId));
+      if (p.kind === "ok" && p.value.partyKind === kind && p.value.externalId === w.externalId) party = p.value;
+    } catch (err) {
+      if (!(err instanceof TmsSourceError)) throw err;
+      out.failed += 1;
+    }
+    const found = party;
+    await write(async (q) => {
+      if (found) await upsertParty(q, kind, found.externalId, found.name, found.unit, found.vin, { newId, nowIso });
+      await mark(q);
+    });
+    if (found) out.written += 1;
+  }
 
   let pages = 0;
   while (pages < s.maxPagesPerWake && out.read < s.maxReadsPerWake) {
@@ -714,7 +784,7 @@ async function upsertParty(
   name: string,
   unit: string | null,
   vin: string | null,
-  w: WriteInput,
+  w: Pick<WriteInput, "newId" | "nowIso">,
 ): Promise<void> {
   const link =
     kind === "customer"

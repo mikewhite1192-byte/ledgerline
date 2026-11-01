@@ -184,6 +184,17 @@ describe("wakeDesk", () => {
     expect(store.lines).toEqual([]);
   });
 
+  it("takes a wake by the dispatch webhook, and refuses a waker it does not know before the lease", async () => {
+    const claim = vi.spyOn(store, "claim");
+    const unknown = wakeDesk(SESSION, { wakeId: WAKE, by: "email" as "webhook", deadlineMs: now + 25_000 }, deps(handlersWith(async () => done())));
+    await expect(unknown).resolves.toEqual({ ok: false, category: "bad_request" });
+    expect(claim).not.toHaveBeenCalled();
+    const hooked = await wakeDesk(SESSION, { wakeId: WAKE, by: "webhook", deadlineMs: now + 25_000 }, deps(handlersWith(async () => done())));
+    expect(hooked).toMatchObject({ ok: true });
+    expect(store.lines.length).toBeGreaterThan(0);
+    expect(store.lines.every((l) => l.by === "webhook")).toBe(true);
+  });
+
   it("starts the panel's clock only on an armed wake on or after the start date", async () => {
     await wake(handlersWith(async () => done()));
     flags.deskLoop.armed = false;

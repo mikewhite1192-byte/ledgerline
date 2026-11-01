@@ -10,7 +10,10 @@ import { isDeskSource, parseEventKey, SUBJECT_TABLES, type DeskSource } from "./
 
 export const LINE_KINDS = ["wake", "seen", "claimed", "carried", "done", "failed", "skipped", "sleep"] as const;
 export type LineKind = (typeof LINE_KINDS)[number];
-export type WakeBy = "schedule" | "button";
+// Who woke the loop: the kicker's schedule, a person's button, or the dispatch system's webhook
+// (0083).
+export const WAKE_BY = ["schedule", "button", "webhook"] as const;
+export type WakeBy = (typeof WAKE_BY)[number];
 
 // The fixed shape of a line's detail: run ids, whole counts, cents and a category word. Never error
 // text, record contents or names.
@@ -76,7 +79,7 @@ ON CONFLICT (tenant_id, event_key) WHERE kind = 'done' DO NOTHING`;
 export async function appendLine(q: Queryable, line: Line): Promise<boolean> {
   if (!isUuid(line.id) || !isUuid(line.wakeId)) throw new RangeError("line ids must be uuids");
   if (!(LINE_KINDS as readonly string[]).includes(line.kind)) throw new RangeError("not a line kind");
-  if (line.by !== "schedule" && line.by !== "button") throw new RangeError("not a waker");
+  if (!(WAKE_BY as readonly string[]).includes(line.by)) throw new RangeError("not a waker");
   const bare = line.kind === "wake" || line.kind === "sleep";
   let source: DeskSource | null = null;
   let subjectTable: string | null = null;

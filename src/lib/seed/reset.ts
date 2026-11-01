@@ -139,6 +139,12 @@ export const DEMO_RESET_KEPT = {
   demo_sessions:
     "each demo visitor's sign-in with its spend and turn counts (0043); it names only the carrier, " +
     "the app login cannot delete it, and a reset must not hand a visitor a fresh budget",
+  tms_wakeups:
+    "the dispatch webhook's waiting wake-ups (0083); each names only the carrier and a dispatch " +
+    "record id, so one kept over a reset only reads that record again",
+  tms_hook_minutes:
+    "the dispatch webhook's calls a minute (0083); it names only the carrier, and a reset must not " +
+    "hand the webhook a fresh minute",
   schema_migrations: "the migration record, not tenant data",
   "ops.ai_spend": "the one model credit every tenant shares",
 } as const;

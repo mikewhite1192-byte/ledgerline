@@ -131,6 +131,8 @@ const KEPT_OFF = [
   "evalRun.enabled",
   // The card pull-back ships off; its own one-line enable PR turns it on.
   "cardPullback.enabled",
+  // The dispatch webhook ships off; its own one-line enable PR turns it on once the key is stored.
+  "tmsHook.enabled",
 ] as const;
 
 // The on/off switches in flags.ts, by path: every top-level boolean and every boolean inside a
@@ -411,6 +413,14 @@ describe("flags", () => {
     expect(flags.loadMovement.enabled).toBe(true);
   });
 
+  it("ships the dispatch webhook off, at 60 calls a minute a carrier, and local mode can never turn it on", () => {
+    expect(flags.tmsHook).toEqual({ enabled: false, hookPerMinute: 60 });
+    expect(Number.isSafeInteger(flags.tmsHook.hookPerMinute) && flags.tmsHook.hookPerMinute > 0).toBe(true);
+    expect(LOCAL_OVERRIDABLE as readonly string[]).not.toContain("tmsHook.enabled");
+    // Listed ahead of its release, so the demo-path run keeps it off once it ships on.
+    expect(LOCAL_OFF_ONLY as readonly string[]).toContain("tmsHook.enabled");
+  });
+
   it("releases the invoice on finalize, with a start date, off for the local demo run", () => {
     expect(flags.tmsFinalizeInvoice).toEqual({ enabled: true, startDate: "2026-10-31" });
     expect(isLocalDate(flags.tmsFinalizeInvoice.startDate)).toBe(true);
@@ -459,6 +469,7 @@ describe("flags", () => {
       "cardPullback.enabled",
       "deficitRecovery.enabled",
       "cancelledTrip.enabled",
+      "tmsHook.enabled",
     ];
     const offOnly = LOCAL_OFF_ONLY as readonly string[];
     expect(KEPT_OFF.filter((k) => offOnly.includes(k))).toEqual(KEPT_OFF.filter((k) => armedAhead.includes(k)));

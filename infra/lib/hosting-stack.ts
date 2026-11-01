@@ -23,6 +23,9 @@ export const SWEEP_INTERNAL_KEY_SECRET_NAME = "payday-copilot/sweep-internal-key
 // The inbound mail poster's key (PaydayCopilotInbound generates it); the app checks the poster's
 // header against it. Read by name, like the others.
 export const INBOUND_INTERNAL_KEY_SECRET_NAME = "payday-copilot/inbound-internal-key";
+// The dispatch webhook's key; the app checks the token in the hook's URL against it. Nothing here
+// creates it: the owner stores it when the webhook is released. Read by name, like the others.
+export const TMS_HOOK_KEY_SECRET_NAME = "payday-copilot/tms-hook-key";
 // The demo visitor's login, JSON { email, password } (scripts/create-demo-users.ts --judge writes
 // it). Only the visitor sign-in reads it (src/lib/auth/judge-login.ts); the admin logins'
 // demo-logins secret is never granted to the server.
@@ -80,6 +83,7 @@ export const BRANCH_ENV_NAMES = [
   "STRIPE_SECRET_KEY_SECRET_NAME",
   "SWEEP_INTERNAL_KEY_SECRET_NAME",
   "INBOUND_INTERNAL_KEY_SECRET_NAME",
+  "TMS_HOOK_KEY_SECRET_NAME",
   "JUDGE_LOGIN_SECRET_NAME",
   ...OPTIONAL_BRANCH_ENV_NAMES,
 ];
@@ -281,11 +285,12 @@ export class HostingStack extends Stack {
       Secret.fromSecretNameV2(this, "StripeTestKey", STRIPE_SECRET_KEY_SECRET_NAME),
       Secret.fromSecretNameV2(this, "SweepInternalKey", SWEEP_INTERNAL_KEY_SECRET_NAME),
       Secret.fromSecretNameV2(this, "InboundInternalKey", INBOUND_INTERNAL_KEY_SECRET_NAME),
+      Secret.fromSecretNameV2(this, "TmsHookKey", TMS_HOOK_KEY_SECRET_NAME),
       Secret.fromSecretNameV2(this, "JudgeLogin", JUDGE_LOGIN_SECRET_NAME),
     ].map((secret) => `${secret.secretArn}-??????`);
 
     // The SSR runtime's credentials: the Data API on this cluster, the app's own database login,
-    // the three model API keys, the three money secrets, the two internal keys and the demo
+    // the three model API keys, the three money secrets, the three internal keys and the demo
     // visitor's login, nothing else. No Cognito permission is needed (sign-in is an
     // unauthenticated API). Set on the branch, not the app, as Amplify recommends for a public
     // repository. Amplify may assume it only for this account and this app's main branch; the
@@ -338,6 +343,7 @@ export class HostingStack extends Stack {
       STRIPE_SECRET_KEY_SECRET_NAME,
       SWEEP_INTERNAL_KEY_SECRET_NAME,
       INBOUND_INTERNAL_KEY_SECRET_NAME,
+      TMS_HOOK_KEY_SECRET_NAME,
       JUDGE_LOGIN_SECRET_NAME,
       ...money,
     };
