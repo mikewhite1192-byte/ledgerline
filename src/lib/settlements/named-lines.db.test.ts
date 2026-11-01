@@ -502,7 +502,13 @@ describe("named stub lines against a seeded database", () => {
       [LUMPER.id],
     );
     expect(moved).toBe(1);
-    await approve(card.id);
+    // With the switch off too: a rollback stops new lines, never the check on a typed line there.
+    flags.namedLines.enabled = false;
+    try {
+      await approve(card.id);
+    } finally {
+      flags.namedLines.enabled = true;
+    }
     expect((await stubOf(LUMPER.driverId)).parked_reason).toBe("contradicting_line");
     expect(await cardById(card.id)).toMatchObject({ status: "failed", decision_note: "contradicting_line" });
     expect(await ledgerCount(s.id)).toBe(0);
@@ -555,6 +561,11 @@ describe("named stub lines against a seeded database", () => {
       expect(res.status).toBe(404);
       expect(await res.json()).toEqual({ error: "disabled" });
       expect(await name(lumperBody(), stub.id)).toMatchObject({ ok: false, category: "disabled" });
+      // The agent is told the check did not run, not that it found nothing.
+      const told = await app.withTenant(T, (q) =>
+        explainPaystub.run(q, {} as never, { driverId: LUMPER.driverId, periodId: OPEN.id }, {} as never),
+      );
+      expect((told.result as { contradictions: unknown }).contradictions).toBeNull();
       await approve(card.id);
     } finally {
       holder.session = null;

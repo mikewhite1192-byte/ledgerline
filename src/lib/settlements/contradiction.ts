@@ -43,7 +43,7 @@ export type SourceFacts = {
 
 type ContradictionLine = Pick<PayLine, "kind" | "amountCents" | "sources" | "meta" | "enteredBy" | "sourceRef">;
 
-const isNamed = (l: ContradictionLine) =>
+export const isNamed = (l: ContradictionLine) =>
   (l.enteredBy !== undefined && l.enteredBy !== null) || (l.sourceRef !== undefined && l.sourceRef !== null);
 
 const uuidList = (ids: readonly string[]): string => `{${ids.join(",")}}`;

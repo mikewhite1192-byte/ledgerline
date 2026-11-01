@@ -871,8 +871,10 @@ export type Flags = {
   // record's at entry, and the pre-pay recheck compares every typed line with its record again at
   // every approval, and every insurance line's days with the day rows it cites
   // (src/lib/settlements/contradiction.ts): a difference parks the paystub as contradicting_line.
-  // Moves no money. Asked by the route, the service and the recheck, each itself; the agent's
-  // explain_paystub shows the verdict only while it is on. No start date: a line can only be typed
+  // Moves no money. Asked by the route, the service and the recheck, each itself; off, the recheck
+  // still compares a typed line already stored with its record (a rollback never skips that) and
+  // only the insurance rule stops. The agent's explain_paystub shows the verdict only while it is
+  // on, and null (not checked) while off. No start date: a line can only be typed
   // after the release, on an open draft.
   namedLines: { enabled: boolean };
   // Deficit recovery on pay day (docs: RECOVERY, 0080): a driver's named deficits (a card load

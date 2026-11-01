@@ -18,7 +18,7 @@ export const explainPaystub = defineTool({
     "line applies; parkedReason says why a stored paystub no longer matches its records. A stored " +
     "line with namedByPerson true was typed by staff and cites one record in sourceRef; " +
     "contradictions lists each line that does not match the record it cites, as the approval check " +
-    "would find it now.",
+    "would find it now; null means it was not checked, never that there are none.",
   tier: "read",
   roles: OPERATOR,
   label: "Explaining the pay stub",
@@ -38,8 +38,9 @@ export const explainPaystub = defineTool({
     const stored = settlements.find((s) => s.driver_id === a.driverId);
     if (stored) {
       const lines = await readRowsWhereId(q, "settlement_lines", "settlement_id", stored.id);
-      // The approval check's own verdict, as code finds it now; only while named lines are on.
-      let contradictions: { category: string; source: { table: string; id: string } }[] = [];
+      // The approval check's own verdict, as code finds it now; only while named lines are on, and
+      // null otherwise (not checked is not none).
+      let contradictions: { category: string; source: { table: string; id: string } }[] | null = null;
       if (flags.namedLines.enabled) {
         const payLines = await readStoredLines(q, stored.id);
         contradictions = findContradictions(

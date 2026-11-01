@@ -11,7 +11,7 @@ import {
   type SettlementResult,
   type SourceRef,
 } from "../rules-engine";
-import { findContradictions, readSourceFacts } from "./contradiction";
+import { findContradictions, isNamed, readSourceFacts } from "./contradiction";
 import {
   checkLineSources,
   parkReasonOf,
@@ -207,8 +207,11 @@ export async function recheckSettlement(
     fresh,
   );
   const problems = checkLineSources(lines, stored.id, input.period, sourceRowsOf(input));
-  if (flags.namedLines.enabled) {
-    problems.push(...findContradictions(lines, await readSourceFacts(q, lines, stored.driverId), stored.id));
+  // A typed line already on the stub is checked against its record with the switch off too (a
+  // rollback stops new lines, never the check on the ones there); the insurance rule only while on.
+  const checked = flags.namedLines.enabled ? lines : lines.filter(isNamed);
+  if (checked.length > 0) {
+    problems.push(...findContradictions(checked, await readSourceFacts(q, checked, stored.driverId), stored.id));
   }
   return { fresh, period: input.period, park: parkReasonOf(reconcile, problems) };
 }
