@@ -336,6 +336,9 @@ export type PayItemRecord = {
   itemRef: string;
   description: string | null;
   settlementId: string | null;
+  // The person who typed the item (a membership id, 0084), null for every item no person typed.
+  // A typed item always names a fuel_purchases or load_accessorials row.
+  enteredBy: string | null;
 };
 
 export type AdvanceRecord = {
@@ -444,6 +447,11 @@ export type PayLine = {
   amountCents: Cents;
   sources: SourceRef[];
   meta?: PayLineMeta;
+  // A line a person typed (0084): who typed it, and the record it claims to match as
+  // '<table>:<uuid>'. Both set or neither; never hashed or reconciled, so a typed line pairs with
+  // its fresh twin.
+  enteredBy?: string | null;
+  sourceRef?: string | null;
 };
 
 // A stored settlement line (`settlement_lines`).

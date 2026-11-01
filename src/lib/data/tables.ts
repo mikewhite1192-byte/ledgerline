@@ -508,6 +508,8 @@ export const TABLE_SPECS: Record<TenantTable, TableSpec> = {
       ["amount_cents", "int"],
       ["sources", "jsonb"],
       ["meta", "jsonb"],
+      ["entered_by", "uuid"],
+      ["source_ref", "text"],
     ],
   },
   pay_cards: {
@@ -544,6 +546,7 @@ export const TABLE_SPECS: Record<TenantTable, TableSpec> = {
       ["item_ref", "text"],
       ["description", "text"],
       ["settlement_id", "uuid"],
+      ["entered_by", "uuid"],
     ],
   },
   money_codes: {

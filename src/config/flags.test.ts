@@ -135,6 +135,8 @@ const KEPT_OFF = [
   "tmsHook.enabled",
   // The morning digest ships off; its own one-line enable PR turns it on.
   "morningDigest.enabled",
+  // Named stub lines ship off; their own one-line enable PR turns them on.
+  "namedLines.enabled",
 ] as const;
 
 // The on/off switches in flags.ts, by path: every top-level boolean and every boolean inside a
@@ -480,6 +482,7 @@ describe("flags", () => {
       "cancelledTrip.enabled",
       "tmsHook.enabled",
       "morningDigest.enabled",
+      "namedLines.enabled",
     ];
     const offOnly = LOCAL_OFF_ONLY as readonly string[];
     expect(KEPT_OFF.filter((k) => offOnly.includes(k))).toEqual(KEPT_OFF.filter((k) => armedAhead.includes(k)));

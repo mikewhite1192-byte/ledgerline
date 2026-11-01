@@ -387,6 +387,9 @@ export type SettlementLineRow = {
   amount_cents: number;
   sources: { table: string; id: string }[];
   meta: Record<string, string | number | boolean | null> | null;
+  // A line a person typed (0084): their membership and the record it cites, '<table>:<uuid>'.
+  entered_by: string | null;
+  source_ref: string | null;
 };
 
 // A pay card (0052) as the tables read it: never its image bytes, which only the one checked
@@ -422,6 +425,8 @@ export type PayItemRow = {
   item_ref: string;
   description: string;
   settlement_id: string | null;
+  // The person who typed the item (0084), null for every item no person typed.
+  entered_by: string | null;
 };
 
 // A money code (0048). The seed plans none; the table is seeded so the demo reset empties it with

@@ -874,6 +874,19 @@ export type Flags = {
   // itself: the propose tool, the take-back, the gate, the executor, the ledger hooks, the
   // simulated card provider and the Check route.
   cardPullback: { enabled: boolean; startDate: string };
+  // Named stub lines (docs: design-s8, 0084): a staff member puts one reimbursement or deduction on
+  // a driver's open draft paystub that cites one fuel purchase or load accessorial of that driver,
+  // with their name on it (POST /api/settlements/[id]/lines, src/lib/settlements/named-line.ts). It
+  // is written as a pay item and the rules engine makes the line, so the amount must equal the
+  // record's at entry, and the pre-pay recheck compares every typed line with its record again at
+  // every approval, and every insurance line's days with the day rows it cites
+  // (src/lib/settlements/contradiction.ts): a difference parks the paystub as contradicting_line.
+  // Moves no money. Asked by the route, the service and the recheck, each itself; off, the recheck
+  // still compares a typed line already stored with its record (a rollback never skips that) and
+  // only the insurance rule stops. The agent's explain_paystub shows the verdict only while it is
+  // on, and null (not checked) while off. No start date: a line can only be typed
+  // after the release, on an open draft.
+  namedLines: { enabled: boolean };
   // Deficit recovery on pay day (docs: RECOVERY, 0080): a driver's named deficits (a card load
   // ruled owed, a pull-back the card could not cover) are taken back from pay after the advances,
   // oldest first, above the net pay floor and within the same advanceRecoveryCapCents, one cap on
@@ -1194,6 +1207,8 @@ export const flags: Flags = {
   advanceParking: { enabled: true, startDate: "2026-11-02" },
   // Off until its own one-line enable PR. A pull is an outside write, in test mode only.
   cardPullback: { enabled: false, startDate: "2026-11-02" },
+  // Off until its own one-line enable PR. A typed line changes what an approval pays.
+  namedLines: { enabled: false },
   // On by the owner's call (D-071, 2026-11-01). Pay math only; nothing moves money on its own.
   deficitRecovery: { enabled: true, startDate: "2026-11-02" },
   // On by the owner's call (D-074, D-077, 2026-11-01). Adds a driver (not armed, no card),

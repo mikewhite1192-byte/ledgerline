@@ -727,6 +727,7 @@ export function buildCarrierPlan(carrier: DemoCarrier, anchor: LocalDate): Carri
       ref_id: ref ? ref[1] : null,
       description,
       settlement_id: null,
+      entered_by: null,
     };
     items.push(row);
     return row;
@@ -868,6 +869,7 @@ export function buildCarrierPlan(carrier: DemoCarrier, anchor: LocalDate): Carri
     ref_id: f.id,
     description: "Fuel, paid by driver",
     settlement_id: null,
+    entered_by: null,
     item_ref: `${slug}-item-${payItems.length + n}`,
   });
   const dupPaybacks = [dupPayback(dupOlder, 1), dupPayback(dupNewer, 2)];

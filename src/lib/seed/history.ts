@@ -135,6 +135,8 @@ export function applyHistory({ slug, zone, rows, newId }: HistoryArgs): void {
           amount_cents: line.amountCents,
           sources: line.sources.map((s) => ({ table: s.table, id: s.id })),
           meta: line.meta ? { ...line.meta } : null,
+          entered_by: null,
+          source_ref: null,
         };
         rows.settlement_lines.push(row);
       }
@@ -162,6 +164,7 @@ export function applyHistory({ slug, zone, rows, newId }: HistoryArgs): void {
           item_ref: `${slug}-carry-${++carryN}`,
           description: writes.carried.description,
           settlement_id: null,
+          entered_by: null,
         });
       }
     }

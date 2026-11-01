@@ -77,6 +77,9 @@ const SENTENCES: Readonly<Record<string, string>> = {
   advance_overrecovered: "An advance would be taken back for more than the driver owes.",
   deficit_overrecovered: "Money the driver owes would be taken back for more than is owed.",
   schedule_inactive: "A deduction schedule on this paystub is no longer active this week.",
+  // ... and the lines against the records they claim to match (named stub lines, 0084)
+  contradicting_line:
+    "A pay line a person typed does not match the record it cites, or an insurance line claims days with no day rows. Fix the line or the record, then run the week again.",
   // the card check's driver pick for a card on no driver's file
   on_load_in_state: "The driver was on a load in that state that day or the day next to it.",
   worked_that_day: "The driver worked that day or the day next to it.",
