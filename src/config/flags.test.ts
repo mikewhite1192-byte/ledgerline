@@ -108,6 +108,9 @@ const RELEASED_ON = [
   // Released by the owner (D-071, 2026-11-01): a driver's named deficits are taken back from pay
   // after advances, within the same cap and floor. Pay math only; nothing moves money on its own.
   "deficitRecovery.enabled",
+  // Released by the owner (D-074, D-077, 2026-11-01): an admin adds, deactivates and reactivates a
+  // driver. A new driver starts not armed with no card; deactivating disarms. Moves no money.
+  "driverAdmin.enabled",
 ] as const;
 
 // What stays off, each waiting on a missing piece or an outside send the owner has not released.
@@ -125,8 +128,6 @@ const KEPT_OFF = [
   "evalRun.enabled",
   // The card pull-back ships off; its own one-line enable PR turns it on.
   "cardPullback.enabled",
-  // Adding a driver ships off; its own one-line enable PR turns it on.
-  "driverAdmin.enabled",
   // The cancelled trip ships off; its own one-line enable PR turns it on.
   "cancelledTrip.enabled",
 ] as const;
@@ -372,9 +373,10 @@ describe("flags", () => {
     expect(LOCAL_OFF_ONLY as readonly string[]).toContain("deficitRecovery.enabled");
   });
 
-  it("ships driver admin off, and local mode can never turn it on", () => {
-    expect(flags.driverAdmin).toEqual({ enabled: false });
+  it("releases driver admin, off for the local demo run, and local mode can never turn it on", () => {
+    expect(flags.driverAdmin).toEqual({ enabled: true });
     expect(LOCAL_OVERRIDABLE as readonly string[]).not.toContain("driverAdmin.enabled");
+    expect(LOCAL_OFF_ONLY as readonly string[]).toContain("driverAdmin.enabled");
   });
 
   it("ships the cancelled trip off, with a start date, never a kind the autopilot may approve", () => {
