@@ -7,6 +7,7 @@ import { flags } from "@/config/flags";
 import { DbError } from "@/lib/db";
 import { formatInstant, formatLocalDate, zoneName } from "@/lib/format/dates";
 import { formatCents } from "@/lib/format/money";
+import { ourLoadIdOf } from "@/lib/mock-tms/new-load";
 import { readMockLoad, STATUS_CHOICES, type MockLoadView } from "@/lib/mock-tms/store";
 import { demoCarrierOf } from "@/lib/seed/reset";
 import { ForbiddenError, withRequestTenant } from "@/lib/tenant/context";
@@ -45,11 +46,18 @@ export default async function MockLoadPage({ params }: { params: Promise<{ ref: 
   const reference = decodeRef((await params).ref);
   if (reference === null) notFound();
   let view: MockLoadView | null = null;
+  // LedgerLine's own load with this number, linked only while the new load form is on.
+  let ourId: string | null = null;
   let problem: "forbidden" | "unreadable" | null = null;
   try {
-    view = await withRequestTenant<MockLoadView | null>(async (q) =>
-      (await demoCarrierOf(q)) ? readMockLoad(q, reference) : null,
-    );
+    const got = await withRequestTenant<{ read: MockLoadView | null; ours: string | null }>(async (q) => {
+      if (!(await demoCarrierOf(q))) return { read: null, ours: null };
+      const read = await readMockLoad(q, reference);
+      const ours = read !== null && flags.mockTms.newLoad === true ? await ourLoadIdOf(q, reference) : null;
+      return { read, ours };
+    });
+    view = got.read;
+    ourId = got.ours;
   } catch (err) {
     if (err instanceof ForbiddenError) problem = "forbidden";
     else if (err instanceof DbError) problem = "unreadable";
@@ -66,9 +74,16 @@ export default async function MockLoadPage({ params }: { params: Promise<{ ref: 
 
   return (
     <div className="grid gap-6">
-      <Link href="/tms-demo" className="text-body text-foreground underline">
-        All loads
-      </Link>
+      <div className="flex flex-wrap gap-4">
+        <Link href="/tms-demo" className="text-body text-foreground underline">
+          All loads
+        </Link>
+        {ourId !== null ? (
+          <Link href={`/records/loads/${ourId}`} className="text-body text-foreground underline">
+            Open in LedgerLine
+          </Link>
+        ) : null}
+      </div>
       <Card>
         <CardHeader>
           <div className="grid gap-0.5">

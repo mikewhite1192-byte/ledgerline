@@ -72,7 +72,7 @@ export type MockRefusal =
 export type MockResult = { ok: true; externalId: string; at: Instant } | { ok: false; category: MockRefusal };
 
 export type MockWho = "admin" | "staff" | "judge";
-const WHO_WORDS: Record<MockWho, string> = { admin: "Dispatch desk (admin)", staff: "Dispatch desk", judge: "Demo visitor" };
+export const WHO_WORDS: Record<MockWho, string> = { admin: "Dispatch desk (admin)", staff: "Dispatch desk", judge: "Demo visitor" };
 
 const ts = (column: string) => `to_char(${column} AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"')`;
 

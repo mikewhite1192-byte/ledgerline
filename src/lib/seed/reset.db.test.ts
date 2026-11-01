@@ -14,6 +14,7 @@ import type { MoneyDraft } from "../money/types";
 import type { Handlers } from "../desk/handlers";
 import { DESK_SOURCES } from "../desk/keys";
 import { listReleasesDue } from "../escrow/due";
+import { createMockLoad } from "../mock-tms/new-load";
 import { wakeDesk } from "../desk/loop";
 import { startSweep } from "../sweep/run";
 import { serviceSession, serviceSub } from "../sweep/service-session";
@@ -1248,5 +1249,34 @@ describe("the demo reset", () => {
       flags.sweepEnabled = saved.sweep;
       flags.fanoutEnabled = saved.fanout;
     }
+  });
+
+  it("removes a load a person created in the sample dispatch system, on both sides", async () => {
+    const { mock_tms_parties: parties, customers, driver_identities: ids } = planA.rows;
+    const customer = parties.find((p) => p.kind === "customer" && customers.some((c) => c.code === p.external_id));
+    const driver = parties.find((p) => p.kind === "driver" && ids.some((i) => i.system === "tms" && i.external_id === p.external_id));
+    expect(customer && driver).toBeTruthy();
+    const out = await app.withTenant(A, (q) =>
+      createMockLoad(
+        q,
+        {
+          loadNumber: "NEW-9001",
+          customerCode: customer!.external_id,
+          pickup: { name: "Sample Dock", city: "Joliet", state: "IL", on: DEMO_ANCHOR },
+          delivery: { name: "Sample Yard", city: "Gary", state: "IN", on: DEMO_ANCHOR },
+          loadedMiles: 420,
+          linehaulCents: 150_000,
+          fuelSurchargeCents: 0,
+          driverExternalId: driver!.external_id,
+        },
+        "staff",
+        { nowMs: Date.parse(`${DEMO_ANCHOR}T18:00:00Z`), maxNewLoads: 40, maxEventsPerLoad: 36 },
+      ),
+    );
+    expect(out).toMatchObject({ ok: true });
+    const b = await printOf(B);
+    await resetDemoTenant(app, A, planA);
+    expect(await rowsOf(A)).toEqual(sorted(planA.rows));
+    expect(await printOf(B)).toEqual(b);
   });
 });

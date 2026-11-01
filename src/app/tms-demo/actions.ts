@@ -1,10 +1,12 @@
 "use server";
 
 import { revalidatePath } from "next/cache";
+import { redirect } from "next/navigation";
 import { flags } from "@/config/flags";
 import { readRole } from "@/lib/auth/role";
 import { DbError } from "@/lib/db";
 import { sendMockHook, type HookResult } from "@/lib/mock-tms/hook";
+import { createMockLoad, draftOf, NewLoadUndone, parseNewLoad, type NewLoadDraft, type NewLoadRefusal } from "@/lib/mock-tms/new-load";
 import { applyMockAction, recordHookResult, type MockAction, type MockRefusal } from "@/lib/mock-tms/store";
 import { demoCarrierOf } from "@/lib/seed/reset";
 import { ForbiddenError, withRequestTenant } from "@/lib/tenant/context";
@@ -17,6 +19,10 @@ import { ForbiddenError, withRequestTenant } from "@/lib/tenant/context";
 // and the desk reads the change through the read-only dispatch source like any other. The page's
 // switch is re-checked first; a carrier that is not a demo carrier, or not on the sample system, is
 // refused. Categories only, never a database message.
+//
+// "New load" (createLoadAction, flags.mockTms.newLoad) is the one exception to "never our loads": it
+// writes the sample system's load and our planned load with the same number in one transaction
+// (src/lib/mock-tms/new-load.ts), still no card and no money, on a demo carrier only, capped.
 
 export type MockActionCategory = MockRefusal | "disabled" | "forbidden" | "not_demo" | "bad_request" | "unreadable" | "unknown" | "failed";
 
@@ -36,6 +42,31 @@ const text = (form: FormData, name: string): string | null => {
   return typeof v === "string" && v.trim().length > 0 && v.length <= 120 ? v.trim() : null;
 };
 
+// After the commit, never inside it: a send that fails changes nothing already written.
+async function tellLedgerLine(tenantId: string, externalId: string): Promise<HookResult> {
+  const hook = await sendMockHook(tenantId, externalId);
+  try {
+    await withRequestTenant((q) => recordHookResult(q, externalId, hook, new Date().toISOString()));
+  } catch (err) {
+    console.error(`mock tms hook result not kept: ${err instanceof Error ? err.name : "unknown"}`);
+  }
+  return hook;
+}
+
+type Failure = "forbidden" | "not_demo" | "unreadable" | "unknown" | "failed";
+
+function failureOf(err: unknown, what: string): Failure | null {
+  if (err instanceof ForbiddenError) return "forbidden";
+  if (err instanceof NotDemoCarrier) return "not_demo";
+  if (err instanceof DbError) {
+    console.error(`mock tms ${what}: database ${err.category}${err.sqlState ? ` ${err.sqlState}` : ""}`);
+    // A lost COMMIT reply: the change may have landed, so never say nothing changed.
+    if (err.category === "unknown") return "unknown";
+    return UNREACHABLE.has(err.category) ? "unreadable" : "failed";
+  }
+  return null;
+}
+
 async function run(form: FormData, actionOf: (form: FormData) => MockAction | null): Promise<MockActionState> {
   if (flags.mockTms.enabled !== true) return { ok: false, category: "disabled" };
   const reference = text(form, "reference");
@@ -52,25 +83,11 @@ async function run(form: FormData, actionOf: (form: FormData) => MockAction | nu
       return { out, tenantId: session.tenantId };
     });
     if (!done.out.ok) return { ok: false, category: done.out.category };
-    const externalId = done.out.externalId;
-    // After the commit, never inside it: a send that fails changes nothing already written.
-    const hook = await sendMockHook(done.tenantId, externalId);
-    try {
-      await withRequestTenant((q) => recordHookResult(q, externalId, hook, new Date().toISOString()));
-    } catch (err) {
-      console.error(`mock tms hook result not kept: ${err instanceof Error ? err.name : "unknown"}`);
-    }
-    return { ok: true, hook };
+    return { ok: true, hook: await tellLedgerLine(done.tenantId, done.out.externalId) };
   } catch (err) {
-    if (err instanceof ForbiddenError) return { ok: false, category: "forbidden" };
-    if (err instanceof NotDemoCarrier) return { ok: false, category: "not_demo" };
-    if (err instanceof DbError) {
-      console.error(`mock tms change: database ${err.category}${err.sqlState ? ` ${err.sqlState}` : ""}`);
-      // A lost COMMIT reply: the change may have landed, so never say nothing changed.
-      if (err.category === "unknown") return { ok: false, category: "unknown" };
-      return { ok: false, category: UNREACHABLE.has(err.category) ? "unreadable" : "failed" };
-    }
-    throw err;
+    const category = failureOf(err, "change");
+    if (category === null) throw err;
+    return { ok: false, category };
   } finally {
     revalidatePath("/tms-demo", "layout");
   }
@@ -96,4 +113,47 @@ export async function setStatusAction(_prev: MockActionState, form: FormData): P
     const code = text(f, "status");
     return code === null ? null : { kind: "set_status", code };
   });
+}
+
+export type NewLoadCategory = NewLoadRefusal | Failure | "disabled" | "bad_request";
+
+// Only a refusal comes back, with what the visitor entered (each field checked for shape, never
+// any server text) so the form keeps it: a load that was made sends the page to it.
+export type NewLoadState = { ok: false; category: NewLoadCategory; draft: NewLoadDraft } | null;
+
+export async function createLoadAction(_prev: NewLoadState, form: FormData): Promise<NewLoadState> {
+  const draft = draftOf(form);
+  const refused = (category: NewLoadCategory): NewLoadState => ({ ok: false, category, draft });
+  // Both switches, re-read here: the page's own check is not enough.
+  if (flags.mockTms.enabled !== true || flags.mockTms.newLoad !== true) return refused("disabled");
+  const input = parseNewLoad(form);
+  if (input === null) return refused("bad_request");
+  let reference: string;
+  try {
+    const done = await withRequestTenant(async (q, session) => {
+      const role = await readRole(q, session);
+      if (!(await demoCarrierOf(q))) throw new NotDemoCarrier();
+      const out = await createMockLoad(q, input, role, {
+        nowMs: Date.now(),
+        maxNewLoads: flags.mockTms.maxNewLoads,
+        maxEventsPerLoad: flags.mockTms.maxEventsPerLoad,
+      });
+      return { out, tenantId: session.tenantId };
+    });
+    if (!done.out.ok) return refused(done.out.category);
+    reference = done.out.reference;
+    await tellLedgerLine(done.tenantId, done.out.externalId);
+  } catch (err) {
+    if (err instanceof NewLoadUndone) {
+      console.error("mock tms new load: undone after a refusal");
+      return refused("failed");
+    }
+    const category = failureOf(err, "new load");
+    if (category === null) throw err;
+    return refused(category);
+  } finally {
+    revalidatePath("/tms-demo", "layout");
+  }
+  // Outside the try: the redirect is thrown, and nothing above may catch it.
+  redirect(`/tms-demo/loads/${encodeURIComponent(reference)}`);
 }

@@ -456,6 +456,19 @@ vi.mock("@/lib/mock-tms/store", async (importOriginal) => {
     }),
   };
 });
+// The sample dispatch system's New load form: one customer, one driver, the open pay week.
+vi.mock("@/lib/mock-tms/new-load", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("@/lib/mock-tms/new-load")>()),
+  readNewLoadForm: async () => ({
+    zone: "America/Chicago",
+    today: "2026-11-01",
+    customers: [{ code: "CUST-1", name: "Sample Shipper" }],
+    drivers: [{ externalId: "drv-1", name: "Sample Driver One" }],
+    openWeek: { start: "2026-10-26", end: "2026-11-01" },
+    made: 1,
+  }),
+  ourLoadIdOf: async () => null,
+}));
 vi.mock("@/lib/data/driver-insights", async (importOriginal) => ({
   ...(await importOriginal<typeof import("@/lib/data/driver-insights")>()),
   readDriverInsightInput: async () => get("driverInsightInput"),
@@ -2157,6 +2170,25 @@ const PAGES: PageCase[] = [
           }
         },
         shows: ["Load ML20001", "Complete delivery", "Set status"],
+      },
+    ],
+  },
+  {
+    file: "tms-demo/loads/new/page.tsx",
+    variants: [
+      {
+        name: "the new load form",
+        load: async () => {
+          const saved = { ...flags.mockTms };
+          flags.mockTms.enabled = true;
+          flags.mockTms.newLoad = true;
+          try {
+            return await (await import("@/app/tms-demo/loads/new/page")).default();
+          } finally {
+            Object.assign(flags.mockTms, saved);
+          }
+        },
+        shows: ["New load", "Create load", "Oct 26 to Nov 1, 2026", "Sample Shipper"],
       },
     ],
   },
