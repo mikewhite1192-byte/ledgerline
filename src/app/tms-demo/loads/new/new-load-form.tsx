@@ -5,6 +5,7 @@ import { Button } from "@/components/ui/button";
 import { Field } from "@/components/ui/field";
 import { InlineAlert } from "@/components/ui/inline-alert";
 import { Input, controlClass } from "@/components/ui/input";
+import type { NewLoadDraft } from "@/lib/mock-tms/new-load";
 import { createLoadAction, type NewLoadCategory, type NewLoadState } from "../../actions";
 
 // A fixed message per category; nothing the server says is shown.
@@ -21,14 +22,24 @@ export const NEW_LOAD_MESSAGES: Record<NewLoadCategory, string> = {
   cap: "This carrier has reached its limit of new loads; a demo reset clears them. Nothing was created.",
   exists: "A load with that number already exists. Pick another number. Nothing was created.",
   unknown_customer: "Pick a customer from the list. Nothing was created.",
-  unknown_driver: "Pick a driver from the list, or none. Nothing was created.",
+  unknown_driver: "Pick a driver from the list. Nothing was created.",
   bad_date:
     "The pickup must be today or up to 2 days back, and the delivery on or after it, at most 14 days later. Nothing was created.",
 };
 
 type Choice = { value: string; label: string };
 
-function StopFields({ kind, defaultOn, places }: { kind: "pickup" | "delivery"; defaultOn: string; places: Choice[] }) {
+function StopFields({
+  kind,
+  defaultOn,
+  defaultPlace,
+  places,
+}: {
+  kind: "pickup" | "delivery";
+  defaultOn: string;
+  defaultPlace: string;
+  places: Choice[];
+}) {
   const word = kind === "pickup" ? "Pickup" : "Delivery";
   return (
     <fieldset className="grid gap-3">
@@ -36,7 +47,7 @@ function StopFields({ kind, defaultOn, places }: { kind: "pickup" | "delivery"; 
       <div className="flex flex-wrap gap-3">
         <Field id={`${kind}-place`} label="Place">
           {(c) => (
-            <select {...c} name={`${kind}Place`} className={controlClass} defaultValue="" required>
+            <select {...c} name={`${kind}Place`} className={controlClass} defaultValue={defaultPlace} required>
               <option value="" disabled>
                 Pick a place
               </option>
@@ -70,15 +81,17 @@ export function NewLoadForm({
   places: Choice[];
 }) {
   const [state, action, pending] = useActionState<NewLoadState, FormData>(createLoadAction, null);
+  // After a refusal the form starts again from what was entered: keyed on it, so the defaults apply.
+  const d: NewLoadDraft = state?.draft ?? {};
   return (
-    <form action={action} className="grid justify-items-start gap-5">
+    <form key={JSON.stringify(d)} action={action} className="grid justify-items-start gap-5">
       <div className="flex flex-wrap gap-3">
         <Field id="new-number" label="Load number">
-          {(c) => <Input {...c} name="loadNumber" required maxLength={40} defaultValue={suggestedNumber} />}
+          {(c) => <Input {...c} name="loadNumber" required maxLength={40} defaultValue={d.loadNumber ?? suggestedNumber} />}
         </Field>
         <Field id="new-customer" label="Customer">
           {(c) => (
-            <select {...c} name="customer" className={controlClass} defaultValue="" required>
+            <select {...c} name="customer" className={controlClass} defaultValue={d.customer ?? ""} required>
               <option value="" disabled>
                 Pick a customer
               </option>
@@ -91,22 +104,24 @@ export function NewLoadForm({
           )}
         </Field>
       </div>
-      <StopFields kind="pickup" defaultOn={today} places={places} />
-      <StopFields kind="delivery" defaultOn={today} places={places} />
+      <StopFields kind="pickup" defaultOn={d.pickupOn ?? today} defaultPlace={d.pickupPlace ?? ""} places={places} />
+      <StopFields kind="delivery" defaultOn={d.deliveryOn ?? today} defaultPlace={d.deliveryPlace ?? ""} places={places} />
       <div className="flex flex-wrap gap-3">
         <Field id="new-miles" label="Loaded miles">
-          {(c) => <Input {...c} name="miles" inputMode="numeric" required maxLength={4} />}
+          {(c) => <Input {...c} name="miles" inputMode="numeric" required maxLength={4} defaultValue={d.miles} />}
         </Field>
         <Field id="new-rate" label="Rate (dollars)">
-          {(c) => <Input {...c} name="rate" inputMode="decimal" required maxLength={10} />}
+          {(c) => <Input {...c} name="rate" inputMode="decimal" required maxLength={10} defaultValue={d.rate} />}
         </Field>
         <Field id="new-fuel" label="Fuel surcharge (dollars, optional)">
-          {(c) => <Input {...c} name="fuel" inputMode="decimal" maxLength={10} />}
+          {(c) => <Input {...c} name="fuel" inputMode="decimal" maxLength={10} defaultValue={d.fuel} />}
         </Field>
-        <Field id="new-driver" label="Driver (optional)">
+        <Field id="new-driver" label="Driver">
           {(c) => (
-            <select {...c} name="driver" className={controlClass} defaultValue="">
-              <option value="">No driver yet</option>
+            <select {...c} name="driver" className={controlClass} defaultValue={d.driver ?? ""} required>
+              <option value="" disabled>
+                Pick a driver
+              </option>
               {drivers.map((d) => (
                 <option key={d.value} value={d.value}>
                   {d.label}

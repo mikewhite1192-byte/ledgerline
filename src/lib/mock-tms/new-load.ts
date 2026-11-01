@@ -12,9 +12,9 @@ import { applyMockAction, WHO_WORDS, type MockWho } from "./store";
 // (its two stops, its revenue lines and its first history row, New) and our own planned `loads`
 // row with the same number, as the rate confirmation's executor writes one (planned, no empty
 // miles, no state miles). The desk then links the two by whole load number on its next read of the
-// mirror, as it links every load; nothing in the sync changes. A driver picked on the form is set
-// on our row at birth and assigned there through the store's own action (New to Booked), so both
-// sides agree from the start. Dedupe key: the load number, on both tables. At most maxNewLoads
+// mirror, as it links every load; nothing in the sync changes. The driver, required, is set on our
+// row at birth and assigned there through the store's own action (New to Booked), so both sides
+// agree from the start: nothing later copies a driver from the sample system onto our row. Dedupe key: the load number, on both tables. At most maxNewLoads
 // unseeded loads a carrier; a demo reset removes them with the rest of the seeded tables' rows.
 // No money: our row carries the rate a person typed, and the engine prices it later as any load.
 
@@ -58,7 +58,7 @@ export type NewLoadInput = {
   loadedMiles: number;
   linehaulCents: number;
   fuelSurchargeCents: number;
-  driverExternalId: string | null;
+  driverExternalId: string;
 };
 
 export type NewLoadRefusal = "not_found" | "cap" | "exists" | "unknown_customer" | "unknown_driver" | "bad_date";
@@ -119,7 +119,7 @@ export function parseNewLoad(form: FormLike): NewLoadInput | null {
   const fuelSurchargeCents = fuel === null || fuel === "" ? 0 : centsOf(fuel);
   if (fuelSurchargeCents === null) return null;
   const driver = field(form, "driver");
-  if (driver !== null && driver !== "" && !DRIVER_ID.test(driver)) return null;
+  if (driver === null || !DRIVER_ID.test(driver)) return null;
   return {
     loadNumber,
     customerCode,
@@ -128,8 +128,49 @@ export function parseNewLoad(form: FormLike): NewLoadInput | null {
     loadedMiles: Number(miles),
     linehaulCents,
     fuelSurchargeCents,
-    driverExternalId: driver === null || driver === "" ? null : driver,
+    driverExternalId: driver,
   };
+}
+
+// The form's fields, for a refusal to hand back what the visitor entered.
+export const NEW_LOAD_FIELDS = [
+  "loadNumber",
+  "customer",
+  "pickupPlace",
+  "pickupOn",
+  "deliveryPlace",
+  "deliveryOn",
+  "miles",
+  "rate",
+  "fuel",
+  "driver",
+] as const;
+
+export type NewLoadDraft = Partial<Record<(typeof NEW_LOAD_FIELDS)[number], string>>;
+
+const placeOk = (v: string) => NEW_LOAD_PLACES.some((p) => placeLabel(p) === v);
+const DRAFT_CHECKS: Record<(typeof NEW_LOAD_FIELDS)[number], (v: string) => boolean> = {
+  loadNumber: (v) => LOAD_NUMBER.test(v.toUpperCase()),
+  customer: (v) => CUSTOMER_CODE.test(v),
+  pickupPlace: placeOk,
+  pickupOn: isLocalDate,
+  deliveryPlace: placeOk,
+  deliveryOn: isLocalDate,
+  miles: (v) => MILES.test(v),
+  rate: (v) => centsOf(v) !== null,
+  fuel: (v) => centsOf(v) !== null,
+  driver: (v) => DRIVER_ID.test(v),
+};
+
+// What the visitor entered, each field kept only when it passes its own shape check, so a refused
+// form comes back filled in; anything else is left out and the field falls back to its default.
+export function draftOf(form: FormLike): NewLoadDraft {
+  const out: NewLoadDraft = {};
+  for (const name of NEW_LOAD_FIELDS) {
+    const v = field(form, name);
+    if (v !== null && v !== "" && DRAFT_CHECKS[name](v)) out[name] = v;
+  }
+  return out;
 }
 
 // A pickup from two days back to the carrier's today, and a delivery on or after it, at most
@@ -189,21 +230,18 @@ export async function createMockLoad(
   if (party.length !== 1 || customer.length !== 1) return fail("unknown_customer");
 
   // The driver: the sample system's party, and our one driver its id maps to.
-  let driverId: string | null = null;
-  if (input.driverExternalId !== null) {
-    const p = await q.query<{ n: number }>(
-      `SELECT CAST(count(*) AS integer) AS n FROM mock_tms_parties
-        WHERE tenant_id = current_tenant_id() AND kind = 'driver' AND external_id = $1`,
-      [input.driverExternalId],
-    );
-    const ids = await q.query<{ driver_id: string }>(
-      `SELECT CAST(driver_id AS text) AS driver_id FROM driver_identities
-        WHERE tenant_id = current_tenant_id() AND system = 'tms' AND external_id = $1`,
-      [input.driverExternalId],
-    );
-    if (Number(p[0]?.n ?? 0) !== 1 || ids.length !== 1) return fail("unknown_driver");
-    driverId = ids[0].driver_id;
-  }
+  const p = await q.query<{ n: number }>(
+    `SELECT CAST(count(*) AS integer) AS n FROM mock_tms_parties
+      WHERE tenant_id = current_tenant_id() AND kind = 'driver' AND external_id = $1`,
+    [input.driverExternalId],
+  );
+  const ids = await q.query<{ driver_id: string }>(
+    `SELECT CAST(driver_id AS text) AS driver_id FROM driver_identities
+      WHERE tenant_id = current_tenant_id() AND system = 'tms' AND external_id = $1`,
+    [input.driverExternalId],
+  );
+  if (Number(p[0]?.n ?? 0) !== 1 || ids.length !== 1) return fail("unknown_driver");
+  const driverId = ids[0].driver_id;
 
   const at = changeAt(opts.nowMs, feed_floor_at, []);
   const loadId = randomUUID();
@@ -273,13 +311,11 @@ export async function createMockLoad(
     [mockId, `${externalId}:e1`, L.new, WHO_WORDS[who], at],
   );
 
-  if (input.driverExternalId !== null) {
-    const assigned = await applyMockAction(q, reference, { kind: "assign_driver", driverExternalId: input.driverExternalId }, who, {
-      nowMs: opts.nowMs,
-      maxEventsPerLoad: opts.maxEventsPerLoad,
-    });
-    if (!assigned.ok) throw new NewLoadUndone();
-  }
+  const assigned = await applyMockAction(q, reference, { kind: "assign_driver", driverExternalId: input.driverExternalId }, who, {
+    nowMs: opts.nowMs,
+    maxEventsPerLoad: opts.maxEventsPerLoad,
+  });
+  if (!assigned.ok) throw new NewLoadUndone();
   return { ok: true, externalId, reference, loadId, at };
 }
 

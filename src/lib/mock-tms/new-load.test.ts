@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { pickupWindowHolds, podWindowHolds } from "../loads/paperwork";
 import { addDays } from "../time/local-date";
-import { centsOf, datesFit, NEW_LOAD_PLACES, parseNewLoad, PICKUP_DAYS_AHEAD, PICKUP_DAYS_BACK, placeLabel } from "./new-load";
+import { centsOf, datesFit, draftOf, NEW_LOAD_PLACES, parseNewLoad, PICKUP_DAYS_AHEAD, PICKUP_DAYS_BACK, placeLabel } from "./new-load";
 
 // The New load form's reader: every value checked for shape, each place from the fixed list, money
 // in whole cents by string, dates checked against the carrier's today. Pure: no database, no clock.
@@ -16,7 +16,7 @@ const GOOD: Record<string, string> = {
   miles: "420",
   rate: "1850.5",
   fuel: "",
-  driver: "",
+  driver: "drv-1",
 };
 
 const form = (over: Record<string, string | null> = {}) => {
@@ -26,7 +26,7 @@ const form = (over: Record<string, string | null> = {}) => {
 };
 
 describe("the new load form", () => {
-  it("reads a good form: the number uppercased, each place from the list, the rate in whole cents, no fuel and no driver", () => {
+  it("reads a good form: the number uppercased, each place from the list, the rate in whole cents, no fuel", () => {
     expect(parseNewLoad(form())).toEqual({
       loadNumber: "NEW-1001",
       customerCode: "CUST-1",
@@ -35,9 +35,9 @@ describe("the new load form", () => {
       loadedMiles: 420,
       linehaulCents: 185050,
       fuelSurchargeCents: 0,
-      driverExternalId: null,
+      driverExternalId: "drv-1",
     });
-    expect(parseNewLoad(form({ fuel: "$95.25", driver: "drv-1" }))).toMatchObject({ fuelSurchargeCents: 9525, driverExternalId: "drv-1" });
+    expect(parseNewLoad(form({ fuel: "$95.25" }))).toMatchObject({ fuelSurchargeCents: 9525 });
   });
 
   it("keeps money whole cents by string, never a float", () => {
@@ -72,11 +72,35 @@ describe("the new load form", () => {
       { rate: "1000000" },
       { fuel: "abc" },
       { driver: "drv 1" },
+      // A driver is required: our load gets its driver at birth, and nothing sets it later.
+      { driver: "" },
+      { driver: null },
       { miles: null },
     ];
     for (const over of shapes) {
       expect(parseNewLoad(form(over)), JSON.stringify(over)).toBeNull();
     }
+  });
+
+  it("hands back what was entered after a refusal, each field only when it passes its own shape", () => {
+    expect(draftOf(form({ fuel: "$95.25" }))).toEqual({
+      loadNumber: "new-1001",
+      customer: "CUST-1",
+      pickupPlace: "Joliet, IL",
+      pickupOn: "2026-10-31",
+      deliveryPlace: "Gary, IN",
+      deliveryOn: "2026-11-01",
+      miles: "420",
+      rate: "1850.5",
+      fuel: "$95.25",
+      driver: "drv-1",
+    });
+    expect(
+      draftOf(form({ loadNumber: "NEW 1001", pickupPlace: "Springfield, IL", deliveryOn: "11/01/2026", rate: "abc", fuel: "", driver: null })),
+    ).toEqual({ customer: "CUST-1", pickupOn: "2026-10-31", deliveryPlace: "Gary, IN", miles: "420" });
+    const extra = form();
+    extra.set("note", "anything");
+    expect(Object.keys(draftOf(extra))).not.toContain("note");
   });
 
   it("offers each place once, by a label the parser reads back to that place", () => {

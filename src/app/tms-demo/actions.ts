@@ -6,7 +6,7 @@ import { flags } from "@/config/flags";
 import { readRole } from "@/lib/auth/role";
 import { DbError } from "@/lib/db";
 import { sendMockHook, type HookResult } from "@/lib/mock-tms/hook";
-import { createMockLoad, NewLoadUndone, parseNewLoad, type NewLoadRefusal } from "@/lib/mock-tms/new-load";
+import { createMockLoad, draftOf, NewLoadUndone, parseNewLoad, type NewLoadDraft, type NewLoadRefusal } from "@/lib/mock-tms/new-load";
 import { applyMockAction, recordHookResult, type MockAction, type MockRefusal } from "@/lib/mock-tms/store";
 import { demoCarrierOf } from "@/lib/seed/reset";
 import { ForbiddenError, withRequestTenant } from "@/lib/tenant/context";
@@ -117,14 +117,17 @@ export async function setStatusAction(_prev: MockActionState, form: FormData): P
 
 export type NewLoadCategory = NewLoadRefusal | Failure | "disabled" | "bad_request";
 
-// Only a refusal comes back: a load that was made sends the page to it.
-export type NewLoadState = { ok: false; category: NewLoadCategory } | null;
+// Only a refusal comes back, with what the visitor entered (each field checked for shape, never
+// any server text) so the form keeps it: a load that was made sends the page to it.
+export type NewLoadState = { ok: false; category: NewLoadCategory; draft: NewLoadDraft } | null;
 
 export async function createLoadAction(_prev: NewLoadState, form: FormData): Promise<NewLoadState> {
+  const draft = draftOf(form);
+  const refused = (category: NewLoadCategory): NewLoadState => ({ ok: false, category, draft });
   // Both switches, re-read here: the page's own check is not enough.
-  if (flags.mockTms.enabled !== true || flags.mockTms.newLoad !== true) return { ok: false, category: "disabled" };
+  if (flags.mockTms.enabled !== true || flags.mockTms.newLoad !== true) return refused("disabled");
   const input = parseNewLoad(form);
-  if (input === null) return { ok: false, category: "bad_request" };
+  if (input === null) return refused("bad_request");
   let reference: string;
   try {
     const done = await withRequestTenant(async (q, session) => {
@@ -137,17 +140,17 @@ export async function createLoadAction(_prev: NewLoadState, form: FormData): Pro
       });
       return { out, tenantId: session.tenantId };
     });
-    if (!done.out.ok) return { ok: false, category: done.out.category };
+    if (!done.out.ok) return refused(done.out.category);
     reference = done.out.reference;
     await tellLedgerLine(done.tenantId, done.out.externalId);
   } catch (err) {
     if (err instanceof NewLoadUndone) {
       console.error("mock tms new load: undone after a refusal");
-      return { ok: false, category: "failed" };
+      return refused("failed");
     }
     const category = failureOf(err, "new load");
     if (category === null) throw err;
-    return { ok: false, category };
+    return refused(category);
   } finally {
     revalidatePath("/tms-demo", "layout");
   }

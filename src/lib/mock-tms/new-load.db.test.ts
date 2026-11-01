@@ -274,15 +274,14 @@ describe("a new load in the sample dispatch system", () => {
     ]);
   });
 
-  it("leaves the driver off both sides when none is picked, and the fuel line off at zero", async () => {
-    const f = await carrier("nl-nodrv");
-    const i = input({ driverExternalId: null, fuelSurchargeCents: 0 });
+  it("leaves the fuel line off at zero", async () => {
+    const f = await carrier("nl-nofuel");
+    const i = input({ fuelSurchargeCents: 0 });
     expect(await create(f, i)).toMatchObject({ ok: true });
-    expect((await ourLoads(f))[0]).toMatchObject({ driver_id: null, fuel_surcharge_cents: 0 });
+    expect((await ourLoads(f))[0]).toMatchObject({ driver_id: f.driverId, fuel_surcharge_cents: 0 });
     const mock = await mockOf(f, i.loadNumber);
-    expect(mock.load).toMatchObject({ status_label: "New", driver_external_id: null });
+    expect(mock.load).toMatchObject({ status_label: "Booked", driver_external_id: "drv-1" });
     expect(mock.lines.map((l) => l.type_label)).toEqual(["Linehaul"]);
-    expect(mock.events).toHaveLength(1);
   });
 
   it("refuses, writing nothing on either side: a number taken, an unknown customer or driver, a date out of range, past the cap", async () => {
@@ -329,6 +328,58 @@ describe("a new load in the sample dispatch system", () => {
     expect(await create(f, input(), 2, { cap: 2 })).toEqual({ ok: false, category: "cap" });
     expect(await counted()).toEqual(capped);
   });
+
+  it("holds the cap for two creates at once: the second waits on the connection row, then is refused", async () => {
+    const f = await carrier("nl-race");
+    expect(await create(f, input())).toMatchObject({ ok: true });
+    const counted = async (): Promise<Record<string, number>> => ({ ...(await countsOf(f, MOCK_TABLES)), loads: (await ourLoads(f)).length });
+    const before = await counted();
+
+    // One slot left. The first create is held open after its writes, uncommitted; the second, on the
+    // pool's other connection, must then wait on the first's lock. Without the lock it would count
+    // one load (the first's is not yet visible), take the last slot too, and never wait here.
+    let release = () => {};
+    const released = new Promise<void>((r) => (release = r));
+    let holderPid = 0;
+    let firstDone: () => void = () => {};
+    const firstWritten = new Promise<void>((r) => (firstDone = r));
+    const first = app.withTenant(f.tenantId, async (q) => {
+      const out = await createMockLoad(q, input({ loadNumber: "RACE-1" }), "staff", { nowMs: at(1).getTime(), maxNewLoads: 2, maxEventsPerLoad: 36 });
+      holderPid = (await q.query<{ pid: number }>("SELECT pg_backend_pid() AS pid"))[0].pid;
+      firstDone();
+      await released;
+      return out;
+    });
+    const pending: Promise<unknown>[] = [first];
+    try {
+      await firstWritten;
+      const second = create(f, input({ loadNumber: "RACE-2" }), 1, { cap: 2 });
+      pending.push(second);
+      let waiting = false;
+      for (let i = 0; i < 600 && !waiting; i += 1) {
+        const [row] = await admin.withoutTenant((q) =>
+          q.query<{ n: string }>("SELECT count(*) AS n FROM pg_stat_activity WHERE CAST($1 AS int) = ANY(pg_blocking_pids(pid))", [holderPid]),
+        );
+        waiting = Number(row.n) > 0;
+        if (!waiting) await new Promise((r) => setTimeout(r, 25));
+      }
+      expect(waiting).toBe(true);
+      release();
+      const results = await Promise.all([first, second]);
+      expect(results.filter((r) => r.ok)).toHaveLength(1);
+      expect(results.filter((r) => !r.ok)).toEqual([{ ok: false, category: "cap" }]);
+      expect(await counted()).toEqual({
+        mock_tms_loads: before.mock_tms_loads + 1,
+        mock_tms_stops: before.mock_tms_stops + 2,
+        mock_tms_events: before.mock_tms_events + 3,
+        mock_tms_lines: before.mock_tms_lines + 2,
+        loads: before.loads + 1,
+      });
+    } finally {
+      release();
+      await Promise.allSettled(pending);
+    }
+  }, 60_000);
 
   it("is refused for a carrier not on the sample system, and each carrier sees only its own", async () => {
     const a = await carrier("nl-rls-a");
