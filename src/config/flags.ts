@@ -1203,9 +1203,9 @@ export const flags: Flags = {
     // On by the owner's call (D-071, 2026-10-31): the panel shows; every fault itself starts off.
     demoFaultsEnabled: true,
   },
-  // Off until its own one-line enable PR, after the owner stores payday-copilot/tms-hook-key.
+  // On by the owner's call (D-071, 2026-11-01), after the owner stored payday-copilot/tms-hook-key.
   // A wake-up only: it reads, never writes to the dispatch system, and moves no money.
-  tmsHook: { enabled: false, hookPerMinute: 60 },
+  tmsHook: { enabled: true, hookPerMinute: 60 },
   // On by the owner's call (D-071, 2026-10-31). It only drafts a card; approving it goes through the usual gate.
   tmsFinalizeInvoice: { enabled: true, startDate: "2026-10-31" },
   // On by the owner's call (D-071): Yes still goes through the usual approve route and gate.
