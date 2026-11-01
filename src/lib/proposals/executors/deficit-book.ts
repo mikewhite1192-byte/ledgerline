@@ -4,7 +4,7 @@ import { CANCELLED_TRIP_REASON } from "../../advances/takeback-words";
 import { isAutopilotSub } from "../../autopilot/session";
 import type { Queryable, TenantDb } from "../../db";
 import { DEFICIT_SQL, LIVE_PULL_SQL } from "../../deficits/cancelled-trip";
-import { cancelledTripEnabled } from "../../deficits/switches";
+import { deficitBookEnabled } from "../../deficits/switches";
 import { dollars } from "../../money/format";
 import { isServiceSub } from "../../sweep/service-session";
 import { assertMembership, ForbiddenError } from "../../tenant/context";
@@ -16,11 +16,14 @@ import type { ApproveOptions, ExecuteDeps, Executor, Precheck, ProposalRefused, 
 // under the tenant's row-level security:
 //   a. re-read the proposal FOR UPDATE: approved or executing, kind deficit_book, args that read
 //      back whole and say what the row says (the advance is its subject, the same whole cents);
-//   b. lock the advance FOR UPDATE and re-check the facts, because time passed: still paid, not
-//      taken back, the card's driver and load, what is owed equals the card's cents whole, the
-//      load still cancelled, no cancelled-trip deficit on it yet, no card pull-back taking it back
-//      right now, and no approved paystub waiting to book a recovery of it. Any failure marks the
-//      proposal failed with the note "stale" and writes nothing;
+//   b. lock the driver FOR UPDATE, then the advance FOR UPDATE (the pull-back's and the pay run's
+//      order: driver first), and re-check the facts, because time passed: still paid, not taken
+//      back, the card's driver and load, what is owed equals the card's cents whole, the load still
+//      cancelled, no cancelled-trip deficit on it yet, no card pull-back taking it back right now,
+//      and no approved paystub not booked yet with a recovery of it. Any failure marks the
+//      proposal failed and writes nothing else: the note "recovered_by_pay" when pay recovered
+//      part of the advance since the card (what is owed only shrinks, so the card could never
+//      pass again), else "stale";
 //   c. approved -> executing;
 //   d. close the advance line: taken_back_cents grows by the owed cents (so outstanding is zero),
 //      stamped with the approver and the reason cancelled_trip, under a guard that repeats the
@@ -32,8 +35,10 @@ import type { ApproveOptions, ExecuteDeps, Executor, Precheck, ProposalRefused, 
 // starts counting. Money never moves here: no adapter is called and nothing is sent. Never the
 // autopilot's and never the sweep's login (the gate refuses them too; this is its own wall).
 //
-// The switch: cancelledTrip.enabled off refuses as not_executable before anything is read or
-// written, here and in the precheck, even when a caller reaches this executor directly.
+// The switches: cancelledTrip.enabled or deficitRecovery.enabled off (deficitBookEnabled) refuses
+// as not_executable before anything is read or written, here and in the precheck, even when a
+// caller reaches this executor directly. A deficit is only taken back from pay while deficit
+// recovery is on, so with it off the card is never booked.
 
 type Args = {
   driverId: string;
@@ -59,6 +64,15 @@ type AdvanceFacts = {
   owed: string;
   taken_back_at: string | null;
 };
+
+// What the facts say now. holds: every fact the card was made on still holds. ended: the card can
+// never pass again (the advance or the load is no longer what the card was made on), with the note
+// the card ends with. held: a card pull-back or an approved paystub is on the advance right now,
+// so the card is refused and left proposed.
+type Facts =
+  | { kind: "holds"; loadNumber: string }
+  | { kind: "ended"; note: "recovered_by_pay" | "stale" }
+  | { kind: "held" };
 
 const refused = (category: string): ProposalRefused => ({ ok: false, category, retryable: false });
 
@@ -102,28 +116,37 @@ const LOAD_SQL = `SELECT load_number, status FROM loads
   WHERE tenant_id = current_tenant_id() AND id = CAST($1 AS uuid)`;
 
 // An approved paystub, not booked yet, with a recovery line on this advance: booking it after the
-// advance is closed would over-recover it, so the card waits for that stub instead.
+// advance is closed would over-recover it, so the card is refused while that stub is not booked.
 const APPROVED_RECOVERY_SQL = `SELECT 1 AS one FROM settlement_lines l
   JOIN settlements s ON s.tenant_id = l.tenant_id AND s.id = l.settlement_id
  WHERE l.tenant_id = current_tenant_id() AND s.status = 'approved' AND l.kind = 'advance_recovery'
    AND l.sources @> CAST($1 AS jsonb) LIMIT 1`;
 
-// The load's number when every fact the card was made on still holds, else null. lock takes the
-// advance FOR UPDATE (the executor). The load is read without a lock: cancelled is a last status,
-// and the desk's drafting holds the load's lock while it waits on this card's row.
-async function factsHold(q: Queryable, a: Args, lock: boolean): Promise<string | null> {
+// The card's driver, locked FOR UPDATE ahead of the advance, the order the pull-back and the pay
+// run's booking take them in. A driver not there is unknown, so the card ends stale.
+const DRIVER_LOCK_SQL = `SELECT 1 AS one FROM drivers
+  WHERE tenant_id = current_tenant_id() AND id = CAST($1 AS uuid) FOR UPDATE`;
+
+const ended = (note: "recovered_by_pay" | "stale"): Facts => ({ kind: "ended", note });
+
+// What the facts the card was made on say now (Facts). lock takes the advance FOR UPDATE (the
+// executor, which locked the driver first). The load is read without a lock: cancelled is a last
+// status, and the desk's drafting holds the load's lock while it waits on this card's row.
+async function factsOf(q: Queryable, a: Args, lock: boolean): Promise<Facts> {
   const [adv] = await q.query<AdvanceFacts>(`${ADVANCE_SQL}${lock ? " FOR UPDATE" : ""}`, [a.advanceId]);
-  if (!adv) return null;
-  if (adv.status !== "paid" || adv.taken_back_at !== null) return null;
-  if (adv.driver_id !== a.driverId || adv.load_id !== a.loadId) return null;
-  if (Number(adv.owed) !== a.amountCents) return null;
+  if (!adv) return ended("stale");
+  if (adv.status !== "paid" || adv.taken_back_at !== null) return ended("stale");
+  if (adv.driver_id !== a.driverId || adv.load_id !== a.loadId) return ended("stale");
+  if (Number(adv.owed) !== a.amountCents) {
+    return ended(Number(adv.owed) < a.amountCents ? "recovered_by_pay" : "stale");
+  }
   const [load] = await q.query<{ load_number: string; status: string }>(LOAD_SQL, [a.loadId]);
-  if (!load || load.status !== "cancelled") return null;
-  if ((await q.query(DEFICIT_SQL, [a.advanceId])).length > 0) return null;
-  if ((await q.query(LIVE_PULL_SQL, [a.advanceId])).length > 0) return null;
+  if (!load || load.status !== "cancelled") return ended("stale");
+  if ((await q.query(DEFICIT_SQL, [a.advanceId])).length > 0) return ended("stale");
+  if ((await q.query(LIVE_PULL_SQL, [a.advanceId])).length > 0) return { kind: "held" };
   const cites = JSON.stringify([{ table: "advances", id: a.advanceId }]);
-  if ((await q.query(APPROVED_RECOVERY_SQL, [cites])).length > 0) return null;
-  return load.load_number;
+  if ((await q.query(APPROVED_RECOVERY_SQL, [cites])).length > 0) return { kind: "held" };
+  return { kind: "holds", loadNumber: load.load_number };
 }
 
 // The caller's one membership row in the tenant, or null.
@@ -227,12 +250,19 @@ async function apply(q: Queryable, session: Session, proposalId: string, now: Da
     await fail(q, p.id, "not_executable", nowIso);
     return refused("not_executable");
   }
-  const loadNumber = await factsHold(q, a, true);
-  if (loadNumber === null) {
+  if ((await q.query(DRIVER_LOCK_SQL, [a.driverId])).length !== 1) {
     await fail(q, p.id, "stale", nowIso);
     console.info(`proposal ${p.id} deficit_book refused=stale`);
     return refused("stale");
   }
+  const facts = await factsOf(q, a, true);
+  if (facts.kind !== "holds") {
+    const note = facts.kind === "ended" ? facts.note : "stale";
+    await fail(q, p.id, note, nowIso);
+    console.info(`proposal ${p.id} deficit_book refused=${note}`);
+    return refused("stale");
+  }
+  const loadNumber = facts.loadNumber;
   const namedBy = await memberOf(q, session);
   if (namedBy === null) {
     await fail(q, p.id, "role", nowIso);
@@ -261,16 +291,20 @@ async function apply(q: Queryable, session: Session, proposalId: string, now: Da
 }
 
 // The gate's early refusal (see Precheck in execute.ts): inside the gate's transaction, with the
-// proposal still proposed and locked. Reads only.
+// proposal still proposed and locked. Reads only, so it never ends a card itself: a card a pull-back
+// or an approved paystub holds right now is refused as stale and stays proposed, while a card that
+// can never pass again (ended: pay recovered part of the advance, or the advance or the load is no
+// longer what the card was made on) is let through, and the executor, asking the same facts under
+// its locks, ends it failed with its note (recovered_by_pay or stale) and writes nothing else.
 export const precheckDeficitBook: Precheck = async (q, proposal: ProposalRow, _now, ctx) => {
-  if (!cancelledTripEnabled()) return refused("not_executable");
+  if (!deficitBookEnabled()) return refused("not_executable");
   if (proposal.kind !== "deficit_book") return refused("not_executable");
   if (!ctx) return refused("not_executable");
   if (machineLogin(ctx.session)) return refused("kind_never_alone");
   if ((await staffRole(q, ctx.session)) === null) return refused("role");
   const a = argsFrom(proposal.args);
   if (!argsMatchRow(a, proposal.subjectTable, proposal.subjectId, proposal.amountCents)) return refused("not_executable");
-  if ((await factsHold(q, a, false)) === null) {
+  if ((await factsOf(q, a, false)).kind === "held") {
     console.info(`proposal ${proposal.id} deficit_book precheck=stale`);
     return refused("stale");
   }
@@ -285,7 +319,7 @@ async function runDeficitBook(
   _opts: ApproveOptions,
   deps: ExecuteDeps,
 ): Promise<ProposalResult> {
-  if (!cancelledTripEnabled()) return refused("not_executable");
+  if (!deficitBookEnabled()) return refused("not_executable");
   if (proposal.kind !== "deficit_book") return refused("not_executable");
   if (machineLogin(session)) return refused("kind_never_alone");
   const now = (deps.clock ?? (() => new Date()))();

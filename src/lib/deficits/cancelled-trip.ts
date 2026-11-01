@@ -8,7 +8,7 @@ import { persistEngineProposal, type EngineDraft } from "../proposals/engine";
 import { outstandingCents, type AdvanceRecord } from "../rules-engine";
 import { localDateOf } from "../time/local-date";
 import { isUuid } from "../uuid";
-import { cancelledTripEnabled, cancelledTripOn } from "./switches";
+import { cancelledTripOn, deficitBookEnabled } from "./switches";
 
 // CANCELLED-TRIP (S6c, A10): a load a person cancelled after its driver was paid an advance on it.
 // The trip will never be paid, so the advance can never be earned back from that load's pay. For
@@ -30,7 +30,9 @@ import { cancelledTripEnabled, cancelledTripOn } from "./switches";
 // is taking back right now (a pull issuing or unknown) is left to the pull.
 //
 // Called from the desk loop's load_event source, once per recorded move (its desk_log key is
-// load_event:<load_events.id>). The switch and the start date are asked here on every call.
+// load_event:<load_events.id>). The switches (deficitBookEnabled: the cancelled trip and deficit
+// recovery, both on, so no card is drafted that could not be approved) and the start date are asked
+// here on every call.
 
 export type CancelledTripOutcome =
   | { kind: "proposed"; proposalIds: string[] }
@@ -86,7 +88,7 @@ export async function proposeCancelledTripDeficit(
   loadEventId: string,
   now: Date,
 ): Promise<CancelledTripOutcome> {
-  if (!cancelledTripEnabled()) return nothing("switched_off");
+  if (!deficitBookEnabled()) return nothing("switched_off");
   if (!isUuid(loadEventId)) return nothing("not_found");
   const [event] = await q.query<EventRow>(EVENT_SQL, [loadEventId]);
   if (!event) return nothing("not_found");

@@ -888,7 +888,8 @@ export type Flags = {
   // approval closes the advance line and books the same cents as a named deficit in one
   // transaction, so the driver owes them once. Nothing moves money. Read on every path that writes:
   // the staff move, the load-move executor, the route, the desk handler and the deficit executor.
-  // Off, a cancel is refused as validation, as before. startDate (YYYY-MM-DD, the carrier's zone):
+  // The deficit card is drafted and approved only while deficitRecovery.enabled is on too, since
+  // only then does pay take a deficit back. Off, a cancel is refused as validation, as before. startDate (YYYY-MM-DD, the carrier's zone):
   // a cancel recorded before it drafts nothing, so turning it on never reaches back.
   cancelledTrip: { enabled: boolean; startDate: string };
 };

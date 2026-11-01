@@ -1414,6 +1414,48 @@ describe("the advance flow", () => {
       expect(mock.sendCount).toBe(1);
     });
 
+    it("refuses as stale an advance on a load cancelled since, before the approval and after it, paying nothing", async () => {
+      const mine = await loadOf("L-1");
+      const cancelLoad = () =>
+        admin.withTenant(A.tenantId, (q) =>
+          q.execute("UPDATE loads SET status = 'cancelled' WHERE tenant_id = current_tenant_id() AND id = CAST($1 AS uuid)", [mine]),
+        );
+      // Cancelled between the approval and the payout: the executor asks again and pays nothing.
+      const before = await addProposal({ loadId: mine, amountCents: 10_000 });
+      const cancelling: ExecutorRegistry = {
+        advance_payout: Object.assign(
+          async (...args: Parameters<Executor>) => {
+            await cancelLoad();
+            return executeAdvanceProposal(...args);
+          },
+          { precheck: precheckAdvanceProposal },
+        ),
+      };
+      expect(await approve(before, false, { ...deps(), executors: cancelling })).toEqual({
+        ok: false,
+        category: "stale",
+        retryable: false,
+      });
+      expect(await proposalRow(before)).toMatchObject({ status: "approved" });
+      expect(await flowAdvances()).toEqual([]);
+      // Pressed again, the gate's precheck is not asked on a resume; the executor still refuses.
+      expect(await approve(before)).toEqual({ ok: false, category: "stale", retryable: false });
+      await admin.withTenant(A.tenantId, (q) =>
+        q.execute(
+          `UPDATE proposals SET status = 'failed', decision_note = 'test'
+            WHERE tenant_id = current_tenant_id() AND id = CAST($1 AS uuid)`,
+          [before],
+        ),
+      );
+
+      // Already cancelled: the precheck refuses, and the card stays proposed.
+      const after = await addProposal({ loadId: mine, amountCents: 10_000 });
+      expect(await approve(after)).toEqual({ ok: false, category: "stale", retryable: false });
+      expect(await proposalRow(after)).toMatchObject({ status: "proposed", decided_by: null });
+      expect(await flowAdvances()).toEqual([]);
+      expect(mock.sendCount).toBe(0);
+    });
+
     it("gives the desk the driver's loads of the last 45 days in the carrier's zone, and the engine's suggestion", async () => {
       const mine = await loadOf("L-1");
       const loads = (at: string, as: Fixture = A) => app.withTenant(as.tenantId, (q) => readDeskLoads(q, A.driverId, new Date(at)));

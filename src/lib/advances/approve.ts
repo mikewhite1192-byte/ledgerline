@@ -218,6 +218,18 @@ async function driverArmed(q: Queryable, driverId: string, lock: boolean): Promi
 const namedCard = (p: ProposalRow): string | null => (isCanonicalUuid(p.args.cardId) ? p.args.cardId : null);
 const namedLoad = (p: ProposalRow): string | null => (isCanonicalUuid(p.args.loadId) ? p.args.loadId : null);
 
+// Whether the load the proposal names was cancelled since: a trip that will never be paid is never
+// advanced on. Read in the tenant's scope. No load named, or none found (load_not_drivers asks
+// that), is not cancelled.
+async function loadCancelled(q: Queryable, loadId: string | null): Promise<boolean> {
+  if (loadId === null) return false;
+  const rows = await q.query<{ status: string }>(
+    "SELECT status FROM loads WHERE tenant_id = current_tenant_id() AND id = CAST($1 AS uuid)",
+    [loadId],
+  );
+  return rows.length === 1 && rows[0].status === "cancelled";
+}
+
 // The card a flow advance's proposal named, for a retry; null when it named none.
 async function proposalCard(q: Queryable, proposalId: string): Promise<string | null> {
   const rows = await q.query<{ card_id: string | null }>(
@@ -296,8 +308,8 @@ function validProposal(p: ProposalRow): boolean {
 // Approve still on its card. Reads only. It asks what the executor asks before the advances row
 // exists: the advances switch, the proposal's shape, the payout gate on the tenant's local date,
 // the driver and whether they are armed to receive money, the card it pays (the one the proposal
-// names, never the default in its place, else the default), the load it names, and whether the
-// pay rules can be read and run. The
+// names, never the default in its place, else the default), the load it names (a load cancelled
+// since is refused as stale), and whether the pay rules can be read and run. The
 // driver is read, not locked: the
 // lock would end when the gate commits, before the executor's own transaction, which locks the
 // driver itself. What the pay rules decide is left to the executor: a proposal whose numbers no
@@ -324,6 +336,7 @@ export async function precheckAdvanceProposal(
   const cardId = namedCard(p);
   if (!(await readPayoutCard(q, p.subjectId, cardId))) return no(cardId ? "card_not_drivers" : "no_card");
   const loadId = namedLoad(p);
+  if (await loadCancelled(q, loadId)) return no("stale");
   let input: Awaited<ReturnType<typeof readAdvanceInput>>;
   let decision: AdvanceDecision;
   try {
@@ -428,6 +441,16 @@ async function prepare(
   if (!armed) throw new Stop("driver_not_armed");
 
   let advance = await readFlowAdvanceByProposal(q, p.id);
+  // A load cancelled since the card: nothing is paid on it while no payout is reserved (a new
+  // approval, a parked release, or a resume before its first ledger row). The card and any parked
+  // advance are left as they are. A payout already reserved goes on, so its outcome is read back by
+  // its key.
+  if (
+    (await loadCancelled(q, namedLoad(p))) &&
+    (advance === null || (await payoutRows(q, advance.id)).length === 0)
+  ) {
+    throw new Stop("stale");
+  }
   if (advance?.status === "parked") return releaseParked(q, p, advance, lock, zone, nowIso, who);
   // Parking, asked now: only a person's approval, with the switch on for this proposal's date.
   const parking = who.person && parkingOn(lock.createdAt, zone);

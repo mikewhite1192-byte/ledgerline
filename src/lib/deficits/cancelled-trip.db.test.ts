@@ -1,6 +1,7 @@
 import { randomUUID } from "node:crypto";
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from "vitest";
 import { flags } from "../../config/flags";
+import { dedupeKey } from "../agent/gateway/store/proposals";
 import type { Session } from "../auth/claims";
 import { autopilotSub } from "../autopilot/session";
 import { createPgDb } from "../db/pg";
@@ -10,7 +11,7 @@ import { deskHandlers } from "../desk/handlers";
 import { eventKey } from "../desk/keys";
 import type { OpenEvent } from "../desk/log";
 import { dropTenant, makeTenant, type Fixture } from "../money/test-db";
-import { EXECUTORS, executeProposal, type ApproveOptions, type Executor } from "../proposals/execute";
+import { EXECUTORS, executeProposal, type ApproveOptions, type Executor, type ProposalRow } from "../proposals/execute";
 import { deficitBookExecutor } from "../proposals/executors/deficit-book";
 import { serviceSession } from "../sweep/service-session";
 
@@ -18,9 +19,11 @@ import { serviceSession } from "../sweep/service-session";
 // cancels a load after its driver was paid an advance on it, the desk drafts one deficit card per
 // advance still owed (never one for an advance already earned back, never one for a cancel before
 // the start date, never two for one cancel), and a person's Yes closes the advance and books the
-// same whole cents as one named deficit. The autopilot never approves one, and a switch off
-// refuses at every path. Only this file's carriers are made (America/Chicago, makeTenant), and
-// they are removed after.
+// same whole cents as one named deficit. A card whose advance pay recovered part of since, or that
+// is otherwise no longer bookable, ends failed with its note; one a card pull-back or an approved
+// paystub holds right now is refused and stays proposed. The autopilot never approves one, and
+// either switch off (the cancelled trip, or deficit recovery) refuses at every path. Only this
+// file's carriers are made (America/Chicago, makeTenant), and they are removed after.
 
 // Monday Nov 2, 2026, 12:00 in Chicago (CST since Nov 1).
 const NOW = new Date("2026-11-02T18:00:00.000Z");
@@ -198,6 +201,121 @@ async function oneCard(f: Carrier): Promise<{ loadId: string; advanceId: string;
   return { loadId: l.id, advanceId, cardId: card.id, number: l.number };
 }
 
+// A card pull-back row against the advance, with the card_pullback proposal it belongs to, in the
+// status given (src/lib/settlements/deficit-recovery.db.test.ts makes them the same way).
+async function addPull(f: Fixture, advanceId: string, status: "issuing" | "unknown"): Promise<void> {
+  const [conversation, turn, decision, proposal, trace, pull] = [randomUUID(), randomUUID(), randomUUID(), randomUUID(), randomUUID(), randomUUID()];
+  const args = { driverId: f.driverId, advanceId, reason: "driver_request", requestedCents: 20_000 };
+  const at = new Date(NOW.getTime() - 3_600_000).toISOString();
+  await admin.withTenant(f.tenantId, async (q) => {
+    await q.execute("INSERT INTO conversations (id, tenant_id, created_by) VALUES (CAST($1 AS uuid), current_tenant_id(), $2)", [
+      conversation,
+      f.session.sub,
+    ]);
+    await q.execute(
+      `INSERT INTO turns (id, tenant_id, conversation_id, seq, user_text, status, trace_id, started_at, finished_at)
+       VALUES (CAST($1 AS uuid), current_tenant_id(), CAST($2 AS uuid), 1, 'Take it off the card', 'done', $3,
+         CAST($4 AS timestamptz), CAST($4 AS timestamptz))`,
+      [turn, conversation, trace, at],
+    );
+    await q.execute(
+      `INSERT INTO gateway_decisions (id, tenant_id, turn_id, trace_id, role, model, tool, tier, decision, reason, latency_ms)
+       VALUES (CAST($1 AS uuid), current_tenant_id(), CAST($2 AS uuid), $3, 'operator', 'spark', 'propose_card_pullback',
+         'propose', 'allowed', 'ok', 1)`,
+      [decision, turn, trace],
+    );
+    await q.execute(
+      `INSERT INTO proposals (id, tenant_id, conversation_id, turn_id, kind, subject_table, subject_id,
+         amount_cents, direction, title, args, operator_verdict, gateway_decision_id, dedupe_key, trace_id,
+         created_at, updated_at)
+       VALUES (CAST($1 AS uuid), current_tenant_id(), CAST($2 AS uuid), CAST($3 AS uuid), 'card_pullback',
+         'advances', CAST($4 AS uuid), 20000, 'in', 'Pull money back off a fuel card', CAST($5 AS jsonb), 'not_given',
+         CAST($6 AS uuid), $7, $8, CAST($9 AS timestamptz), CAST($9 AS timestamptz))`,
+      [proposal, conversation, turn, advanceId, JSON.stringify(args), decision, dedupeKey("card_pullback", advanceId, args), trace, at],
+    );
+    await q.execute(
+      `INSERT INTO card_pullbacks (id, tenant_id, driver_id, card_id, proposal_id, advance_id, reason, requested_cents,
+         balance_cents, pull_cents, shortfall_cents, status)
+       SELECT CAST($1 AS uuid), current_tenant_id(), CAST($2 AS uuid), c.id, CAST($3 AS uuid), CAST($4 AS uuid),
+              'driver_request', 20000, 25000, 20000, 0, $5
+         FROM driver_cards c
+        WHERE c.tenant_id = current_tenant_id() AND c.driver_id = CAST($2 AS uuid) AND c.is_default`,
+      [pull, f.driverId, proposal, advanceId, status],
+    );
+  });
+}
+
+// An approved paystub, not booked, with a $50.00 recovery line on the advance.
+async function approvedRecovery(f: Fixture, advanceId: string): Promise<void> {
+  const [config, periodId, id] = [randomUUID(), randomUUID(), randomUUID()];
+  await admin.withTenant(f.tenantId, async (q) => {
+    await q.execute(
+      `INSERT INTO pay_configs (id, tenant_id, effective_from, source, week_start_dow, percent_base,
+         empty_miles_paid_bps, accessorial_driver_share_bps, insurance_applies_to, insurance_per_day_cents,
+         escrow_target_cents, escrow_per_settlement_cents, net_pay_floor_cents, advance_recovery_cap_cents,
+         advance_fee_cents, advance_limit_default_cents, advance_max_bps_of_earned, advance_min_cents)
+       VALUES (CAST($1 AS uuid), current_tenant_id(), CAST('2026-01-01' AS date), 'seed', 1, 'linehaul',
+         0, 10000, 'owner_operator', 0, 0, 0, 0, NULL, 0, 50000, 5000, 5000)`,
+      [config],
+    );
+    await q.execute(
+      `INSERT INTO settlement_periods (id, tenant_id, period_start, period_end, status)
+       VALUES (CAST($1 AS uuid), current_tenant_id(), CAST('2026-11-02' AS date), CAST('2026-11-08' AS date), 'approved')`,
+      [periodId],
+    );
+    await q.execute(
+      `INSERT INTO settlements (id, tenant_id, period_id, driver_id, pay_config_id, status, gross_cents,
+         deductions_cents, net_cents)
+       VALUES (CAST($1 AS uuid), current_tenant_id(), CAST($2 AS uuid), CAST($3 AS uuid), CAST($4 AS uuid),
+         'approved', 100000, 5000, 95000)`,
+      [id, periodId, f.driverId, config],
+    );
+    const lines: [string, number, { table: string; id: string }[]][] = [
+      ["load_pay", 100_000, [{ table: "loads", id: randomUUID() }]],
+      ["advance_recovery", -5_000, [{ table: "advances", id: advanceId }]],
+    ];
+    let n = 0;
+    for (const [kind, amount, sources] of lines) {
+      n += 1;
+      await q.execute(
+        `INSERT INTO settlement_lines (id, tenant_id, settlement_id, seq, kind, label, amount_cents, sources)
+         VALUES (CAST($1 AS uuid), current_tenant_id(), CAST($2 AS uuid), $3, $4, $4, $5, CAST($6 AS jsonb))`,
+        [randomUUID(), id, n, kind, amount, JSON.stringify(sources)],
+      );
+    }
+  });
+}
+
+// A cancelled-trip deficit already on the advance, booked some other way (no card).
+const tripDeficit = (f: Fixture, advanceId: string) =>
+  admin.withTenant(f.tenantId, (q) =>
+    q.execute(
+      `INSERT INTO driver_deficits (id, tenant_id, driver_id, amount_cents, note, source_kind, source_id, named_by, created_at)
+       VALUES (gen_random_uuid(), current_tenant_id(), CAST($1 AS uuid), 40000, 'Booked by hand', 'cancelled_trip',
+         CAST($2 AS uuid), CAST($3 AS uuid), CAST($4 AS timestamptz))`,
+      [f.driverId, advanceId, f.memberId, NOW.toISOString()],
+    ),
+  );
+
+// The card as the gate hands it to its executor, for calls that reach the executor directly.
+const rowFor = (c: { cardId: string; advanceId: string }, status: string): ProposalRow => ({
+  id: c.cardId,
+  conversationId: null,
+  turnId: null,
+  kind: "deficit_book",
+  subjectTable: "advances",
+  subjectId: c.advanceId,
+  amountCents: 40_000,
+  direction: "none",
+  args: {},
+  status,
+  flaggedInputId: null,
+  auditorVerdict: "pass",
+  auditorAgrees: true,
+  moneyActionId: null,
+  traceId: null,
+});
+
 beforeAll(() => {
   admin = createPgDb({ connectionString: adminUrl() });
   app = createPgDb({ connectionString: appUrl(), max: 2 });
@@ -211,6 +329,7 @@ afterAll(async () => {
 
 beforeEach(() => {
   flags.cancelledTrip = { enabled: true, startDate: "2026-11-02" };
+  flags.deficitRecovery = { enabled: true, startDate: "2026-11-02" };
   flags.loadMovement.enabled = false;
   flags.advanceAtPickup.enabled = false;
   flags.agentAsks.enabled = true;
@@ -325,6 +444,38 @@ describe("drafting the deficit card", () => {
     flags.cancelledTrip = { enabled: true, startDate: "2026-11-02" };
     expect(EXECUTORS.deficit_book).toBe(deficitBookExecutor);
   });
+
+  it("drafts nothing with deficit recovery off, records the event as before, and has no executor", async () => {
+    const f = await carrier("trip-norecovery");
+    const l = await onRoad(f);
+    await paidAdvance(f, l.id);
+    const eventId = await cancelled(f, l.id);
+    flags.deficitRecovery = { enabled: false, startDate: "2026-11-02" };
+    expect(deskHandlers({ db: app }).load_event.switchOn()).toBe(false);
+    expect(await run(f, eventId)).toEqual({ outcome: "done", detail: { found: 0, category: "recorded" } });
+    expect(await cardsOf(f)).toEqual([]);
+    expect(EXECUTORS.deficit_book).toBeUndefined();
+    flags.deficitRecovery = { enabled: true, startDate: "2026-11-02" };
+    expect(EXECUTORS.deficit_book).toBe(deficitBookExecutor);
+  });
+
+  it("drafts nothing for an advance a card pull-back is taking back right now", async () => {
+    const f = await carrier("trip-livepull");
+    const l = await onRoad(f);
+    const advanceId = await paidAdvance(f, l.id);
+    await addPull(f, advanceId, "issuing");
+    expect(await run(f, await cancelled(f, l.id))).toEqual({ outcome: "done", detail: { found: 0, category: "already_drafted" } });
+    expect(await cardsOf(f)).toEqual([]);
+  });
+
+  it("drafts nothing for an advance that already has a cancelled-trip deficit", async () => {
+    const f = await carrier("trip-hasdeficit");
+    const l = await onRoad(f);
+    const advanceId = await paidAdvance(f, l.id);
+    await tripDeficit(f, advanceId);
+    expect(await run(f, await cancelled(f, l.id))).toEqual({ outcome: "done", detail: { found: 0, category: "already_drafted" } });
+    expect(await cardsOf(f)).toEqual([]);
+  });
 });
 
 describe("approving the deficit card", () => {
@@ -352,14 +503,19 @@ describe("approving the deficit card", () => {
     ]);
     expect(await approve(f.session, c.cardId)).toMatchObject({ ok: false, category: "already_decided" });
     // The executor reached straight on the done card finds it done and writes nothing more.
+    expect(await deficitBookExecutor(app, f.session, rowFor(c, "done"), { confirmed: false }, { db: app, clock })).toMatchObject({
+      ok: true,
+      status: "done",
+    });
     const [card] = await cardsOf(f);
     expect(card.status).toBe("done");
     expect(await deficitsOf(f)).toHaveLength(1);
+    expect(await advanceOf(f, c.advanceId)).toMatchObject({ owed: "0", taken_back_cents: "40000" });
     // Nothing paid or sent.
     expect(await count(f, "SELECT count(*) AS n FROM money_actions WHERE tenant_id = current_tenant_id()")).toBe(0);
   });
 
-  it("goes stale when pay recovered part of the advance first: the card waits, nothing is written", async () => {
+  it("ends the card failed as recovered_by_pay when pay recovered part of the advance first, and writes nothing else", async () => {
     const f = await carrier("trip-stale");
     const c = await oneCard(f);
     await admin.withTenant(f.tenantId, (q) =>
@@ -368,9 +524,57 @@ describe("approving the deficit card", () => {
       ]),
     );
     expect(await approve(f.session, c.cardId)).toMatchObject({ ok: false, category: "stale" });
-    expect((await proposalOf(f, c.cardId)).status).toBe("proposed");
+    expect(await proposalOf(f, c.cardId)).toEqual({ status: "failed", decision_note: "recovered_by_pay" });
     expect(await deficitsOf(f)).toEqual([]);
     expect(await advanceOf(f, c.advanceId)).toMatchObject({ owed: "30000", taken_back_cents: "0", takeback_reason: null });
+    expect(await approve(f.session, c.cardId)).toMatchObject({ ok: false, category: "already_decided" });
+  });
+
+  it("ends the card failed as stale when the advance was taken back first, and writes nothing else", async () => {
+    const f = await carrier("trip-takenback");
+    const c = await oneCard(f);
+    await admin.withTenant(f.tenantId, (q) =>
+      q.execute(
+        `UPDATE advances SET taken_back_cents = 40000, taken_back_at = CAST($2 AS timestamptz),
+                taken_back_by_membership_id = CAST($3 AS uuid), takeback_reason = 'other'
+          WHERE tenant_id = current_tenant_id() AND id = CAST($1 AS uuid)`,
+        [c.advanceId, NOW.toISOString(), f.memberId],
+      ),
+    );
+    expect(await approve(f.session, c.cardId)).toMatchObject({ ok: false, category: "stale" });
+    expect(await proposalOf(f, c.cardId)).toEqual({ status: "failed", decision_note: "stale" });
+    expect(await deficitsOf(f)).toEqual([]);
+    expect(await advanceOf(f, c.advanceId)).toMatchObject({ taken_back_cents: "40000", takeback_reason: "other" });
+  });
+
+  it("ends the card failed as stale when a cancelled-trip deficit was booked on the advance first", async () => {
+    const f = await carrier("trip-deficitfirst");
+    const c = await oneCard(f);
+    await tripDeficit(f, c.advanceId);
+    expect(await approve(f.session, c.cardId)).toMatchObject({ ok: false, category: "stale" });
+    expect(await proposalOf(f, c.cardId)).toEqual({ status: "failed", decision_note: "stale" });
+    expect(await deficitsOf(f)).toHaveLength(1);
+    expect(await advanceOf(f, c.advanceId)).toMatchObject({ owed: "40000", taken_back_cents: "0", takeback_reason: null });
+  });
+
+  it("refuses the card as stale and leaves it proposed while a card pull-back is taking the advance back", async () => {
+    const f = await carrier("trip-pullfirst");
+    const c = await oneCard(f);
+    await addPull(f, c.advanceId, "unknown");
+    expect(await approve(f.session, c.cardId)).toMatchObject({ ok: false, category: "stale" });
+    expect(await proposalOf(f, c.cardId)).toEqual({ status: "proposed", decision_note: null });
+    expect(await deficitsOf(f)).toEqual([]);
+    expect((await advanceOf(f, c.advanceId)).owed).toBe("40000");
+  });
+
+  it("refuses the card as stale and leaves it proposed while an approved paystub recovers the advance", async () => {
+    const f = await carrier("trip-stubfirst");
+    const c = await oneCard(f);
+    await approvedRecovery(f, c.advanceId);
+    expect(await approve(f.session, c.cardId)).toMatchObject({ ok: false, category: "stale" });
+    expect(await proposalOf(f, c.cardId)).toEqual({ status: "proposed", decision_note: null });
+    expect(await deficitsOf(f)).toEqual([]);
+    expect((await advanceOf(f, c.advanceId)).owed).toBe("40000");
   });
 
   it("fails the card with nothing written when the facts change between the approval and the booking", async () => {
@@ -388,7 +592,7 @@ describe("approving the deficit card", () => {
       ok: false,
       category: "stale",
     });
-    expect(await proposalOf(f, c.cardId)).toEqual({ status: "failed", decision_note: "stale" });
+    expect(await proposalOf(f, c.cardId)).toEqual({ status: "failed", decision_note: "recovered_by_pay" });
     expect(await deficitsOf(f)).toEqual([]);
     expect(await advanceOf(f, c.advanceId)).toMatchObject({ taken_back_cents: "0", takeback_reason: null });
   });
@@ -408,9 +612,23 @@ describe("approving the deficit card", () => {
       ok: false,
       category: "kind_never_alone",
     });
-    expect(await approve(f.service, c.cardId)).toMatchObject({ ok: false });
+    expect(await approve(f.service, c.cardId)).toMatchObject({ ok: false, category: "service_login" });
     expect((await proposalOf(f, c.cardId)).status).toBe("proposed");
     expect(await deficitsOf(f)).toEqual([]);
+  });
+
+  it("refuses the autopilot's login at the executor itself, with nothing written", async () => {
+    const f = await carrier("trip-autowall");
+    const auto: Session = { sub: autopilotSub(f.tenantId), email: "", tenantId: f.tenantId };
+    const c = await oneCard(f);
+    expect(await deficitBookExecutor(app, auto, rowFor(c, "approved"), { confirmed: false }, { db: app, clock })).toEqual({
+      ok: false,
+      category: "kind_never_alone",
+      retryable: false,
+    });
+    expect((await proposalOf(f, c.cardId)).status).toBe("proposed");
+    expect(await deficitsOf(f)).toEqual([]);
+    expect((await advanceOf(f, c.advanceId)).owed).toBe("40000");
   });
 
   it("refuses the approval as not_executable with the switch off, and writes nothing", async () => {
@@ -421,6 +639,32 @@ describe("approving the deficit card", () => {
     expect(await approve(f.session, c.cardId, { confirmed: false }, { deficit_book: deficitBookExecutor })).toMatchObject({
       ok: false,
       category: "not_executable",
+    });
+    expect((await proposalOf(f, c.cardId)).status).toBe("proposed");
+    expect(await deficitsOf(f)).toEqual([]);
+    expect((await advanceOf(f, c.advanceId)).owed).toBe("40000");
+  });
+
+  it("refuses as not_executable with deficit recovery off, at the gate, the precheck and the executor, and writes nothing", async () => {
+    const f = await carrier("trip-yes-norecovery");
+    const c = await oneCard(f);
+    flags.deficitRecovery = { enabled: false, startDate: "2026-11-02" };
+    expect(await approve(f.session, c.cardId)).toMatchObject({ ok: false, category: "not_executable" });
+    expect(await approve(f.session, c.cardId, { confirmed: false }, { deficit_book: deficitBookExecutor })).toMatchObject({
+      ok: false,
+      category: "not_executable",
+    });
+    const precheck = deficitBookExecutor.precheck;
+    if (!precheck) throw new Error("no precheck");
+    expect(
+      await app.withTenant(f.tenantId, (q) =>
+        precheck(q, rowFor(c, "proposed"), NOW, { session: f.session, opts: { confirmed: false } }),
+      ),
+    ).toEqual({ ok: false, category: "not_executable", retryable: false });
+    expect(await deficitBookExecutor(app, f.session, rowFor(c, "approved"), { confirmed: false }, { db: app, clock })).toEqual({
+      ok: false,
+      category: "not_executable",
+      retryable: false,
     });
     expect((await proposalOf(f, c.cardId)).status).toBe("proposed");
     expect(await deficitsOf(f)).toEqual([]);

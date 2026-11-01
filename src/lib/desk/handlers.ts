@@ -6,7 +6,7 @@ import { getDb, type Queryable, type TenantDb } from "../db";
 import { proposeAdvanceAtPickup } from "../advances/at-pickup";
 import { proposeCardLoadRuling } from "../card-loads/ruling";
 import { proposeCancelledTripDeficit } from "../deficits/cancelled-trip";
-import { cancelledTripEnabled } from "../deficits/switches";
+import { deficitBookEnabled } from "../deficits/switches";
 import { runAudit } from "../agent/auditor/run";
 import { runAutopilot } from "../autopilot/run";
 import { runCashCheck } from "../cash/check";
@@ -137,11 +137,11 @@ export function deskHandlers(deps: HandlerDeps = {}): Handlers {
   // start date again), in its own transaction. The other lanes that follow a move hang off here too.
   const loadEvent: Handler = {
     switchOn: () =>
-      flags.loadMovement.enabled === true || flags.advanceAtPickup.enabled === true || cancelledTripEnabled(),
+      flags.loadMovement.enabled === true || flags.advanceAtPickup.enabled === true || deficitBookEnabled(),
     needsMs: 2_000,
     async run(session, event, ctx) {
       const id = event.subjectId;
-      if (cancelledTripEnabled()) {
+      if (deficitBookEnabled()) {
         if (!id) return failed("bad_request");
         const c = await db().withTenant(session.tenantId, async (q) => {
           await assertMembership(q, session);
