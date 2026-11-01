@@ -301,9 +301,39 @@ export async function readDriverDeficits(q: Queryable, driverId: string, timeZon
   });
 }
 
+const HELD_DEFICIT_SQL = `SELECT CAST(l.sources AS text) AS sources, CAST(l.amount_cents AS text) AS amount_cents
+  FROM settlement_lines l
+  JOIN settlements s ON s.tenant_id = l.tenant_id AND s.id = l.settlement_id
+ WHERE l.tenant_id = current_tenant_id() AND l.kind = 'deficit_recovery'
+   AND s.driver_id = CAST($1 AS uuid) AND s.status = 'approved' AND s.period_id <> CAST($2 AS uuid)`;
+
+// What the driver's other approved stubs (approved, so their payout may already be out, but not
+// yet booked as paid) take from each deficit, keyed by deficit id. The stub of the period itself
+// is left out, so the pre-pay recheck of that stub reads what its own draft read. A line that does
+// not read as one deficit and a whole negative amount fails the read (unknown is not zero).
+async function readHeldDeficitRecoveries(q: Queryable, driverId: string, periodId: string): Promise<Map<string, number>> {
+  const rows = await q.query<{ sources: unknown; amount_cents: unknown }>(HELD_DEFICIT_SQL, [driverId, periodId]);
+  const held = new Map<string, number>();
+  for (const r of rows) {
+    const sources: unknown = typeof r.sources === "string" ? JSON.parse(r.sources) : null;
+    const ref = Array.isArray(sources) && sources.length === 1 ? (sources[0] as { table?: unknown; id?: unknown }) : null;
+    if (ref?.table !== "driver_deficits" || typeof ref.id !== "string") {
+      throw new Error("a held deficit recovery line does not cite one deficit");
+    }
+    const taken = -wholeCents(r.amount_cents, "settlement_lines.amount_cents");
+    if (taken <= 0) throw new Error("a held deficit recovery line takes nothing back");
+    const key = ref.id.toLowerCase();
+    held.set(key, (held.get(key) ?? 0) + taken);
+  }
+  return held;
+}
+
 // One driver's settlement for one period, from the escrow balance the driver holds now. The
 // advances are the ones a pay run may recover from (no live card pull), and the deficits are read
-// only while deficit recovery applies to the period.
+// only while deficit recovery applies to the period. A deficit counts what the driver's other
+// approved, unbooked stubs hold on it as recovered already (never past its amount), since their
+// payout can go out before booking adds it: a later stub takes only what is left, and a draft that
+// took the same part before the other was approved parks at its own approval's recheck.
 export async function readSettlementInput(
   q: Queryable,
   driverId: string,
@@ -318,7 +348,11 @@ export async function readSettlementInput(
   if (!deficitRecoveryApplies(period)) return settlementInputOf(rows, driverId, period);
   const tenant = await readTenant(q);
   if (!tenant) throw new Error("no tenant is set");
-  const deficits = await readDriverDeficits(q, driverId, tenant.timezone);
+  const held = await readHeldDeficitRecoveries(q, driverId, periodId);
+  const deficits = (await readDriverDeficits(q, driverId, tenant.timezone)).map((d) => {
+    const h = held.get(d.id.toLowerCase()) ?? 0;
+    return h === 0 ? d : { ...d, recovered_cents: Math.min(d.amount_cents, d.recovered_cents + h) };
+  });
   return settlementInputOf({ ...rows, driver_deficits: deficits }, driverId, period);
 }
 

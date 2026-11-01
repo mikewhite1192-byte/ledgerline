@@ -43,7 +43,7 @@ const KINDS_ES: Record<string, string> = {
   insurance: "Seguro",
   escrow: "Fondo de reserva",
   advance_recovery: "Adelanto pagado",
-  deficit_recovery: "Adeudo",
+  deficit_recovery: "Adeudo pagado",
 };
 
 export const CARD_WORDS: Record<CardLanguage, CardWords> = {

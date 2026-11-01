@@ -9,6 +9,8 @@ import { adminUrl, appUrl } from "../db/test-urls";
 import type { Db } from "../db/types";
 import { addAdvance, dropTenant, makeTenant, sqlStateOf, type Fixture } from "../money/test-db";
 import { bookPaidSettlement } from "./book";
+import { runPayPeriod } from "./run";
+import { readStoredLines, readStoredSettlement, recheckSettlement } from "./stored";
 
 // Deficit recovery on pay day (S6b) against a real database, as the app's own role. A paid stub
 // adds what each deficit recovery line took to its deficit and settles the deficit by that stub only
@@ -29,7 +31,7 @@ let app: Db;
 let A: Fixture;
 let B: Fixture;
 
-async function payConfig(f: Fixture): Promise<string> {
+async function payConfig(f: Fixture, capCents: number | null = null): Promise<string> {
   const id = randomUUID();
   await admin.withTenant(f.tenantId, (q) =>
     q.execute(
@@ -38,20 +40,20 @@ async function payConfig(f: Fixture): Promise<string> {
          escrow_target_cents, escrow_per_settlement_cents, net_pay_floor_cents, advance_recovery_cap_cents,
          advance_fee_cents, advance_limit_default_cents, advance_max_bps_of_earned, advance_min_cents)
        VALUES (CAST($1 AS uuid), current_tenant_id(), CAST('2026-01-01' AS date), 'seed', 1, 'linehaul',
-         0, 10000, 'owner_operator', 0, 0, 0, 0, NULL, 0, 50000, 5000, 5000)`,
-      [id],
+         0, 10000, 'owner_operator', 0, 0, 0, 0, $2, 0, 50000, 5000, 5000)`,
+      [id, capCents],
     ),
   );
   return id;
 }
 
-async function period(f: Fixture, start: string): Promise<string> {
+async function period(f: Fixture, start: string, status: "open" | "approved" = "approved"): Promise<string> {
   const id = randomUUID();
   await admin.withTenant(f.tenantId, (q) =>
     q.execute(
       `INSERT INTO settlement_periods (id, tenant_id, period_start, period_end, status)
-       VALUES (CAST($1 AS uuid), current_tenant_id(), CAST($2 AS date), CAST($2 AS date) + 6, 'approved')`,
-      [id, start],
+       VALUES (CAST($1 AS uuid), current_tenant_id(), CAST($2 AS date), CAST($2 AS date) + 6, $3)`,
+      [id, start, status],
     ),
   );
   return id;
@@ -460,5 +462,109 @@ describe("deficit recovery on pay day", () => {
       truncated: true,
       shown: DEFICIT_LIMIT,
     });
+  });
+
+  it("takes from a deficit only what the driver's other approved, unbooked stubs leave, and parks a draft that took the same part", async () => {
+    await payConfig(A, 6_000);
+    const d = await addDeficit(A, 10_000);
+    // A carrier has one open week at a time: week one is run while open, then week two opens.
+    const [w1, w2] = [await period(A, "2026-11-02", "open"), await period(A, "2026-11-09")];
+    const openOnly = (p: string) =>
+      admin.withTenant(A.tenantId, (q) =>
+        q.execute(
+          "UPDATE settlement_periods SET status = CASE WHEN id = CAST($1 AS uuid) THEN 'open' ELSE 'approved' END WHERE tenant_id = current_tenant_id()",
+          [p],
+        ),
+      );
+    for (const day of ["2026-11-03", "2026-11-10"]) {
+      await admin.withTenant(A.tenantId, (q) =>
+        q.execute(
+          `INSERT INTO pay_items (id, tenant_id, driver_id, kind, subkind, amount_cents, item_date, item_ref, description)
+           VALUES (CAST($1 AS uuid), current_tenant_id(), CAST($2 AS uuid), 'reimbursement', 'tolls', 100000,
+             CAST($3 AS date), $4, 'Tolls')`,
+          [randomUUID(), A.driverId, day, `tolls-${day}`],
+        ),
+      );
+    }
+    const runWeek = async (p: string) => expect((await runPayPeriod(app, A.session, p, new Date(NOW))).ok).toBe(true);
+    const stubOf = async (p: string) =>
+      (
+        await admin.withTenant(A.tenantId, (q) =>
+          q.query<{ id: string }>(
+            "SELECT CAST(id AS text) AS id FROM settlements WHERE tenant_id = current_tenant_id() AND period_id = CAST($1 AS uuid)",
+            [p],
+          ),
+        )
+      )[0].id;
+    const taken = async (s: string) =>
+      (await app.withTenant(A.tenantId, (q) => readStoredLines(q, s)))
+        .filter((l) => l.kind === "deficit_recovery")
+        .map((l) => -l.amountCents);
+    const recheck = (s: string) =>
+      app.withTenant(A.tenantId, async (q) => {
+        const stored = await readStoredSettlement(q, s, false);
+        if (!stored) throw new Error("no stub");
+        return (await recheckSettlement(q, stored, await readStoredLines(q, s))).park;
+      });
+    const approve = (s: string) =>
+      admin.withTenant(A.tenantId, (q) =>
+        q.execute("UPDATE settlements SET status = 'approved' WHERE tenant_id = current_tenant_id() AND id = CAST($1 AS uuid)", [s]),
+      );
+
+    // Both weeks drafted while neither is approved: each takes the cap from the same deficit.
+    await runWeek(w1);
+    await openOnly(w2);
+    await runWeek(w2);
+    const [s1, s2] = [await stubOf(w1), await stubOf(w2)];
+    expect(await taken(s1)).toEqual([6_000]);
+    expect(await taken(s2)).toEqual([6_000]);
+    expect(await recheck(s2)).toBeNull();
+
+    // Week one is approved; its payout can go out before it books. Week two's recheck now reads
+    // only 4000 left, so week two parks instead of taking the same part twice, and week one's own
+    // recheck (its own stub left out) stays clean.
+    await approve(s1);
+    expect(await recheck(s2)).toBe("line_amount_changed");
+    expect(await recheck(s1)).toBeNull();
+
+    // A rerun of week two takes only what is left, and both rechecks hold once it is approved too.
+    await runWeek(w2);
+    expect(await stubOf(w2)).toBe(s2);
+    expect(await taken(s2)).toEqual([4_000]);
+    expect(await recheck(s2)).toBeNull();
+    await approve(s2);
+    expect(await recheck(s1)).toBeNull();
+    expect(await recheck(s2)).toBeNull();
+
+    // Booked in either order, the deficit ends whole and never over.
+    expect(await book(s2)).toBe(true);
+    expect(await deficitRow(d)).toEqual({ recovered_cents: "4000", settled_in: null });
+    expect(await book(s1)).toBe(true);
+    expect(await deficitRow(d)).toEqual({ recovered_cents: "10000", settled_in: s1 });
+  });
+
+  it("counts an approved stub's hold as taken in the pay read, never past the amount, and fails on a line it cannot read", async () => {
+    const config = await payConfig(A);
+    const d = await addDeficit(A, 5_000);
+    const other = await addDeficit(A, 5_000, { createdAt: "2026-11-02T15:30:00Z" });
+    const later = await period(A, "2026-11-16");
+    const owed = async () =>
+      (await app.withTenant(A.tenantId, (q) => readSettlementInput(q, A.driverId, later))).deficits.map((x) => [
+        x.id,
+        x.recoveredCents,
+      ]);
+    // Two approved stubs on other weeks hold 7000 on a 5000 deficit (both approved before this
+    // read existed): the read counts it whole, never past its amount.
+    await stub(A, await period(A, "2026-11-02"), config, [owedLine(d, 3_000)]);
+    await stub(A, await period(A, "2026-11-09"), config, [owedLine(d, 4_000)]);
+    expect(await owed()).toEqual([
+      [d, 5_000],
+      [other, 0],
+    ]);
+    // A held line that does not cite exactly one deficit fails the read.
+    await stub(A, await period(A, "2026-11-23"), config, [
+      ["deficit_recovery", -1_000, [{ table: "driver_deficits", id: d }, { table: "driver_deficits", id: other }]],
+    ]);
+    await expect(owed()).rejects.toThrow("a held deficit recovery line does not cite one deficit");
   });
 });

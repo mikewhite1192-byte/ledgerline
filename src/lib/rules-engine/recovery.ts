@@ -202,7 +202,7 @@ export function recoverDeficits(
     left = sub(left, take);
     lines.push({
       kind: "deficit_recovery",
-      label: `Owed: ${[...deficit.note].slice(0, DEFICIT_LABEL_NOTE_CHARS).join("")}`,
+      label: `Deficit repaid: ${[...deficit.note].slice(0, DEFICIT_LABEL_NOTE_CHARS).join("")}`,
       amountCents: sub(0, take),
       sources: [{ table: "driver_deficits", id: deficit.id }],
     });

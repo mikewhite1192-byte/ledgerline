@@ -148,7 +148,7 @@ describe("recoverDeficits", () => {
   it("labels the line with the start of the deficit's note", () => {
     const long = "Card 4417 pull-back the card could not cover in full, load BR-L2041";
     const out = recoverDeficits(BLUE_RIDGE, [deficit({ id: "d1", note: long })], WEEK, c(100_000), c(0));
-    expect(out.lines[0].label).toBe(`Owed: ${long.slice(0, 40)}`);
+    expect(out.lines[0].label).toBe(`Deficit repaid: ${long.slice(0, 40)}`);
   });
 });
 

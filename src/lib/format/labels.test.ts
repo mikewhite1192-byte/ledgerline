@@ -69,7 +69,7 @@ describe("lineKindLabel", () => {
     expect(KNOWN_LINE_KINDS).toHaveLength(11);
     for (const k of KNOWN_LINE_KINDS) expect(lineKindLabel(k)).toMatch(plain);
     expect(lineKindLabel("advance_recovery")).toBe("Advance repaid");
-    expect(lineKindLabel("deficit_recovery")).toBe("Owed");
+    expect(lineKindLabel("deficit_recovery")).toBe("Deficit repaid");
     expect(lineKindLabel("new_kind")).toBe("New kind");
   });
 });

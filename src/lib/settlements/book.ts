@@ -94,10 +94,12 @@ export async function bookPaidSettlement(q: Queryable, settlementId: string, now
 
   for (const d of writes.deficitSettlements) {
     // The 0080 CHECKs refuse an over-recovery whole (recovered never above the amount, settled only
-    // when whole); a deficit settled by another stub or not this driver's changes no row. Two
-    // weeks approved before either books can both take the same part: after its payout went out,
-    // the second booking is refused (driver_deficits_recovered_within, or no open deficit once the
-    // first settled it) and waits not_booked for a person to settle.
+    // when whole); a deficit settled by another stub or not this driver's changes no row. The pay
+    // read counts what the driver's other approved, unbooked stubs hold on a deficit as taken
+    // (readSettlementInput), so a later week takes only what is left and a draft that took the same
+    // part parks at its approval's recheck. Should two approvals still both take it (both at the
+    // same instant), the second booking is refused (driver_deficits_recovered_within, or no open
+    // deficit once the first settled it) and waits not_booked for a person to settle.
     const moved = await q.execute(
       `UPDATE driver_deficits
           SET recovered_cents = recovered_cents + $2,
