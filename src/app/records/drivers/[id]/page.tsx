@@ -22,9 +22,11 @@ export const dynamic = "force-dynamic";
 const WORKER = { company: "Company driver", owner_operator: "Owner-operator" } as const;
 
 // While driver admin is on (so a just-added driver lands here): the one-line cue above the money
-// panel naming only the steps still missing before an advance (an active card, then arming).
+// panel naming only the steps still missing before an advance (an active card, then arming). A
+// driver with a last day on file gets none: they cannot be armed until reactivated, which the money
+// panel says.
 function setupCue(identity: DriverIdentity): string | null {
-  if (!driverAdminOn()) return null;
+  if (!driverAdminOn() || identity.activeTo !== null) return null;
   const noCard = !identity.cards.some((c) => c.status === "active");
   const notArmed = !identity.armed.on;
   if (noCard && notArmed) return "Before this driver can take an advance: add a card, then arm them.";

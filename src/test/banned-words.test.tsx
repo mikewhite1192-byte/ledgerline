@@ -1578,6 +1578,22 @@ const PAGES: PageCase[] = [
         },
         shows: ["Before this driver can take an advance: arm them.", "Not armed"],
       },
+      {
+        name: "deactivated, driver admin on",
+        setup: () => {
+          state.fx.driverRecord = { ...fx.DRIVER_RECORD, settlements: [], advances: [] };
+          state.fx.identity = { ...fx.IDENTITY, armed: { on: false, since: null }, activeTo: "2026-09-30" };
+        },
+        load: async () => {
+          flags.driverAdmin.enabled = true;
+          try {
+            return await (await import("@/app/records/drivers/[id]/page")).default({ params: p({ id: ID }) });
+          } finally {
+            flags.driverAdmin.enabled = false;
+          }
+        },
+        shows: "Not armed",
+      },
     ],
   },
   {
