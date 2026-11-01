@@ -15,6 +15,7 @@ import {
   type SettlementListRow,
 } from "./list";
 import { readStoredLines, readStoredSettlement, type StoredSettlement } from "./stored";
+import { readStubSent, type StubSent } from "./stub-sent";
 
 // The settlement screens' reads, each inside the request's tenant transaction. Every value is
 // read from the stored rows; nothing here computes pay.
@@ -69,6 +70,8 @@ export type SettlementRecordView = {
   legs: LegRow[];
   latest: Record<LegKind, MoneyActionState | null>;
   parkedLabel: string | null;
+  // A staff member's record that they sent the paid stub, named by role; null until then.
+  stubSent: StubSent | null;
 };
 
 export async function readSettlementRecord(q: Queryable, id: string): Promise<SettlementRecordView | null> {
@@ -141,6 +144,7 @@ export async function readSettlementRecord(q: Queryable, id: string): Promise<Se
     legs,
     latest,
     parkedLabel: settlement.parkedReason ? parkLabel(settlement.parkedReason) : null,
+    stubSent: settlement.stubSentAt !== null ? await readStubSent(q, id) : null,
   };
 }
 

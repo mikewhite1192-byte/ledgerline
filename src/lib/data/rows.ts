@@ -387,6 +387,9 @@ export type SettlementRow = {
   // A draft whose lines no longer matched their sources at approval (0032); both null otherwise.
   parked_reason: string | null;
   parked_at: string | null;
+  // A staff member's record that they sent the paid stub (0086): when, and their membership.
+  stub_sent_at: string | null;
+  stub_sent_by: string | null;
 };
 
 export type SettlementLineRow = {

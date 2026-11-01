@@ -1318,6 +1318,7 @@ export const SETTLEMENT_RECORD: SettlementRecordView = {
     paidAt: null,
     parkedReason: null,
     parkedAt: null,
+    stubSentAt: null,
   },
   lines: PAY_LINES,
   period: { id: settled.period.id, start: settled.period.period_start, end: settled.period.period_end, status: "open" },
@@ -1335,6 +1336,7 @@ export const SETTLEMENT_RECORD: SettlementRecordView = {
   ],
   latest: { settlement_payout: "unknown", settlement_bill: "reserved", settlement_bill_payment: null },
   parkedLabel: null,
+  stubSent: null,
 };
 
 export const DRIVER_RECORD: DriverRecordView = {

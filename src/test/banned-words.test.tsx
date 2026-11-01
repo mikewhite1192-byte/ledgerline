@@ -801,6 +801,20 @@ const SETTLEMENT_CASES: [string, SettlementRecordView][] = [
       latest: { settlement_payout: "confirmed", settlement_bill: "failed", settlement_bill_payment: null },
     },
   ],
+  [
+    "paid, stub marked sent",
+    {
+      ...fx.SETTLEMENT_RECORD,
+      settlement: {
+        ...fx.SETTLEMENT_RECORD.settlement,
+        status: "paid",
+        paidAt: "2026-10-27T16:00:00.000Z",
+        stubSentAt: "2026-10-28T15:00:00.000Z",
+      },
+      latest: { settlement_payout: "confirmed", settlement_bill: "confirmed", settlement_bill_payment: "confirmed" },
+      stubSent: { at: "2026-10-28T15:00:00.000Z", byRole: "staff" },
+    },
+  ],
 ];
 
 // The card check's switch sits inside its own settings block, so its pages turn it on themselves.
@@ -3166,6 +3180,7 @@ describe("no internal word on a pay week's buttons and notes", () => {
       doneNote("run", { counts: { drafts: 3, exceptions: 1, locked: 1, truncated: true } }),
       ...states.map((st) => doneNote("retry", { state: st })),
       ...states.map((st) => doneNote("post", { legs: { bill: st, billPayment: st } })),
+      doneNote("stub_sent", { ok: true, already: false, sentAt: "2026-10-28T15:00:00.000Z" }),
     ];
     const { container } = render(
       <ul>

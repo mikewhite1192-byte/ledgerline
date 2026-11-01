@@ -887,6 +887,14 @@ export type Flags = {
   // on, and null (not checked) while off. No start date: a line can only be typed
   // after the release, on an open draft.
   namedLines: { enabled: boolean };
+  // Stub sent (docs: design-s10, 0086): a staff member records that they sent a driver's paid
+  // paystub to the driver, when and who (POST /api/settlements/[id]/stub-sent,
+  // src/lib/settlements/stub-sent.ts, and the "Mark stub sent" button on the record page). A click
+  // is the only way a mark is made; nothing is ever sent by the app. Asked by the route, the
+  // service and the page's button. Reading a mark already made is not switched: a fact a person
+  // recorded stays visible after a rollback. No start date: a mark can only be made by a click
+  // after the release.
+  stubSent: { enabled: boolean };
   // Deficit recovery on pay day (docs: RECOVERY, 0080): a driver's named deficits (a card load
   // ruled owed, a pull-back the card could not cover) are taken back from pay after the advances,
   // oldest first, above the net pay floor and within the same advanceRecoveryCapCents, one cap on
@@ -1220,6 +1228,8 @@ export const flags: Flags = {
   cardPullback: { enabled: false, startDate: "2026-11-02" },
   // On by the owner's call (D-071, 2026-11-01). A typed line changes what an approval pays.
   namedLines: { enabled: true },
+  // Off until its own one-line enable PR. A mark records a person's send; nothing is sent.
+  stubSent: { enabled: false },
   // On by the owner's call (D-071, 2026-11-01). Pay math only; nothing moves money on its own.
   deficitRecovery: { enabled: true, startDate: "2026-11-02" },
   // On by the owner's call (D-074, D-077, 2026-11-01). Adds a driver (not armed, no card),
