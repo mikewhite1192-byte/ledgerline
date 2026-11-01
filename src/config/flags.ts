@@ -1228,8 +1228,8 @@ export const flags: Flags = {
   cardPullback: { enabled: false, startDate: "2026-11-02" },
   // On by the owner's call (D-071, 2026-11-01). A typed line changes what an approval pays.
   namedLines: { enabled: true },
-  // Off until its own one-line enable PR. A mark records a person's send; nothing is sent.
-  stubSent: { enabled: false },
+  // On by the owner's call (D-071, 2026-11-01). A mark records a person's send; nothing is sent.
+  stubSent: { enabled: true },
   // On by the owner's call (D-071, 2026-11-01). Pay math only; nothing moves money on its own.
   deficitRecovery: { enabled: true, startDate: "2026-11-02" },
   // On by the owner's call (D-074, D-077, 2026-11-01). Adds a driver (not armed, no card),

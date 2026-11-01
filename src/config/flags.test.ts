@@ -123,6 +123,9 @@ const RELEASED_ON = [
   // Released by the owner (D-071, 2026-11-01): an admin records three steps on the driver's default
   // card before arming them. It only refuses an arm; armed drivers are untouched.
   "activationChecklist.enabled",
+  // Released by the owner (D-071, 2026-11-01): staff mark a paid stub as sent and the agent shows
+  // when and by which role. It records a person's send; the app sends nothing.
+  "stubSent.enabled",
 ] as const;
 
 // What stays off, each waiting on a missing piece or an outside send the owner has not released.
@@ -142,8 +145,6 @@ const KEPT_OFF = [
   "cardPullback.enabled",
   // The dispatch webhook ships off; its own one-line enable PR turns it on once the key is stored.
   "tmsHook.enabled",
-  // The stub sent mark ships off; its own one-line enable PR turns it on.
-  "stubSent.enabled",
 ] as const;
 
 // The on/off switches in flags.ts, by path: every top-level boolean and every boolean inside a
