@@ -881,6 +881,16 @@ export type Flags = {
   // card, so no money can go to them until an admin adds a card and arms them on their page.
   // Moves no money. The page, the route and the service each ask enabled themselves.
   driverAdmin: { enabled: boolean };
+  // The cancelled trip (docs: RECOVERY, 0080): a person may cancel a planned or in-transit load
+  // (POST /api/loads/[id]/move with to "cancelled", or a load_move card from the dispatch sync's
+  // withdrawn status, approved), and the desk then drafts one deficit_book card per paid advance
+  // still owed on that load (src/lib/deficits/cancelled-trip.ts). A person approves the card; the
+  // approval closes the advance line and books the same cents as a named deficit in one
+  // transaction, so the driver owes them once. Nothing moves money. Read on every path that writes:
+  // the staff move, the load-move executor, the route, the desk handler and the deficit executor.
+  // Off, a cancel is refused as validation, as before. startDate (YYYY-MM-DD, the carrier's zone):
+  // a cancel recorded before it drafts nothing, so turning it on never reaches back.
+  cancelledTrip: { enabled: boolean; startDate: string };
 };
 
 // One kind's ceiling over the owner's autopilot limits: one item, and the carrier's local day.
@@ -1160,6 +1170,8 @@ export const flags: Flags = {
   deficitRecovery: { enabled: false, startDate: "2026-11-02" },
   // Off until its own one-line enable PR. Adds a driver (not armed, no card); moves no money.
   driverAdmin: { enabled: false },
+  // Off until its own one-line enable PR. A person cancels and a person approves the deficit.
+  cancelledTrip: { enabled: false, startDate: "2026-11-02" },
 };
 
 applyLocalOverrides(flags);

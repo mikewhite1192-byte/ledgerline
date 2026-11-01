@@ -18,6 +18,8 @@ import { overrideReasonOf } from "../agent/auditor/words";
 import { cardLoadRulingExecutor } from "./executors/card-load-ruling";
 import { pullbackExecutor } from "./executors/card-pullback";
 import { cardMatchExecutor } from "./executors/card-match";
+import { cancelledTripEnabled } from "../deficits/switches";
+import { deficitBookExecutor } from "./executors/deficit-book";
 import { factoringRequestExecutor } from "../factoring/execute";
 import { executeBillDefer, executeChaseTestMode, executeFactoringTestMode } from "./executors/cash-friday";
 import { escrowReleaseExecutor } from "./executors/escrow-release";
@@ -274,6 +276,14 @@ export const EXECUTORS: ExecutorRegistry = {
   // anything is approved. Never the autopilot's.
   get card_pullback() {
     return flags.cardPullback.enabled ? pullbackExecutor : undefined;
+  },
+  // A cancelled trip's advance booked as what the driver owes
+  // (src/lib/proposals/executors/deficit-book.ts): the advance line closed and one named deficit
+  // for the same cents, in one transaction, read through cancelledTrip.enabled on every approval,
+  // with a precheck that refuses a machine login or facts that no longer hold (stale) before
+  // anything is approved. No money moves. Never the autopilot's.
+  get deficit_book() {
+    return cancelledTripEnabled() ? deficitBookExecutor : undefined;
   },
 };
 

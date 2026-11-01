@@ -84,6 +84,8 @@ describe("take-back reasons", () => {
     expect(isTakebackReason("constructor")).toBe(false);
     expect(isTakebackReason(7)).toBe(false);
     expect(takebackReasonWords("wrong_driver")).toBe("Paid to the wrong driver");
+    expect(takebackReasonWords("cancelled_trip")).toBe("Load cancelled, booked as money the driver owes");
+    expect(isTakebackReason("cancelled_trip")).toBe(false);
     expect(takebackReasonWords("toString")).toBe("Other");
     expect(takebackReasonWords("anything")).toBe("Other");
   });

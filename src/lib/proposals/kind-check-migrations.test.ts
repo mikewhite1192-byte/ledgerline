@@ -17,8 +17,7 @@ const FILE = /^(\d{4})_[a-z0-9_]+\.sql$/;
 // Kinds a migration lists before their code is on the mainline: harmless in an allow list. 0046
 // and 0048 each list both card_match and money_code, so whichever of the two runs last keeps both;
 // both kinds now have code here, so neither is pending.
-// 0080 lists deficit_book for the cancelled trip (S6c), which has no code yet.
-const PENDING_KINDS = ["settlement_approve", "pay_rule_change", "deficit_book"] as const;
+const PENDING_KINDS = ["settlement_approve", "pay_rule_change"] as const;
 
 // The union every re-creation since 0022 has listed (the queue's rule).
 const BASE_UNION = [

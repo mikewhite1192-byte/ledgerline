@@ -29,6 +29,7 @@ export const PROPOSAL_TITLES: Readonly<Record<ProposalKind, string>> = {
   load_move: "Move a load",
   card_load_ruling: "Rule on an unexplained card load",
   card_pullback: "Pull money back off a fuel card",
+  deficit_book: "Book a cancelled trip's deficit",
 };
 
 const CATEGORY = /^[a-z_]{2,40}$/;
@@ -85,6 +86,10 @@ export function impactOf(kind: ProposalKind, amountCents: number) {
   // A pull-back brings money back off a driver's fuel card. The amount is what was asked for, so
   // the approval gate's admin line weighs the whole ask.
   if (kind === "card_pullback") return { amountCents, direction: "in" } as const;
+  // A cancelled trip's deficit moves what a driver owes from the advance line to a named deficit;
+  // nothing moves. The amount is the advance's outstanding, so the approval gate's admin line
+  // weighs it.
+  if (kind === "deficit_book") return { amountCents, direction: "none" } as const;
   // A pay rule change's amount is the engine's signed change to last settled week's total net pay:
   // more pay is money out, less pay money kept in, none when no one's pay changes.
   if (kind === "pay_rule_change") {

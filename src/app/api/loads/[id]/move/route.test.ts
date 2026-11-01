@@ -1,4 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { flags } from "@/config/flags";
 import type { Session } from "@/lib/auth/claims";
 import { POST } from "./route";
 
@@ -35,13 +36,17 @@ function move(opts: { id?: string; body?: string; site?: string } = {}) {
   return POST(request, { params: Promise.resolve({ id }) });
 }
 
+const savedCancel = structuredClone(flags.cancelledTrip);
+
 beforeEach(() => {
+  flags.cancelledTrip = structuredClone(savedCancel);
   mocks.getSession.mockReset().mockResolvedValue(SESSION);
   mocks.staffGate.mockReset().mockResolvedValue(null);
   mocks.staffMove.mockReset().mockResolvedValue({ ok: true, changed: true, to: "in_transit" });
 });
 
 afterEach(() => {
+  flags.cancelledTrip = structuredClone(savedCancel);
   vi.restoreAllMocks();
 });
 
@@ -101,6 +106,24 @@ describe("POST /api/loads/:id/move", () => {
     expect(id).toBe(ID);
     expect(to).toBe("in_transit");
     expect(now).toBeInstanceOf(Date);
+  });
+
+  it("refuses a direct cancel as validation while the cancelled trip is off, before any move", async () => {
+    flags.cancelledTrip = { enabled: false, startDate: "2026-11-02" };
+    const response = await move({ body: '{"to":"cancelled"}' });
+    expect(response.status).toBe(400);
+    expect(await response.json()).toEqual({ error: "validation" });
+    expect(mocks.staffMove).not.toHaveBeenCalled();
+  });
+
+  it("hands a cancel to the move under the caller's session while the cancelled trip is on", async () => {
+    flags.cancelledTrip = { enabled: true, startDate: "2026-11-02" };
+    mocks.staffMove.mockResolvedValueOnce({ ok: true, changed: true, to: "cancelled" });
+    const response = await move({ body: '{"to":"cancelled"}' });
+    expect(response.status).toBe(200);
+    expect(await response.json()).toEqual({ ok: true, changed: true, to: "cancelled" });
+    expect(mocks.staffMove).toHaveBeenCalledTimes(1);
+    expect(mocks.staffMove.mock.calls[0][3]).toBe("cancelled");
   });
 
   it("maps each refusal category to its status", async () => {
