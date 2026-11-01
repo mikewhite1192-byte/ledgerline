@@ -92,6 +92,7 @@ export const LOCAL_OFF_ONLY = [
   "advanceParking.enabled",
   "cardPullback.enabled",
   "deficitRecovery.enabled",
+  "driverAdmin.enabled",
 ] as const;
 
 type Overridable = (typeof LOCAL_OVERRIDABLE)[number];
