@@ -29,7 +29,7 @@ import {
   type MirrorFlag,
 } from "./mirror";
 import { isFinalized, readLabelMap, type TmsStatusCode } from "./status";
-import { markWakeUp, waitingWakeUps } from "./wakeups";
+import { attemptedWakeUp, markWakeUp, waitingWakeUps } from "./wakeups";
 
 // TMS-MIRROR (0075): the sync. A step at the top of the desk loop's discovery (and Settings >
 // Demo's Sync dispatch now), run by the holder of the desk loop's lease. It walks the TMS list
@@ -407,6 +407,7 @@ export async function pullTms(
     // one transaction. A party gone or of another kind is marked too: one read per send. A failed
     // read is unknown, not a read, so the wake-up stays waiting for the next wake, until it is
     // PARTY_RETRY_MS old; then it is marked, so a party the feed keeps failing is not read forever.
+    // Meanwhile it goes behind the wake-ups not yet tried (attemptedWakeUp), so it never holds the batch.
     out.read += 1;
     const kind = w.recordType;
     let party: TmsPartyRecord | null = null;
@@ -416,7 +417,10 @@ export async function pullTms(
     } catch (err) {
       if (!(err instanceof TmsSourceError)) throw err;
       out.failed += 1;
-      if (Date.parse(nowIso) - Date.parse(w.receivedAt) < PARTY_RETRY_MS) continue;
+      if (Date.parse(nowIso) - Date.parse(w.receivedAt) < PARTY_RETRY_MS) {
+        await write((q) => attemptedWakeUp(q, w, nowIso));
+        continue;
+      }
     }
     const found = party;
     await write(async (q) => {

@@ -122,7 +122,7 @@ export async function waitingWakeUps(q: Queryable, input: { nowIso: string; limi
     `SELECT CAST(id AS text) AS id, record_type, external_id, CAST(sent AS integer) AS sent,
             to_char(received_at AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"') AS received_at FROM tms_wakeups
       WHERE tenant_id = current_tenant_id() AND processed_at IS NULL
-      ORDER BY received_at, id LIMIT $1`,
+      ORDER BY attempted_at NULLS FIRST, received_at, id LIMIT $1`,
     [input.limit],
   );
   const out: Waiting[] = [];
@@ -131,6 +131,16 @@ export async function waitingWakeUps(q: Queryable, input: { nowIso: string; limi
     if (w) out.push({ ...w, id: r.id, sent: Number(r.sent), receivedAt: r.received_at });
   }
   return out;
+}
+
+// A party read that failed: the wake-up stays waiting and goes behind every wake-up not yet tried
+// (and behind those tried longer ago), so parties the feed keeps failing cannot hold the batch.
+export function attemptedWakeUp(q: Queryable, w: Waiting, nowIso: string): Promise<number> {
+  return q.execute(
+    `UPDATE tms_wakeups SET attempted_at = CAST($2 AS timestamptz)
+      WHERE tenant_id = current_tenant_id() AND id = CAST($1 AS uuid) AND processed_at IS NULL`,
+    [w.id, nowIso],
+  );
 }
 
 // Marks one wake-up processed, in the transaction that records its read (the load's write, its

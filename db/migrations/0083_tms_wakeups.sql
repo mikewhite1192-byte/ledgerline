@@ -30,6 +30,8 @@ CREATE TABLE tms_wakeups (
   -- only at the count it read, so a repeat that arrives during the read keeps it waiting.
   sent         integer NOT NULL DEFAULT 1 CHECK (sent BETWEEN 1 AND 2000000000),
   processed_at timestamptz,
+  -- The last failed read of a party (sync.ts); a row tried and failed waits behind every row not yet tried.
+  attempted_at timestamptz,
   UNIQUE (tenant_id, id)
 );
 -- The dedupe key: one waiting wake-up per record.

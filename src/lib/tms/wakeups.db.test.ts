@@ -203,6 +203,31 @@ describe("the dispatch webhook's wake-ups", () => {
     expect(await waiting(f)).toEqual([{ external_id: "DRV-9", sent: 1, processed: true }]);
   });
 
+  it("puts a party wake-up whose read failed behind the ones not yet tried, so it cannot hold the batch", async () => {
+    const f = await carrier("wake-party-fair");
+    // Two reads a wake: one goes to wake-ups.
+    flags.tmsSync.maxReadsPerWake = 2;
+    await send(f, { recordType: "driver", externalId: "DRV-9" }, NOW);
+    await send(f, { recordType: "customer", externalId: "CUST-1" }, new Date(NOW.getTime() + 1000));
+    const inner = countingSource([]);
+    const tried: string[] = [];
+    const failing: TmsSource = {
+      ...inner,
+      readParty: async (ctx, kind, id) => {
+        tried.push(id);
+        if (id === "DRV-9") throw new TmsSourceError("server_error");
+        return inner.readParty(ctx, kind, id);
+      },
+    };
+    await pull(f, new Date(NOW.getTime() + MIN), failing);
+    await pull(f, new Date(NOW.getTime() + 2 * MIN), failing);
+    expect(tried).toEqual(["DRV-9", "CUST-1"]);
+    expect(await waiting(f)).toEqual([
+      { external_id: "DRV-9", sent: 1, processed: false },
+      { external_id: "CUST-1", sent: 1, processed: true },
+    ]);
+  });
+
   it("does not take a wake-up past the carrier's waiting cap, and coalesces the same one still", async () => {
     const f = await carrier("wake-cap");
     await admin.withTenant(f.tenantId, (q) =>
