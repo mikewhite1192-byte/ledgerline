@@ -256,14 +256,24 @@ function requestOf(action: MoneyAction, purpose: MoneyCodePurpose): MoneyCodeReq
 }
 
 // In the reserve transaction: the code names its ledger row, and the proposal records its first.
-// The code must still be one a send may start from; a throw rolls the reservation back.
-async function onCodeReserved(q: Queryable, action: MoneyAction): Promise<void> {
+// The code must still be one a send may start from, and the driver must still be armed and active
+// on the carrier's date of the issue's clock (the instant prepare asked by), asked here because
+// this is the transaction the code is reserved in: a deactivation or disarm committed after
+// prepare's commit is caught before any call. A throw rolls the reservation back.
+async function onCodeReserved(q: Queryable, action: MoneyAction, nowIso: string): Promise<void> {
   const changed = await q.execute(
     `UPDATE money_codes SET money_action_id = CAST($2 AS uuid), updated_at = now()
       WHERE tenant_id = current_tenant_id() AND id = CAST($1 AS uuid) AND status IN ('issuing', 'unknown')`,
     [action.subjectId, action.id],
   );
   if (changed !== 1) throw new MoneyError("validation");
+  // Read without a lock, as the advance's reserve hook does. This transaction holds the code and
+  // then takes the proposal, while a status change holds the driver and a new code's approval holds
+  // its proposal before the driver, so waiting on the driver here could close a cycle. Anything
+  // but ok (inactive, not armed, no such driver) refuses.
+  const zone = await readTenantZone(q);
+  const state = await readDriverMoneyState(q, action.counterpartyId, localDateOf(nowIso, zone), false);
+  if (state !== "ok") throw new MoneyError("validation");
   if (action.proposalId) {
     await q.execute(
       `UPDATE proposals SET money_action_id = CAST($2 AS uuid), updated_at = now()
@@ -414,7 +424,7 @@ async function onCodeFailed(q: Queryable, action: MoneyAction, nowIso: string): 
 
 function sendHooks(issuer: MoneyCodeIssuer, purpose: MoneyCodePurpose, nowIso: string): MoneyHooks {
   return {
-    onReserved: onCodeReserved,
+    onReserved: (q, action) => onCodeReserved(q, action, nowIso),
     onConfirmed: (q, action) => finishIssuedCode(q, action, issuer, nowIso),
     onFailed: (q, action) => onCodeFailed(q, action, nowIso),
     ready: () => issuer.ready(),

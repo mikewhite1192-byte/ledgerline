@@ -808,6 +808,58 @@ describe("money codes against the database", () => {
     expect(await payItems()).toEqual([]);
   });
 
+  // The executor's own check passes and commits; the change lands after it and before the reserve
+  // (in the issuer's first ready check, which the money executor asks before it reserves). The
+  // reserve asks the driver again, so the reservation rolls back and the issuer is never called.
+  const refusedAtTheReserve = async (change: () => Promise<unknown>) => {
+    const loadId = await addLoadOnTheRoad(A);
+    const proposalId = await ask(A, loadId, 15_000);
+    let changed = false;
+    const sends: string[] = [];
+    const racing: MoneyCodeIssuer = {
+      ...issuer,
+      ready: async () => {
+        if (!changed) {
+          changed = true;
+          await change();
+        }
+        return issuer.ready();
+      },
+      issueMoneyCode: (req, ctx) => {
+        sends.push(req.actionId);
+        return issuer.issueMoneyCode(req, ctx);
+      },
+    };
+    expect(await approve(proposalId, A.session, deps({ issuer: racing }))).toEqual({
+      ok: false,
+      category: "code_unavailable",
+      retryable: false,
+    });
+    expect(changed).toBe(true);
+    expect(sends).toEqual([]);
+    expect(issuerLog).toEqual([]);
+    // Nothing reserved, no lines, and the code and its proposal end failed, not left issuing.
+    expect(await ledger()).toEqual([]);
+    expect(await payItems()).toEqual([]);
+    expect(await lumpers()).toEqual([]);
+    expect((await codeRows()).map((c) => c.status)).toEqual(["failed"]);
+    expect(await proposalStatus(proposalId)).toBe("failed");
+  };
+
+  it("a driver deactivated after the executor's check and before the reserve gets no code and no issuer call", async () => {
+    await refusedAtTheReserve(() =>
+      admin.withTenant(A.tenantId, (q) =>
+        q.execute("UPDATE drivers SET active_to = CAST('2026-11-01' AS date) WHERE tenant_id = current_tenant_id() AND id = CAST($1 AS uuid)", [
+          A.driverId,
+        ]),
+      ),
+    );
+  });
+
+  it("a driver disarmed after the executor's check and before the reserve gets no code and no issuer call", async () => {
+    await refusedAtTheReserve(() => setArmed(admin, A, A.driverId, false));
+  });
+
   it("the code is shown only while it is good", async () => {
     const loadId = await addLoadOnTheRoad(A);
     const proposalId = await ask(A, loadId, 15_000);
