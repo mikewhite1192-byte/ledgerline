@@ -1,6 +1,7 @@
 import Link from "next/link";
 import { notFound } from "next/navigation";
 import { ErrorState } from "@/components/app/states";
+import { buttonVariants } from "@/components/ui/button";
 import { Card, CardBody, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { TBody, THead, Table, Td, Th, Tr } from "@/components/ui/table";
 import { flags } from "@/config/flags";
@@ -40,6 +41,11 @@ export default async function TmsDemoBoard() {
           <CardTitle>Loads</CardTitle>
           <CardDescription>Open a load to assign a driver, complete a stop or set its status.</CardDescription>
         </div>
+        {flags.mockTms.newLoad === true && view?.kind === "ready" ? (
+          <Link href="/tms-demo/loads/new" className={buttonVariants({ variant: "secondary" })}>
+            New load
+          </Link>
+        ) : null}
       </CardHeader>
       <CardBody>
         {problem ? (

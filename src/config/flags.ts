@@ -815,7 +815,11 @@ export type Flags = {
   // tmsHook and tmsSync on). While on, the seed and the demo reset put the demo carriers'
   // connection on it. At most maxEventsPerLoad history rows a load. It moves no money and sends
   // nothing anywhere else. It ships off; its own one-line PR turns it on.
-  mockTms: { enabled: boolean; maxEventsPerLoad: number };
+  // newLoad: a "New load" form there (/tms-demo/loads/new) writes the sample system's load AND our
+  // planned load with the same number, in one transaction, so the desk links the two on its next
+  // read. It writes no money. At most maxNewLoads loads a carrier made there (the seeded board does
+  // not count); a demo reset removes them. It needs enabled on too, and ships off on its own.
+  mockTms: { enabled: boolean; newLoad: boolean; maxEventsPerLoad: number; maxNewLoads: number };
   // The invoice on finalize (docs: TMS-MIRROR, S3): when a mirrored status event says the dispatch
   // system finalized one of our delivered loads, the desk loop's tms_event source drafts that load's
   // one invoice_post card from our own loads row, the same card Refresh on the invoice queue drafts
@@ -1219,7 +1223,9 @@ export const flags: Flags = {
   // changes only its own tables and moves no money. 36 history rows a load stay readable with the
   // history_page_cut fault on (the sync reads at most MAX_HISTORY_PAGES pages of CUT_PAGE new rows,
   // the last one empty).
-  mockTms: { enabled: true, maxEventsPerLoad: 36 },
+  // newLoad: off until its own one-line enable PR (D-071): the board shows no "New load" link and
+  // the form answers 404.
+  mockTms: { enabled: true, newLoad: false, maxEventsPerLoad: 36, maxNewLoads: 40 },
   // On by the owner's call (D-071, 2026-10-31). It only drafts a card; approving it goes through the usual gate.
   tmsFinalizeInvoice: { enabled: true, startDate: "2026-10-31" },
   // On by the owner's call (D-071): Yes still goes through the usual approve route and gate.
