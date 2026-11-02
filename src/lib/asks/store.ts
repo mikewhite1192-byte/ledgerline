@@ -53,8 +53,9 @@ function objectOf(text: string | null): Record<string, unknown> {
 const uuidOr = (v: unknown): string | null => (isUuid(v) ? v.toLowerCase() : null);
 const wholeOr = (v: unknown): number | null => (typeof v === "number" && Number.isSafeInteger(v) ? v : null);
 
-async function readProposal(q: Queryable, proposalId: string): Promise<ProposalRow | null> {
-  const rows = await q.query<ProposalRow>(PROPOSAL_SQL, [proposalId]);
+// lock: FOR KEY SHARE, the lock the ask's own insert takes through its foreign key, held from here.
+async function readProposal(q: Queryable, proposalId: string, lock = false): Promise<ProposalRow | null> {
+  const rows = await q.query<ProposalRow>(lock ? `${PROPOSAL_SQL} FOR KEY SHARE` : PROPOSAL_SQL, [proposalId]);
   if (rows.length === 0) return null;
   if (rows.length !== 1 || typeof rows[0].kind !== "string" || !/^\d{1,12}$/.test(String(rows[0].amount_cents))) {
     throw new DbError("unknown");
@@ -149,15 +150,18 @@ export async function askFor(
 ): Promise<AskResult> {
   if (flags.agentAsks.enabled !== true) return { kind: "skipped", category: "switched_off" };
   if (!isUuid(proposalId)) return { kind: "skipped", category: "bad_request" };
-  const p = await readProposal(q, proposalId);
+  // The autopilot's own ask locks the proposal before its rule, the order the approval gate takes
+  // them, and reads it once the lock is granted: a proposal approved or decided while this waited is
+  // no longer waiting, and nobody is asked.
+  const p = await readProposal(q, proposalId, opts.mode === "ask");
   if (!p) return { kind: "skipped", category: "not_found" };
   if (!isAskedKind(p.kind)) return { kind: "skipped", category: "not_asked_kind" };
   if (p.status !== "proposed") return { kind: "skipped", category: "not_waiting" };
   const mode = opts.mode ?? (await autopilotModeFor(q, p.kind, now.getTime()));
   if (mode !== "ask") return { kind: "skipped", category: mode === "auto" ? "autopilot" : "kept_off" };
   // The autopilot's own ask was decided in an earlier transaction, and the owner may have set the
-  // kind to Off since: the rule is read again here, locked (this path takes no pause or proposal
-  // lock, so the order stays theirs), and an Off rule asks nobody.
+  // kind to Off since: the rule is read again here, locked (after the proposal, as the gate does;
+  // this path takes no pause lock), and an Off rule asks nobody.
   if (opts.mode === "ask" && (await readRule(q, p.kind, true))?.mode === "off") {
     return { kind: "skipped", category: "kept_off" };
   }
