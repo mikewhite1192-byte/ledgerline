@@ -97,6 +97,18 @@ export function ceilingOf(kind: string): AutopilotCeiling | null {
   return kinds[kind as keyof typeof kinds] ?? null;
 }
 
+// The kinds the autopilot may approve alone yet cannot check: the engine never recomputes a card
+// match (src/lib/agent/gateway/store/engine-check.ts), so its check is never matched and the desk
+// never brings one to the autopilot (src/lib/desk/discover.ts). A person always approves it, so
+// Auto is not offered there either. rules-admin.test.ts proves these are exactly the Auto kinds
+// the engine does not compare.
+const UNCHECKED_KINDS: ReadonlySet<string> = new Set(["card_match"]);
+
+// A kind the owner may set to Auto from the app: one the autopilot may approve alone and can check.
+export function autoOffered(kind: string): boolean {
+  return autoAllowed(kind) && !UNCHECKED_KINDS.has(kind);
+}
+
 // One rule save from a request body, whole or refused. Every number is whole cents (or a whole
 // count); the order of the checks is the order of the fields, so the first bad one is named.
 export function parseRuleSave(body: unknown): ParseResult {
@@ -121,8 +133,9 @@ export function parseRuleSave(body: unknown): ParseResult {
   }
   const ev = b.expectedVersion;
   if (ev !== null && (typeof ev !== "number" || !Number.isSafeInteger(ev) || ev < 1)) return bad("expectedVersion");
-  // Auto only on a kind the autopilot may ever approve alone (the 0077 check holds it too).
-  if (b.mode === "auto" && !autoAllowed(b.kind)) return { ok: false, category: "never_alone" };
+  // Auto only on a kind the autopilot may ever approve alone (the 0077 check holds it too) and can
+  // check (a card match it cannot).
+  if (b.mode === "auto" && !autoOffered(b.kind)) return { ok: false, category: "never_alone" };
   // A listed kind's limits stay inside its ceiling; raising a ceiling is its own change.
   const ceiling = ceilingOf(b.kind);
   if (ceiling !== null) {
@@ -295,7 +308,8 @@ export type KindPicture = {
   kind: RuleKind;
   // The rule's mode, or ask when the kind has no rule (a person decides).
   mode: RuleMode;
-  // Whether the owner may ever set Auto here (never-alone kinds may not).
+  // Whether the owner may ever set Auto here (never-alone kinds may not, nor a kind the autopilot
+  // cannot check).
   allowedAuto: boolean;
   // Whether flags.autopilot.kinds lists the kind, and whether it is armed there.
   listed: boolean;
@@ -333,7 +347,7 @@ export async function readRules(q: Queryable, nowMs: number): Promise<RulesPictu
     return {
       kind,
       mode: byKind.get(kind)?.mode ?? "ask",
-      allowedAuto: autoAllowed(kind),
+      allowedAuto: autoOffered(kind),
       listed: ceiling !== null,
       armed: ceiling?.armed === true,
       ceiling: ceiling === null ? null : { ...ceiling },

@@ -7,19 +7,30 @@ import type { Session } from "../auth/claims";
 import { autopilotSub } from "../autopilot/session";
 import { createPgDb } from "../db/pg";
 import { adminUrl, appUrl } from "../db/test-urls";
-import type { Db, Param, Queryable } from "../db/types";
+import type { Db, Param, Queryable, TenantDb } from "../db/types";
 import { deskHandlers } from "../desk/handlers";
 import { dropTenant, makeTenant, type Fixture } from "../money/test-db";
 import { persistEngineProposal } from "../proposals/engine";
 import { serviceSub } from "../sweep/service-session";
 import { fillReasons, type ReasonCompleteFn } from "./reason";
-import { acknowledgeTold, answerAsksFor, askFor, closeStaleAsks, readShowingAsks, snoozeAsk, tellFor } from "./store";
+import {
+  acknowledgeTold,
+  answerAsksFor,
+  askFor,
+  closeStaleAsks,
+  readShowingAsks,
+  snoozeAsk,
+  tellFor,
+  type AskResult,
+} from "./store";
 
 // The agent's questions against the real database, as the app's role: the desk's proposal gets one
 // live question even when two writers race; a person's proposal gets none; a question voids when
 // its proposal expires or is decided elsewhere (and hides at once); snooze hides it until its
 // time; Yes marks it answered once; the autopilot's done proposal gets one told line inside the
-// owner's limit, and Got it marks that line done once; a plain throw writing the question keeps
+// owner's limit, and Got it marks that line done once; an Off saved after the autopilot's look
+// asks nobody; the autopilot's ask waits on a proposal an approval holds, with its rule free, and
+// asks nobody if that approval decided it; a plain throw writing the question keeps
 // the card; the reason pass keeps a right line, drops a wrong figure, and never calls twice;
 // row-level security holds each carrier to its own questions and the guard refuses a changed word.
 // An advance at pickup the dispatch feed moved names the pickup's wall time. A fixed clock; two
@@ -387,6 +398,165 @@ describe("agent asks", () => {
     );
     expect(out).toMatchObject({ outcome: "done", detail: { category: "over_item_limit" } });
     expect((await asksOf(A, id)).map((r) => [r.kind, r.status])).toEqual([["ask", "open"]]);
+  });
+
+  it("asks nobody when the owner sets the kind to Off after the autopilot's look stored ask", async () => {
+    Object.assign(flags.autopilot, { enabled: true, armed: true, startDate: "2026-10-31" });
+    const id = await deskCard(B, { kind: "invoice_post", amountCents: 900_000 });
+    await admin.withTenant(B.tenantId, (q) =>
+      q.execute(
+        `UPDATE proposals SET auditor_verdict = 'pass', auditor_agrees = true, auditor_concerns = CAST('[]' AS jsonb),
+                auditor_checked_at = CAST($2 AS timestamptz), engine_check = 'matched', engine_cents = amount_cents,
+                engine_checked_at = CAST($2 AS timestamptz)
+          WHERE tenant_id = current_tenant_id() AND id = CAST($1 AS uuid)`,
+        [id, new Date(NOW - HOUR / 2).toISOString()],
+      ),
+    );
+    const setMode = (mode: string) =>
+      admin.withTenant(B.tenantId, (q) =>
+        q.execute(
+          `UPDATE autopilot_rules SET mode = $1, version = version + 1
+            WHERE tenant_id = current_tenant_id() AND kind = 'invoice_post'`,
+          [mode],
+        ),
+      );
+    // The owner saves Off right after the look's transaction stored its ask, before the question.
+    let off = false;
+    const db: TenantDb = {
+      async withTenant(tenantId, fn) {
+        const out = await app.withTenant(tenantId, fn);
+        if (!off) {
+          const [r] = await admin.withTenant(B.tenantId, (q) =>
+            q.query<{ asked: boolean }>(
+              "SELECT autopilot_decision IS NOT NULL AS asked FROM proposals WHERE tenant_id = current_tenant_id() AND id = CAST($1 AS uuid)",
+              [id],
+            ),
+          );
+          if (r?.asked) {
+            off = true;
+            await setMode("off");
+          }
+        }
+        return out;
+      },
+    };
+    try {
+      const out = await deskHandlers({ db }).autopilot.run(
+        desk(B),
+        {
+          eventKey: `autopilot:${id}`,
+          source: "autopilot",
+          subjectId: id,
+          state: "claimed",
+          attempts: 1,
+          carries: 0,
+          threw: 0,
+          runId: null,
+          found: null,
+          firstAt: new Date(NOW).toISOString(),
+        },
+        { deadlineMs: NOW + 60_000, clock },
+      );
+      expect(off).toBe(true);
+      expect(out).toMatchObject({ outcome: "done", detail: { category: "over_item_limit" } });
+      expect(await asksOf(B, id)).toEqual([]);
+      // Called again with the autopilot's ask, an Off rule still asks nobody.
+      expect(await asApp(B, (q) => askFor(q, id, clock(), { mode: "ask" }))).toEqual({ kind: "skipped", category: "kept_off" });
+      expect(await asksOf(B, id)).toEqual([]);
+    } finally {
+      await setMode("auto");
+    }
+  });
+
+  it("locks the proposal before its rule, so an approval holding the proposal and the autopilot's ask never deadlock", async () => {
+    // A card with no question yet, of a kind A has a rule for, so the ask reads that rule locked.
+    const card = async () => {
+      flags.agentAsks.enabled = false;
+      const id = await deskCard(A, { kind: "invoice_post", amountCents: 140_000 });
+      flags.agentAsks.enabled = true;
+      return id;
+    };
+    // The proposal held FOR UPDATE as the approval gate holds it, the autopilot's ask started, then
+    // the holder's own write (if any) and its commit.
+    const askWhileHeld = async (id: string, write?: (q: Queryable) => Promise<unknown>): Promise<AskResult> => {
+      let release: () => void = () => {};
+      const released = new Promise<void>((r) => {
+        release = () => r();
+      });
+      let held: (pid: number) => void = () => {};
+      const holding = new Promise<number>((r) => {
+        held = r;
+      });
+      const holder = asApp(A, async (q) => {
+        await q.query("SELECT id FROM proposals WHERE id = CAST($1 AS uuid) FOR UPDATE", [id]);
+        const [me] = await q.query<{ pid: number }>("SELECT pg_backend_pid() AS pid", []);
+        held(me.pid);
+        await released;
+        if (write) await write(q);
+      });
+      // A holder that ends without holding fails the wait here instead of leaving it open.
+      const early = holder.then(() => {
+        throw new Error("the holder ended before it held the proposal");
+      });
+      early.catch(() => undefined);
+      let asking: Promise<AskResult> | undefined;
+      try {
+        const pid = await Promise.race([holding, early]);
+        let settled = false;
+        asking = asApp(A, (q) => askFor(q, id, clock(), { mode: "ask" })).finally(() => {
+          settled = true;
+        });
+        // The ask is waiting on the proposal the holder has locked.
+        let waiting = 0;
+        for (let i = 0; i < 400 && waiting === 0; i += 1) {
+          const [w] = await admin.withTenant(A.tenantId, (q) =>
+            q.query<{ n: number }>(
+              "SELECT CAST(count(*) AS integer) AS n FROM pg_stat_activity WHERE CAST($1 AS integer) = ANY(pg_blocking_pids(pid))",
+              [pid],
+            ),
+          );
+          waiting = w.n;
+          if (waiting === 0) await new Promise((r) => setTimeout(r, 25));
+        }
+        expect(waiting).toBe(1);
+        expect(settled).toBe(false);
+        // And holds no lock on the rule meanwhile: a rule save takes it at once.
+        expect(
+          await errorOf(
+            admin.withTenant(A.tenantId, (q) =>
+              q.query(
+                "SELECT id FROM autopilot_rules WHERE tenant_id = current_tenant_id() AND kind = 'invoice_post' FOR UPDATE NOWAIT",
+                [],
+              ),
+            ),
+          ),
+        ).toBe("no error");
+        release();
+        await holder;
+        return await asking;
+      } finally {
+        release();
+        await holder.catch(() => undefined);
+        await asking?.catch(() => undefined);
+      }
+    };
+    // Released unchanged: the ask goes on and writes its question.
+    const kept = await card();
+    expect(await askWhileHeld(kept)).toMatchObject({ kind: "created" });
+    expect((await asksOf(A, kept)).map((r) => [r.kind, r.status])).toEqual([["ask", "open"]]);
+    // Decided by the holder before it let go: the ask reads it once the lock is granted, and asks nobody.
+    const decided = await card();
+    expect(
+      await askWhileHeld(decided, (q) =>
+        q.execute(
+          `UPDATE proposals SET status = 'rejected', decided_by = $2, decided_at = CAST($3 AS timestamptz),
+                  decision_note = 'not_needed', updated_at = CAST($3 AS timestamptz)
+            WHERE tenant_id = current_tenant_id() AND id = CAST($1 AS uuid) AND status = 'proposed'`,
+          [decided, A.session.sub, new Date(NOW).toISOString()],
+        ),
+      ),
+    ).toEqual({ kind: "skipped", category: "not_waiting" });
+    expect(await asksOf(A, decided)).toEqual([]);
   });
 
   it("writes a reason once: a right line kept, a wrong figure dropped, no second call", async () => {

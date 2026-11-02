@@ -107,8 +107,7 @@ import { escalatedRow } from "@/lib/home/needs-you";
 import { VOICE_STATUS_WORDS } from "@/lib/voice/words";
 import * as fx from "./page-fixtures";
 import * as autopilotWords from "@/app/settings/autopilot/words";
-import { RULE_KINDS } from "@/lib/autopilot/rules-admin";
-import { autoAllowed } from "@/lib/money/never-alone";
+import { RULE_KINDS, autoOffered } from "@/lib/autopilot/rules-admin";
 
 // Every screen a person reads, rendered with fixture rows and scanned for the words that belong to
 // the code, not to a trucking office (design-ui-ease section 3). A new route file under src/app (a
@@ -661,7 +660,7 @@ const AUTOPILOT_PICTURE = {
     return {
       kind,
       mode: kind === "invoice_post" ? "auto" : "ask",
-      allowedAuto: autoAllowed(kind),
+      allowedAuto: autoOffered(kind),
       listed: ceiling !== null,
       armed: ceiling?.armed === true,
       ceiling,
@@ -1977,6 +1976,31 @@ const PAGES: PageCase[] = [
         setup: () => (state.fx.autopilotRules = AUTOPILOT_PICTURE),
         load: () => autopilotPage("staff"),
         shows: [autopilotWords.ADMIN_ONLY, "Pause autopilot", "Ask me"],
+      },
+      {
+        // The read-only table shows the limits, and Auto on a kind not switched on yet says so.
+        name: "staff, Auto saved on a kind not switched on yet",
+        setup: () =>
+          (state.fx.autopilotRules = {
+            ...AUTOPILOT_PICTURE,
+            rules: [
+              ...AUTOPILOT_PICTURE.rules,
+              {
+                id: "44444444-4444-4444-8444-444444444444",
+                kind: "advance_payout",
+                mode: "auto",
+                maxCents: 30_000,
+                dayMaxCents: 150_000,
+                dayMaxCount: 10,
+                driverDayMaxCents: 30_000,
+                version: 1,
+                updatedAt: "2026-11-02T16:00:00.000Z",
+              },
+            ],
+            kinds: AUTOPILOT_PICTURE.kinds.map((k) => (k.kind === "advance_payout" ? { ...k, mode: "auto", armed: false } : k)),
+          }),
+        load: () => autopilotPage("staff"),
+        shows: [autopilotWords.NOT_ARMED_NOTE, autopilotWords.LIMIT_LABELS.driverDayMaxCents, "150000"],
       },
     ],
   },

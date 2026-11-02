@@ -1,8 +1,12 @@
-import { randomUUID } from "node:crypto";
+import { randomBytes, randomUUID } from "node:crypto";
+import { readdirSync, readFileSync } from "node:fs";
+import { join } from "node:path";
+import { Client } from "pg";
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
 import { flags } from "../../config/flags";
 import type { Session } from "../auth/claims";
 import { createPgDb } from "../db/pg";
+import { splitSql } from "../db/sql-split";
 import { adminUrl, appUrl } from "../db/test-urls";
 import type { Db } from "../db/types";
 import { addJudge, dropTenant, makeTenant, sqlStateOf, type Fixture } from "../money/test-db";
@@ -23,7 +27,8 @@ import { setPaused } from "./state";
 // each Pause and Resume is recorded, two first pauses at once in order; a Resume pressed on an
 // older pause than the one set is refused and writes nothing, even one stored at the same instant
 // (the row's revision tells them apart); only an admin saves. A fixed clock; two tenants made here
-// and removed after.
+// and removed after. 0090 moves a stored card match on Auto to Ask me with its version up by one
+// (a scratch database built to 0089 and then upgraded, dropped after, failures included).
 
 const savedAutopilot = structuredClone(flags.autopilot);
 const NOW = Date.UTC(2026, 10, 2, 16, 0, 0);
@@ -165,7 +170,7 @@ describe("the owner's autopilot rules", () => {
     expect(stale).toMatchObject({ ok: false, category: "changed", rule: { version: 2, dayMaxCount: 5 } });
     const again = await save(ownerA, { ...INVOICE, dayMaxCount: 7, expectedVersion: null });
     expect(again).toMatchObject({ ok: false, category: "changed", rule: { version: 2 } });
-    const none = await save(ownerA, { ...INVOICE, kind: "card_match", maxCents: 1_000, dayMaxCents: 2_000, expectedVersion: 3 });
+    const none = await save(ownerA, { ...INVOICE, kind: "card_match", mode: "ask", maxCents: 1_000, dayMaxCents: 2_000, expectedVersion: 3 });
     expect(none).toEqual({ ok: false, category: "changed", rule: null });
     expect(await changesOf(A, "rule")).toHaveLength(2);
     const [rule] = await app.withTenant(A.tenantId, (q) => q.query<{ version: number; day_max_count: number }>(
@@ -185,8 +190,8 @@ describe("the owner's autopilot rules", () => {
     expect(await changesOf(A, "rule")).toHaveLength(2);
     // Two first saves at once: one rule, one record, the other answers changed.
     const firsts = await Promise.all([
-      save(ownerA, { ...INVOICE, kind: "card_match", maxCents: 1_000, dayMaxCents: 2_000 }),
-      save(ownerA, { ...INVOICE, kind: "card_match", maxCents: 1_500, dayMaxCents: 2_000 }),
+      save(ownerA, { ...INVOICE, kind: "card_match", mode: "ask", maxCents: 1_000, dayMaxCents: 2_000 }),
+      save(ownerA, { ...INVOICE, kind: "card_match", mode: "ask", maxCents: 1_500, dayMaxCents: 2_000 }),
     ]);
     expect(firsts.filter((o) => o.ok)).toHaveLength(1);
     expect(firsts.filter((o) => !o.ok && o.category === "changed")).toHaveLength(1);
@@ -421,4 +426,105 @@ describe("the owner's autopilot rules", () => {
     }));
     expect(counts).toEqual({ rules: [], changes: [] });
   });
+});
+
+// The upgrade: a scratch database built from every migration before 0090, a card match rule on
+// Auto (as 0070 wrote it for the demo carriers) beside rules 0090 must leave alone, then 0090
+// applied the way the runner does (one transaction for the file), and once more. Dropped after,
+// failures included.
+describe("0090's card match narrowing, upgraded over rules already there", () => {
+  const MIGRATIONS = join(process.cwd(), "db", "migrations");
+  const NAME = `payday_up90_${randomBytes(4).toString("hex")}`;
+  const server = new URL(adminUrl());
+  let scratch: Db | undefined;
+
+  const onServer = async (sql: string) => {
+    if (!/^payday_up90_[a-f0-9]{8}$/.test(NAME)) throw new Error("not this test's database");
+    const client = new Client({ connectionString: server.toString() });
+    await client.connect();
+    try {
+      await client.query(sql);
+    } finally {
+      await client.end();
+    }
+  };
+
+  const apply = async (db: Db, file: string) => {
+    const statements = splitSql(readFileSync(join(MIGRATIONS, file), "utf8"));
+    await db.withoutTenant(async (q) => {
+      for (const s of statements) await q.execute(s);
+    });
+  };
+
+  type RuleRow = { tenant_id: string; kind: string; mode: string; max_cents: string; day_max_count: number; version: number; updated_by: string };
+  const rulesOf = (db: Db) =>
+    db.withoutTenant((q) =>
+      q.query<RuleRow>(
+        `SELECT CAST(tenant_id AS text) AS tenant_id, kind, mode, CAST(max_cents AS text) AS max_cents, day_max_count,
+                version, updated_by
+           FROM autopilot_rules ORDER BY tenant_id, kind`,
+      ),
+    );
+
+  beforeAll(async () => {
+    await onServer(`DROP DATABASE IF EXISTS ${NAME} WITH (FORCE)`);
+    await onServer(`CREATE DATABASE ${NAME}`);
+    const url = new URL(server);
+    url.pathname = `/${NAME}`;
+    scratch = createPgDb({ connectionString: url.toString(), max: 1 });
+  }, 60_000);
+
+  afterAll(async () => {
+    await scratch?.close();
+    await onServer(`DROP DATABASE IF EXISTS ${NAME} WITH (FORCE)`);
+  }, 60_000);
+
+  it("moves a card match on Auto to Ask me with its version up by one, keeps its limits, and leaves every other rule", async () => {
+    const db = scratch!;
+    const files = readdirSync(MIGRATIONS).filter((n) => n.endsWith(".sql")).sort();
+    expect(files).toContain("0090_card_match_ask.sql");
+    for (const file of files.filter((n) => n < "0090")) await apply(db, file);
+    // X: a card match on Auto, moved once already, and an invoice rule on Auto. Y: a card match on Ask me.
+    const [x, y] = [randomUUID(), randomUUID()].sort();
+    for (const [tenant, slug] of [
+      [x, `up90-x-${x.slice(0, 8)}`],
+      [y, `up90-y-${y.slice(0, 8)}`],
+    ]) {
+      await db.withTenant(tenant, (q) =>
+        q.execute(
+          "INSERT INTO tenants (id, slug, name, timezone) VALUES (current_tenant_id(), $1, 'Upgrade Freight', 'America/Chicago')",
+          [slug],
+        ),
+      );
+    }
+    await db.withTenant(x, async (q) => {
+      await q.execute(
+        `INSERT INTO autopilot_rules (tenant_id, kind, mode, max_cents, day_max_cents, day_max_count, updated_by)
+         VALUES (current_tenant_id(), 'card_match', 'auto', 50000, 300000, 40, 'setup'),
+                (current_tenant_id(), 'invoice_post', 'auto', 200000, 1000000, 25, 'setup')`,
+      );
+      await q.execute(
+        `UPDATE autopilot_rules SET max_cents = 40000, version = version + 1, updated_by = 'owner'
+          WHERE tenant_id = current_tenant_id() AND kind = 'card_match'`,
+      );
+    });
+    await db.withTenant(y, (q) =>
+      q.execute(
+        `INSERT INTO autopilot_rules (tenant_id, kind, mode, max_cents, day_max_cents, day_max_count, updated_by)
+         VALUES (current_tenant_id(), 'card_match', 'ask', 50000, 300000, 40, 'owner')`,
+      ),
+    );
+    const after = [
+      { tenant_id: x, kind: "card_match", mode: "ask", max_cents: "40000", day_max_count: 40, version: 3, updated_by: "setup" },
+      { tenant_id: x, kind: "invoice_post", mode: "auto", max_cents: "200000", day_max_count: 25, version: 1, updated_by: "setup" },
+      { tenant_id: y, kind: "card_match", mode: "ask", max_cents: "50000", day_max_count: 40, version: 1, updated_by: "owner" },
+    ];
+    await apply(db, "0090_card_match_ask.sql");
+    expect(await rulesOf(db)).toEqual(after);
+    // A second run finds no card match on Auto and changes nothing.
+    await apply(db, "0090_card_match_ask.sql");
+    expect(await rulesOf(db)).toEqual(after);
+    // The setup's narrowing is not a person's change: no record is written.
+    expect(await db.withoutTenant((q) => q.query("SELECT 1 FROM autopilot_changes"))).toEqual([]);
+  }, 120_000);
 });
