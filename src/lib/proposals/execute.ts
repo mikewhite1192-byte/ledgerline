@@ -392,7 +392,8 @@ function principalRefusal(session: Session, opts: ApproveOptions, role: string |
 // refused with the policy's reason word and nothing written; a rule changed since the decision
 // (another id or version) is refused too. The clock is read once the rule is locked, so a wait for
 // any of the gate's locks (across the carrier's midnight too) counts the approval on the day it is
-// made; at is that instant, for the approval's own record. Reads only.
+// made; at is that instant, for the approval's own record, and a row past the age limit by then is
+// refused as expired, retryable. Reads only.
 async function autopilotDecision(
   q: Queryable,
   session: Session,
@@ -405,6 +406,12 @@ async function autopilotDecision(
   const zone = await readZone(q);
   const rule = await readRule(q, p.kind, true);
   const now = clock();
+  // The gate's age cutoff is from its entry instant: a row that aged past the limit while the gate
+  // waited for its locks is refused here, retryable and with nothing written, so the next attempt's
+  // entry cutoff expires it through the gate's own write.
+  if (Date.parse(row.created_at) < now.getTime() - flags.proposalMaxAgeDays * DAY_MS) {
+    return { result: { ok: false, category: "expired", retryable: true } };
+  }
   const since = todayStartIso(now, zone);
   const today = await readToday(q, p.kind, session.sub, since);
   const driverId = driverOf(p.kind, p);

@@ -25,7 +25,7 @@ import { PAUSE_LOCK_SQL } from "./state-lock";
 // an ask and the proposal waits for a person; a proposal made before the start date is never
 // found or written to; a run that loses a race reports the winner's outcome. A fixed clock; two
 // tenants made here and removed after. An approval that waited for the rule across the carrier's
-// midnight counts on the new day.
+// midnight counts on the new day, and a row that aged past the limit while it waited is a retry.
 
 const saved = structuredClone(flags.autopilot);
 const NOW = Date.UTC(2026, 10, 2, 16, 0, 0);
@@ -570,34 +570,39 @@ describe("the autopilot", () => {
           executors: REGISTRY,
         }),
       ).toMatchObject({ ok: true });
-      await admin.withTenant(B.tenantId, (q) =>
-        q.execute(
-          `UPDATE autopilot_rules SET day_max_count = 1, version = version + 1
-            WHERE tenant_id = current_tenant_id() AND kind = 'invoice_post'`,
-        ),
-      );
-      const r2 = await ruleOfB();
+      const setDayCountOfB = (n: number) =>
+        admin.withTenant(B.tenantId, (q) =>
+          q.execute(
+            `UPDATE autopilot_rules SET day_max_count = $1, version = version + 1
+              WHERE tenant_id = current_tenant_id() AND kind = 'invoice_post'`,
+            [n],
+          ),
+        );
       const second = await addProposal({ f: B, amountCents: 1_000 });
-      // The clock says the old day until the rule is free again.
-      let t = midnight - 30_000;
+      await setDayCountOfB(1);
       let release: () => void = () => {};
-      const released = new Promise<void>((r) => {
-        release = () => r();
-      });
-      let held: (pid: number) => void = () => {};
-      const holding = new Promise<number>((r) => {
-        held = r;
-      });
-      // A rule save as saveRule makes it: the rule row locked, the transaction left open.
-      const saving = admin.withTenant(B.tenantId, async (q) => {
-        await q.query("SELECT id FROM autopilot_rules WHERE tenant_id = current_tenant_id() AND kind = 'invoice_post' FOR UPDATE", []);
-        const [me] = await q.query<{ pid: number }>("SELECT pg_backend_pid() AS pid", []);
-        held(me.pid);
-        await released;
-      });
+      let saving: Promise<void> | undefined;
+      let approving: Promise<unknown> | undefined;
       try {
+        const r2 = await ruleOfB();
+        // The clock says the old day until the rule is free again.
+        let t = midnight - 30_000;
+        const released = new Promise<void>((r) => {
+          release = () => r();
+        });
+        let held: (pid: number) => void = () => {};
+        const holding = new Promise<number>((r) => {
+          held = r;
+        });
+        // A rule save as saveRule makes it: the rule row locked, the transaction left open.
+        saving = admin.withTenant(B.tenantId, async (q) => {
+          await q.query("SELECT id FROM autopilot_rules WHERE tenant_id = current_tenant_id() AND kind = 'invoice_post' FOR UPDATE", []);
+          const [me] = await q.query<{ pid: number }>("SELECT pg_backend_pid() AS pid", []);
+          held(me.pid);
+          await released;
+        });
         const pid = await holding;
-        const approving = executeProposal(pilotB, second, { confirmed: false, autopilot: { ruleId: r2.id, version: r2.version } }, {
+        approving = executeProposal(pilotB, second, { confirmed: false, autopilot: { ruleId: r2.id, version: r2.version } }, {
           db: app,
           clock: () => new Date(t),
           executors: REGISTRY,
@@ -621,7 +626,10 @@ describe("the autopilot", () => {
         expect(await approving).toMatchObject({ ok: true });
       } finally {
         release();
-        await saving.catch(() => undefined);
+        await saving?.catch(() => undefined);
+        await approving?.catch(() => undefined);
+        // B's rule back to the day's count addLogins gave it.
+        await setDayCountOfB(3);
       }
       const [row] = await admin.withTenant(B.tenantId, (q) =>
         q.query<{ decided_at: string; decision: Record<string, unknown> }>(
@@ -635,6 +643,39 @@ describe("the autopilot", () => {
       expect(row.decided_at).toBe(new Date(midnight + 30_000).toISOString());
       expect(row.decision).toMatchObject({ mode: "auto", dayCount: 0, dayMaxCount: 1 });
       expect(ran).toEqual([first, second]);
+    });
+
+    it("refuses a row that aged past the limit while the gate waited, retryable and unwritten, and the next attempt expires it", async () => {
+      flags.autopilot.startDate = "2026-10-01";
+      // Inside the age limit at NOW by half a minute, past it a minute later.
+      const id = await addProposal({ amountCents: 1_000, ageMs: flags.proposalMaxAgeDays * 24 * HOUR - 30_000 });
+      // A clock that reads NOW for its first reads and a minute later after them.
+      const stepping = (first: number) => {
+        let calls = 0;
+        return () => new Date((calls += 1) <= first ? NOW : NOW + 60_000);
+      };
+      const version = await ruleVersion();
+      // The gate's entry is inside the limit; the read once the rule is locked is past it.
+      expect(
+        await executeProposal(pilot, id, { confirmed: false, autopilot: { ruleId, version } }, {
+          db: app,
+          clock: stepping(1),
+          executors: REGISTRY,
+        }),
+      ).toEqual({ ok: false, category: "expired", retryable: true });
+      expect(await rowOf(id)).toEqual({ status: "proposed", decided_by: null, decision: null });
+      // A run (its look and the gate's entry inside the limit) reports a retry and stores no ask.
+      expect(await runAutopilot(A.tenantId, id, { db: app, clock: stepping(2), executors: REGISTRY })).toEqual({
+        ok: true,
+        result: { outcome: "retry", category: "expired" },
+      });
+      expect(await rowOf(id)).toEqual({ status: "proposed", decided_by: null, decision: null });
+      // The next attempt's entry is past the limit: the gate's own write expires the row.
+      expect(
+        await runAutopilot(A.tenantId, id, { db: app, clock: () => new Date(NOW + 60_000), executors: REGISTRY }),
+      ).toEqual({ ok: true, result: { outcome: "executor_refused", category: "expired" } });
+      expect(await rowOf(id)).toEqual({ status: "expired", decided_by: autopilotSub(A.tenantId), decision: null });
+      expect(ran).toEqual([]);
     });
   });
 
