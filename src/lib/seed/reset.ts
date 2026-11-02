@@ -1,3 +1,4 @@
+import { PAUSE_LOCK_SQL } from "../autopilot/state-lock";
 import { countTenantRows, readSettlementInput, readTenant } from "../data/read";
 import { TENANT_TABLES, assertIdentifier, type TenantTable } from "../data/tables";
 import { DbError, type Queryable, type TenantDb } from "../db/types";
@@ -133,6 +134,9 @@ export const DEMO_RESET_KEPT = {
   autopilot_rules:
     "the owner's Off, Ask me or Auto rule and limits per action kind (0070); it names only the " +
     "carrier, and the owner's choices survive a reset",
+  autopilot_changes:
+    "the record of each rule save and each Pause or Resume a person made (0089); it names only the " +
+    "carrier and its kept rules, and the owner's record survives a reset as the rules do",
   autopilot_state:
     "the carrier's Pause autopilot switch (0070); it names only the carrier, and the reset itself " +
     "sets a 30 minute pause on it",
@@ -436,6 +440,9 @@ export type DemoResetReport = {
 // statement; the caller's transaction then rolls back.
 export async function resetDemoInTransaction(q: Queryable, plan: CarrierPlan): Promise<DemoResetReport> {
   try {
+    // After any Pause or Resume in progress, so its record's before is the row step 6 replaces.
+    // First, before the reset locks any row a press would wait on, so the two never deadlock.
+    await q.query(PAUSE_LOCK_SQL, []);
     await verifyTenant(q, plan.carrier);
     const before = await readResetCounts(q);
     const refusals = await readRefusals(q);

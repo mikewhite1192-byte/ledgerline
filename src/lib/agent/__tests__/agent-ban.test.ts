@@ -134,6 +134,22 @@ const NETWORK: [code: string, rule: string][] = [
   ['export const e = new global.EventSource("/x");', "no-restricted-properties"],
   ['const { fetch: f } = globalThis;\nexport const r = f("/x");', "no-restricted-properties"],
 ];
+// The owner's autopilot rules and the pause switch, refused at all three lines; the autopilot's
+// readers and its pure policy, which the gateway may use.
+const AUTOPILOT_WRITES = [
+  'import { saveRule } from "../autopilot/rules-admin";',
+  'import { setPaused } from "@/lib/autopilot/state";',
+  'import { saveRule } from "../Autopilot/Rules-Admin";',
+  'import { setPaused } from "../autopilot/policy/../state";',
+  'import { saveRule } from "../autopilot";',
+];
+const AUTOPILOT_READS = [
+  'import { isPaused } from "../autopilot/facts";',
+  'import { autopilotModeFor } from "@/lib/autopilot/mode";',
+  'import { readRule } from "../autopilot/read";',
+  'import { isAutopilotSub } from "../autopilot/session";',
+  'import { DRIVER_KINDS } from "../autopilot/policy";',
+];
 // Names that only look like a loader's.
 const PLAIN_NAMES = [
   'export const schema = { required: ["driverId"], requirements: ["a"] };',
@@ -191,7 +207,7 @@ describe("agent lint wall", () => {
   it("outside the gateway, agent code imports none of the gateway's modules, money, I/O or loaders", async () => {
     for (const file of ["src/lib/agent/probe.ts", "src/lib/agent/operator/loop.ts", "src/app/api/agent/turn/route.ts"]) {
       await expectReports(
-        [...LEDGER_FORBIDDEN, ...LEDGER_READS, ...GATEWAY_MODULES, ...MODEL_WRAPPER, ...DIRECT_IO, ...VM],
+        [...LEDGER_FORBIDDEN, ...LEDGER_READS, ...GATEWAY_MODULES, ...MODEL_WRAPPER, ...DIRECT_IO, ...AUTOPILOT_WRITES, ...VM],
         file,
         1,
       );
@@ -204,12 +220,12 @@ describe("agent lint wall", () => {
 
   it("the gateway imports records, the engine, ledger reads and the model wrapper, never a money write", async () => {
     const file = "src/lib/agent/gateway/probe.ts";
-    await expectReports([...LEDGER_FORBIDDEN, ...VM], file, 1);
+    await expectReports([...LEDGER_FORBIDDEN, ...AUTOPILOT_WRITES, ...VM], file, 1);
     await expectLoadersRefused(file);
     await expectRefusedBy(STRING_CODE, file);
     await expectRefusedBy(NETWORK, file);
     await expectReports(
-      [...LEDGER_READS, ...GATEWAY_MODULES, ...MODEL_WRAPPER, ...DIRECT_IO, ...PLAIN, ...PLAIN_NAMES],
+      [...LEDGER_READS, ...GATEWAY_MODULES, ...MODEL_WRAPPER, ...DIRECT_IO, ...AUTOPILOT_READS, ...PLAIN, ...PLAIN_NAMES],
       file,
       0,
     );
@@ -218,7 +234,7 @@ describe("agent lint wall", () => {
   it("the operator turn may call the model wrapper and nothing else the gateway owns", async () => {
     const file = "src/lib/agent/operator/turn.ts";
     await expectReports(MODEL_WRAPPER, file, 0);
-    await expectReports([...LEDGER_FORBIDDEN, ...LEDGER_READS, ...GATEWAY_MODULES, ...DIRECT_IO, ...VM], file, 1);
+    await expectReports([...LEDGER_FORBIDDEN, ...LEDGER_READS, ...GATEWAY_MODULES, ...DIRECT_IO, ...AUTOPILOT_WRITES, ...VM], file, 1);
     await expectLoadersRefused(file);
     await expectRefusedBy(STRING_CODE, file);
     await expectRefusedBy(NETWORK, file);
@@ -228,7 +244,7 @@ describe("agent lint wall", () => {
   it("leaves code outside the agent alone, the model wrapper included", async () => {
     const loaders = LOADERS.map(([code]) => code);
     for (const file of ["src/app/approve/route.ts", "src/lib/ai/probe.ts"]) {
-      await expectReports([LEDGER_FORBIDDEN[0], GATEWAY_MODULES[0], DIRECT_IO[0], ...VM, ...loaders], file, 0);
+      await expectReports([LEDGER_FORBIDDEN[0], GATEWAY_MODULES[0], DIRECT_IO[0], ...AUTOPILOT_WRITES, ...VM, ...loaders], file, 0);
       for (const [code, rule] of [...STRING_CODE, ...NETWORK]) {
         expect(await ruleIds(code, file), `${file}: ${code}`).not.toContain(rule);
       }

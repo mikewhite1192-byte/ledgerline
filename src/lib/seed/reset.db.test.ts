@@ -2,6 +2,7 @@ import { randomUUID } from "node:crypto";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { flags } from "../../config/flags";
 import type { Session } from "../auth/claims";
+import { PAUSE_LOCK_SQL } from "../autopilot/state-lock";
 import { readTenantRows } from "../data/read";
 import type { TenantRows } from "../data/rows";
 import { TENANT_TABLES } from "../data/tables";
@@ -1279,4 +1280,49 @@ describe("the demo reset", () => {
     expect(await rowsOf(A)).toEqual(sorted(planA.rows));
     expect(await printOf(B)).toEqual(b);
   });
+
+  it("waits for a Pause or Resume in progress before it writes its own pause, so that press's record holds", async () => {
+    // The carrier's first press: no pause row yet, and the press holds the lock having read none.
+    await admin.withoutTenant((q) => q.execute("DELETE FROM autopilot_state WHERE tenant_id = CAST($1 AS uuid)", [A]));
+    let release!: () => void;
+    const released = new Promise<void>((r) => (release = r));
+    let read!: (n: number) => void;
+    const beforeRead = new Promise<number>((r) => (read = r));
+    const press = app.withTenant(A, async (q) => {
+      await q.query(PAUSE_LOCK_SQL, []);
+      read((await q.query("SELECT 1 AS one FROM autopilot_state WHERE tenant_id = current_tenant_id()", [])).length);
+      await released;
+      await q.execute(
+        `INSERT INTO autopilot_state (tenant_id, paused_at, paused_by, paused_until, updated_at)
+         VALUES (current_tenant_id(), now(), 'sub-owner', NULL, now())`,
+      );
+    });
+    let settled = false;
+    let reset: Promise<unknown> = Promise.resolve();
+    try {
+      expect(await beforeRead).toBe(0);
+      reset = resetDemoTenant(app, A, planA).finally(() => (settled = true));
+      // The reset is seen waiting on the lock (read from the server, not timed), and has not finished.
+      let waiting = 0;
+      for (let i = 0; i < 600 && waiting === 0; i += 1) {
+        await new Promise((r) => setTimeout(r, 100));
+        const rows = await admin.withoutTenant((q) =>
+          q.query<{ n: number }>(
+            `SELECT CAST(count(*) AS integer) AS n FROM pg_locks
+              WHERE locktype = 'advisory' AND NOT granted AND database = (SELECT oid FROM pg_database WHERE datname = current_database())`,
+          ),
+        );
+        waiting = rows[0]?.n ?? 0;
+      }
+      expect(waiting).toBe(1);
+      expect(settled).toBe(false);
+    } finally {
+      // Never left holding the lock, so a failure here cannot hang the tests after it.
+      release();
+    }
+    await press;
+    await reset;
+    // The press's pause, set with nothing before it, is the row: the reset leaves a person's pause alone.
+    expect(await pauseOf(A)).toEqual([{ paused_by: "sub-owner", until_min: null, at_now: true }]);
+  }, 60_000);
 });

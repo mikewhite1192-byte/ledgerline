@@ -12,6 +12,7 @@ import { Card, CardBody, CardHeader, CardTitle } from "@/components/ui/card";
 import { InlineAlert } from "@/components/ui/inline-alert";
 import { flags } from "@/config/flags";
 import { readWaitingRuleChangeViews } from "@/lib/agent/gateway/store";
+import { RULES_LINK_LABEL, RULES_LINK_LEAD } from "@/app/settings/autopilot/words";
 import { DbError } from "@/lib/db";
 import { formatLocalDate } from "@/lib/format/dates";
 import { readPayRulesPage, type PayRulesPage, type PayRulesVersion } from "@/lib/pay-rules/read";
@@ -104,6 +105,15 @@ export default async function PayRulesSettings() {
         }
       />
       {!flags.rulesByTalkingEnabled ? <InlineAlert tone="neutral">{SWITCHED_OFF}</InlineAlert> : null}
+      {flags.autopilotRules.enabled ? (
+        <p className="text-small text-foreground-2">
+          {RULES_LINK_LEAD}
+          <Link href="/settings/autopilot" className="underline underline-offset-4">
+            {RULES_LINK_LABEL}
+          </Link>
+          .
+        </p>
+      ) : null}
       {rules ? (
         <>
           <Versions rules={rules} />

@@ -106,6 +106,9 @@ import { PROPOSAL_CHECK_WORDS } from "@/lib/agent/verify/required";
 import { escalatedRow } from "@/lib/home/needs-you";
 import { VOICE_STATUS_WORDS } from "@/lib/voice/words";
 import * as fx from "./page-fixtures";
+import * as autopilotWords from "@/app/settings/autopilot/words";
+import { RULE_KINDS } from "@/lib/autopilot/rules-admin";
+import { autoAllowed } from "@/lib/money/never-alone";
 
 // Every screen a person reads, rendered with fixture rows and scanned for the words that belong to
 // the code, not to a trucking office (design-ui-ease section 3). A new route file under src/app (a
@@ -482,6 +485,11 @@ vi.mock("@/lib/settlements/views", async (importOriginal) => ({
   readDriverRecord: async () => get("driverRecord"),
   readBatchRecord: async () => get("batchRecord"),
 }));
+// Settings > Autopilot's read: the carrier's rules, each kind's picture and the pause.
+vi.mock("@/lib/autopilot/rules-admin", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("@/lib/autopilot/rules-admin")>()),
+  readRules: async () => get("autopilotRules"),
+}));
 vi.mock("@/lib/settlements/list", async (importOriginal) => ({
   ...(await importOriginal<typeof import("@/lib/settlements/list")>()),
   readPaystubAsk: async () => get("paystubAsk"),
@@ -630,6 +638,52 @@ function defaults(): Record<string, unknown> {
     factoredLine: null,
     quarterView: fx.QUARTER_VIEW,
   };
+}
+
+// Settings > Autopilot: one saved Auto rule, every other kind on Ask me, and the pause as each
+// variant sets it.
+const AUTOPILOT_PICTURE = {
+  rules: [
+    {
+      id: "33333333-3333-4333-8333-333333333333",
+      kind: "invoice_post",
+      mode: "auto",
+      maxCents: 100_000,
+      dayMaxCents: 500_000,
+      dayMaxCount: 10,
+      driverDayMaxCents: null,
+      version: 2,
+      updatedAt: "2026-11-02T16:00:00.000Z",
+    },
+  ],
+  kinds: RULE_KINDS.map((kind) => {
+    const ceiling = Object.hasOwn(flags.autopilot.kinds, kind) ? flags.autopilot.kinds[kind as keyof typeof flags.autopilot.kinds]! : null;
+    return {
+      kind,
+      mode: kind === "invoice_post" ? "auto" : "ask",
+      allowedAuto: autoAllowed(kind),
+      listed: ceiling !== null,
+      armed: ceiling?.armed === true,
+      ceiling,
+    };
+  }),
+  pause: { paused: false, pausedAt: null, pausedUntil: null, pausedBy: null },
+  startDate: "2026-10-31",
+};
+
+// The autopilot page with its switch on, the viewer's role as given (the shared fake answers admin).
+async function autopilotPage(role: "admin" | "staff" = "admin"): Promise<ReactNode> {
+  const savedSwitch = flags.autopilotRules;
+  const q = fakeQ as unknown as { query: (sql: string, params?: unknown[]) => Promise<unknown[]> };
+  const real = q.query;
+  flags.autopilotRules = { enabled: true };
+  if (role !== "admin") q.query = async (sql, params) => (/FROM memberships/.test(sql) ? [{ role }] : real(sql, params));
+  try {
+    return await (await import("@/app/settings/autopilot/page")).default();
+  } finally {
+    flags.autopilotRules = savedSwitch;
+    q.query = real;
+  }
 }
 
 // Every switch on, so each page shows its working state, not the off page. Money codes is a switch
@@ -1888,6 +1942,43 @@ const PAGES: PageCase[] = [
   {
     file: "settings/demo/page.tsx",
     variants: [{ name: "preview", load: async () => (await import("@/app/settings/demo/page")).default() }],
+  },
+  {
+    file: "settings/autopilot/page.tsx",
+    variants: [
+      {
+        name: "an admin, running",
+        setup: () => (state.fx.autopilotRules = AUTOPILOT_PICTURE),
+        load: () => autopilotPage(),
+        shows: ["Pause autopilot", "Sending invoices", "Weekly settlements", "Oct 31, 2026", autopilotWords.NEVER_ALONE_NOTE],
+      },
+      {
+        name: "an admin, paused by a person",
+        setup: () =>
+          (state.fx.autopilotRules = {
+            ...AUTOPILOT_PICTURE,
+            pause: { paused: true, pausedAt: "2026-11-02T15:00:00.000Z", pausedUntil: null, pausedBy: "person" },
+          }),
+        load: () => autopilotPage(),
+        shows: ["Resume autopilot", "Paused. A person decides everything until an admin resumes it."],
+      },
+      {
+        name: "paused after the demo reset",
+        setup: () =>
+          (state.fx.autopilotRules = {
+            ...AUTOPILOT_PICTURE,
+            pause: { paused: true, pausedAt: "2026-11-02T15:00:00.000Z", pausedUntil: "2026-11-02T15:30:00.000Z", pausedBy: "demo_reset" },
+          }),
+        load: () => autopilotPage(),
+        shows: "Paused for a short while after the demo reset. It resumes by itself.",
+      },
+      {
+        name: "staff",
+        setup: () => (state.fx.autopilotRules = AUTOPILOT_PICTURE),
+        load: () => autopilotPage("staff"),
+        shows: [autopilotWords.ADMIN_ONLY, "Pause autopilot", "Ask me"],
+      },
+    ],
   },
   {
     file: "settings/pay-rules/page.tsx",

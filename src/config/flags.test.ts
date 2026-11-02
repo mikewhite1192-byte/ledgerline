@@ -155,6 +155,8 @@ const KEPT_OFF = [
   "evalRun.enabled",
   // The card pull-back ships off; its own one-line enable PR turns it on.
   "cardPullback.enabled",
+  // The autopilot's rules from the app ship off; their own one-line enable PR turns them on.
+  "autopilotRules.enabled",
 ] as const;
 
 // The on/off switches in flags.ts, by path: every top-level boolean and every boolean inside a
@@ -463,6 +465,13 @@ describe("flags", () => {
     expect(LOCAL_OFF_ONLY as readonly string[]).toContain("mockTms.newLoad");
   });
 
+  it("ships the autopilot's rules from the app off, and local mode can never turn them on", () => {
+    expect(flags.autopilotRules).toEqual({ enabled: false });
+    expect(LOCAL_OVERRIDABLE as readonly string[]).not.toContain("autopilotRules.enabled");
+    // Listed ahead of its release, so the demo-path run keeps it off once it ships on.
+    expect(LOCAL_OFF_ONLY as readonly string[]).toContain("autopilotRules.enabled");
+  });
+
   it("ships the pay week roll on, and local mode can never turn it on", () => {
     expect(flags.payWeekRoll).toEqual({ enabled: true });
     expect(LOCAL_OVERRIDABLE as readonly string[]).not.toContain("payWeekRoll.enabled");
@@ -526,6 +535,7 @@ describe("flags", () => {
       "mockTms.enabled",
       "mockTms.newLoad",
       "payWeekRoll.enabled",
+      "autopilotRules.enabled",
     ];
     const offOnly = LOCAL_OFF_ONLY as readonly string[];
     expect(KEPT_OFF.filter((k) => offOnly.includes(k))).toEqual(KEPT_OFF.filter((k) => armedAhead.includes(k)));

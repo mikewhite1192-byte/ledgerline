@@ -771,6 +771,15 @@ export type Flags = {
       Record<"invoice_post" | "card_match" | "payment_reapply" | "advance_payout" | "money_code", AutopilotCeiling>
     >;
   };
+  // The autopilot's rules from the app (docs: AUTOPILOT-RULES, D-094, 0089): Settings > Autopilot
+  // shows each kind's Off, Ask me or Auto rule, its limits and the pause, and an admin saves a rule
+  // there (GET and POST /api/autopilot/rules, src/lib/autopilot/rules-admin.ts). A save is refused
+  // when it sets Auto on a kind a named person always approves, or a limit above the kind's ceiling
+  // in autopilot.kinds (raising a ceiling stays its own PR). Every save and every Pause or Resume is
+  // recorded in autopilot_changes in the same transaction. A saved rule only decides proposals not
+  // yet decided; nothing here approves or moves money. The page and both routes ask enabled
+  // themselves; the pause route stays on autopilot.enabled. It ships off.
+  autopilotRules: { enabled: boolean };
   // Load movement from driver evidence (docs: LOAD-MOVEMENT, owner D-056): a load moves planned to
   // in transit once its pickup bill of lading is read in, and in transit to delivered once its
   // proof of delivery is (src/lib/loads/paperwork.ts decides from the stored reads, no model), or
@@ -1209,6 +1218,8 @@ export const flags: Flags = {
       money_code: { maxCents: 15_000, dayMaxCents: 60_000, dayMaxCount: 4, driverDayMaxCents: 30_000, armed: false },
     },
   },
+  // Off until its own one-line enable PR. It changes only the owner's rules and their record.
+  autopilotRules: { enabled: false },
   // On by the owner's call (D-071, 2026-10-31). A load_move card is still a person's tap.
   loadMovement: { enabled: true, startDate: "2026-10-30" },
   // On by the owner's call (D-071, 2026-10-31). A load moves on it only while loadMovement is on too.

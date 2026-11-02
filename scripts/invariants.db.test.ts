@@ -270,6 +270,9 @@ describe("the money invariants on a real database", { timeout: 60_000 }, () => {
     // A person pausing the autopilot (0070): no seed, the pause switch writes it. Its rules are
     // seeded for both carriers.
     "autopilot_state",
+    // The record of a person's Pause or rule save (0089): no seed, the pause switch and the rules
+    // page write it.
+    "autopilot_changes",
     // The agent's question about a proposal (0072): no seed, the desk writes it.
     "agent_asks",
     // A deficit a card load ruling booked (0078): no seed, an approval writes it.
@@ -572,6 +575,12 @@ describe("the money invariants on a real database", { timeout: 60_000 }, () => {
         await q.execute(
           `INSERT INTO autopilot_state (tenant_id, paused_at, paused_by, paused_until, updated_at)
            VALUES (current_tenant_id(), now(), 'invariants-test', NULL, now())`,
+        );
+        // The pause's record, as the pause switch writes it beside the switch (0089).
+        await q.execute(
+          `INSERT INTO autopilot_changes (tenant_id, subject, before, after, changed_by)
+           VALUES (current_tenant_id(), 'pause', NULL,
+             CAST('{"pausedAt":null,"pausedBy":"invariants-test","pausedUntil":null}' AS jsonb), 'invariants-test')`,
         );
         // A person arming the driver for advances, and the id the carrier's TMS knows them by (0027).
         await q.execute(

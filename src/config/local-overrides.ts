@@ -28,7 +28,7 @@ export const LOCAL_OVERRIDABLE = [
 // (tmsSync.enabled), the dispatch webhook's switch (tmsHook.enabled), the card load ruling's
 // switch, the invoice on finalize's switch
 // (tmsFinalizeInvoice.enabled), parked advances' switch (advanceParking.enabled), the card
-// pull-back's switch, deficit recovery's switch, the morning digest's switch, the named stub lines' switch, the activation checklist's switch, the stub sent switch, the sample dispatch system's switch (mockTms.enabled), its new load form's (mockTms.newLoad) and the pay week roll's switch (payWeekRoll.enabled) are listed ahead of their own release, while they still ship off, so each
+// pull-back's switch, deficit recovery's switch, the morning digest's switch, the named stub lines' switch, the activation checklist's switch, the stub sent switch, the sample dispatch system's switch (mockTms.enabled), its new load form's (mockTms.newLoad), the pay week roll's switch (payWeekRoll.enabled) and the autopilot rules page's switch (autopilotRules.enabled) are listed ahead of their own release, while they still ship off, so each
 // release PR changes only its flag: an off-only switch can never be turned on, so listing one early
 // lets the local run do nothing it could not already do.
 export const LOCAL_OFF_ONLY = [
@@ -103,6 +103,7 @@ export const LOCAL_OFF_ONLY = [
   "mockTms.enabled",
   "mockTms.newLoad",
   "payWeekRoll.enabled",
+  "autopilotRules.enabled",
 ] as const;
 
 type Overridable = (typeof LOCAL_OVERRIDABLE)[number];
