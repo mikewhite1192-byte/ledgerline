@@ -397,8 +397,8 @@ export function chaseOptions(
 // with neither never finishes (the roll-up closes a week only from its stubs, and a run of it
 // makes none), so it never holds the week paid next back while a newer week has pay to run; a
 // week with pay and no stub yet (the seeded week before its first run) still comes first. With
-// one open week, that week. Null when no week is open. Cash Friday, its previews and the cash
-// needed report all read the week here, so they describe one week.
+// one open week, that week. Null when no week is open. Cash Friday, its previews, the cash needed
+// report and the pay sweep (D-093) all read the week here, so they describe one week.
 export function dueWeek<P extends { id: string; periodStart: LocalDate; periodEnd: LocalDate; status: string }>(
   periods: readonly P[],
   settlements: readonly { periodId: string }[],

@@ -17,7 +17,7 @@ import { EXPLAIN_TIMEOUT_MS, explainFix, type Explained, type ExplainInput } fro
 import { complete as aiComplete, type AiTool } from "../ai";
 import { NANOCENTS_PER_CENT } from "../ai/prices";
 import type { Session } from "../auth/claims";
-import { readCheckInput, readReceivablesInput, readRowsWhereId } from "../data/read";
+import { readCheckInput, readDueWeek, readReceivablesInput, readRowsWhereId } from "../data/read";
 import { getDb, type Queryable, type TenantDb } from "../db";
 import { findPaymentOnWrongInvoice, runAllChecks, type Finding } from "../rules-engine";
 import { assertMembership } from "../tenant/context";
@@ -208,14 +208,15 @@ async function readRun(q: Queryable, runId: string): Promise<Run | null> {
   return rows[0] ?? null;
 }
 
-// The run's open week: the one named (still open), else the newest open one by its start, the
-// week new records land in (D-090). An older open week waits for its approvals and pay.
+// The run's open week: the one named (still open), else the week paid next (readDueWeek, D-093):
+// the oldest open week holding a paystub or a pay day, else the newest open week. An older week
+// stays the one swept until its payout confirms and the roll-up closes it, so the week the roll
+// opens is swept after it, as Cash Friday reports them.
 export async function openPeriod(q: Queryable, periodId: string | null) {
+  if (periodId === null) return readDueWeek(q);
   const periods = await q.query<{ id: string; period_start: string; period_end: string }>(
     `SELECT id, CAST(period_start AS text) AS period_start, CAST(period_end AS text) AS period_end
-       FROM settlement_periods WHERE status = 'open'
-        AND (CAST($1 AS uuid) IS NULL OR id = CAST($1 AS uuid))
-      ORDER BY period_start DESC LIMIT 1`,
+       FROM settlement_periods WHERE status = 'open' AND id = CAST($1 AS uuid)`,
     [periodId],
   );
   return periods[0] ?? null;
@@ -261,8 +262,9 @@ export async function startSweep(
     await assertMembership(q, session);
     // A replayed start returns the same run.
     if (await readRun(q, runId)) return { ok: true, runId, existing: true };
-    // With its switch on, the week holding today is opened first, in this transaction, so the
-    // roll's lock covers the insert and the pick together.
+    // With its switch on, the week holding today is opened first, then the pick takes the week paid
+    // next (openPeriod), both in this transaction under the roll's lock, so a start after the roll
+    // sweeps the older week while it is unpaid and today's week once it is paid.
     await rollPayWeek(q, now);
     const period = await openPeriod(q, periodId);
     if (!period) return { ok: false, category: "no_open_period" };
@@ -505,7 +507,8 @@ async function findPhase(ctx: Ctx, run: Run): Promise<"plan" | "draft" | null> {
       return null;
     }
     const window = { start: period.period_start, end: period.period_end };
-    const input = await readCheckInput(q);
+    // Under the swept week's pay rules version, which may be older than the newest open week's.
+    const input = await readCheckInput(q, period.period_start);
     const codes = new Map(input.drivers.map((d) => [d.id, d.code]));
     const groups: Planned[][] = [];
     const add = (f: Pick<Finding, "check" | "category" | "sources">, legs: PlanLeg[]) => {

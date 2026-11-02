@@ -3,7 +3,7 @@ import { readCheckInput } from "../data/read";
 import { runAllChecks, type PayLine } from "../rules-engine";
 import { isUuid } from "../uuid";
 import { linesHash } from "./hash";
-import { readStoredLines, readStoredSettlement, recheckSettlement } from "./stored";
+import { readPeriod, readStoredLines, readStoredSettlement, recheckSettlement } from "./stored";
 
 // The auditor's evidence for a settlement_approve card, checked the way its executor checks it:
 // the card's numbers against the stored draft, the stored draft against a fresh engine run over
@@ -80,7 +80,10 @@ export async function settlementEvidence(
   // A paid or approved paystub is not re-run: its numbers are what was approved.
   if (stored.status !== "draft") return base;
   const check = await recheckSettlement(q, stored, lines);
-  const findings = runAllChecks(await readCheckInput(q))
+  // The checks under the paystub's own week's pay rules version (D-093); a week not found keeps
+  // the newest open week's.
+  const period = await readPeriod(q, stored.periodId);
+  const findings = runAllChecks(await readCheckInput(q, period?.start))
     .filter((f) => f.driverId === stored.driverId)
     .slice(0, MAX_FINDINGS)
     .map((f) => ({ check: f.check, category: f.category, amountCents: f.amountCents ?? null }));

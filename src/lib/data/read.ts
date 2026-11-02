@@ -207,20 +207,41 @@ export async function readPayConfigFor(
   return configFor(await readPayConfigVersions(q), periodStart);
 }
 
-// Everything the six pay checks read, for the whole tenant, under the open period's version.
-export async function readCheckInput(q: Queryable): Promise<CheckInput> {
-  return checkInputOf({
-    pay_configs: await readTable(q, "pay_configs"),
+// Everything the six pay checks read, for the whole tenant, under the version of the week starting
+// weekStart (the week a sweep runs), else the newest open period's (checkInputOf).
+export async function readCheckInput(q: Queryable, weekStart?: LocalDate): Promise<CheckInput> {
+  return checkInputOf(
+    {
+      pay_configs: await readTable(q, "pay_configs"),
+      settlement_periods: await readTable(q, "settlement_periods"),
+      drivers: await readTable(q, "drivers"),
+      loads: await readTable(q, "loads"),
+      load_state_miles: await readTable(q, "load_state_miles"),
+      load_accessorials: await readTable(q, "load_accessorials"),
+      driver_days: await readTable(q, "driver_days"),
+      fuel_purchases: await readTable(q, "fuel_purchases"),
+      pay_items: await readTable(q, "pay_items"),
+      advances: await readTable(q, "advances"),
+    },
+    weekStart,
+  );
+}
+
+// The week paid next (dueWeekOf, D-093): the week a sweep runs when none is named and the one the
+// sweep home shows, from the rows Cash Friday reads it from, so the two name one week. Null when
+// no week is open.
+export async function readDueWeek(q: Queryable): Promise<{ id: string; period_start: LocalDate; period_end: LocalDate } | null> {
+  const due = dueWeekOf({
     settlement_periods: await readTable(q, "settlement_periods"),
-    drivers: await readTable(q, "drivers"),
+    settlements: await readTable(q, "settlements"),
     loads: await readTable(q, "loads"),
-    load_state_miles: await readTable(q, "load_state_miles"),
-    load_accessorials: await readTable(q, "load_accessorials"),
-    driver_days: await readTable(q, "driver_days"),
-    fuel_purchases: await readTable(q, "fuel_purchases"),
     pay_items: await readTable(q, "pay_items"),
-    advances: await readTable(q, "advances"),
+    driver_days: await readTable(q, "driver_days"),
+    pay_configs: await readTable(q, "pay_configs"),
+    drivers: await readTable(q, "drivers"),
+    deduction_schedules: await readTable(q, "deduction_schedules"),
   });
+  return due ? { id: due.id, period_start: due.period_start, period_end: due.period_end } : null;
 }
 
 type DriverRows = Pick<
