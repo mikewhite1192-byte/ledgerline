@@ -2,8 +2,13 @@ import { flags, type Flags } from "../../config/flags";
 import {
   cents,
   ConfigError,
+  dueWeek,
+  hardDeductionLines,
   InputError,
+  PAID_STATUSES,
   parsePayConfig,
+  sub,
+  sum,
   type AdvanceRecord,
   type CashFridayInput,
   type CashFridayLimits,
@@ -30,8 +35,8 @@ import {
   type SettlementRecord,
   type VendorBillRecord,
 } from "../rules-engine";
-import { localDateOf, type LocalDate, type Period } from "../time/local-date";
-import { checkVersionOf, configFor } from "./config-version";
+import { localDateOf, periodContaining, type LocalDate, type Period } from "../time/local-date";
+import { checkVersionOf, configFor, sortVersions } from "./config-version";
 import type {
   AdvanceRow,
   CashSettingsRow,
@@ -364,6 +369,52 @@ export function checkInputOf(
   };
 }
 
+// What a driver's other unpaid stubs before a week hold on the balances a week draws down
+// (readHeldRecoveries, D-090): advance and deficit recoveries by the record's id in lower case,
+// and the escrow those stubs withhold.
+export type HeldRecoveries = {
+  advances: ReadonlyMap<string, number>;
+  deficits: ReadonlyMap<string, number>;
+  escrowCents: number;
+};
+
+export const NOTHING_HELD: HeldRecoveries = { advances: new Map(), deficits: new Map(), escrowCents: 0 };
+
+// The driver's rows as the week reads them: what is held counts as recovered already, never past
+// what is still owed (an advance's amount and fee less what a person took back, which checkAdvance
+// refuses past; a deficit's amount), and the escrow held counts toward the balance. Held never
+// lowers what the record says, so a bad record still fails the engine's own check. Pure; rows of
+// other drivers pass through unchanged.
+export function applyHeld<
+  R extends Pick<TenantRows, "drivers" | "advances"> & { driver_deficits?: readonly DeficitRow[] },
+>(rows: R, driverId: string, held: HeldRecoveries): R {
+  const heldOn = (map: ReadonlyMap<string, number>, id: string) => c(map.get(id.toLowerCase()) ?? 0);
+  return {
+    ...rows,
+    drivers: rows.drivers.map((d) =>
+      d.id !== driverId || held.escrowCents === 0
+        ? d
+        : { ...d, escrow_balance_cents: sum([c(d.escrow_balance_cents), c(held.escrowCents)]) },
+    ),
+    advances: rows.advances.map((a) => {
+      const h = a.driver_id === driverId ? heldOn(held.advances, a.id) : 0;
+      if (h === 0) return a;
+      const owed = sub(sum([c(a.amount_cents), c(a.fee_cents)]), c(a.taken_back_cents));
+      const recovered = Math.max(a.recovered_cents, Math.min(owed, sum([c(a.recovered_cents), h])));
+      return { ...a, recovered_cents: recovered };
+    }),
+    ...(rows.driver_deficits
+      ? {
+          driver_deficits: rows.driver_deficits.map((d) => {
+            const h = d.driver_id === driverId ? heldOn(held.deficits, d.id) : 0;
+            if (h === 0) return d;
+            return { ...d, recovered_cents: Math.max(d.recovered_cents, Math.min(d.amount_cents, sum([c(d.recovered_cents), h]))) };
+          }),
+        }
+      : {}),
+  };
+}
+
 // One driver's settlement for one period, under the version that period runs on, from the
 // escrow balance the driver holds now. The driver's deficits count only while deficit recovery
 // applies to the period (deficitRecoveryApplies); otherwise the input carries none. Rows without
@@ -447,15 +498,18 @@ export type CashFridayRows = Pick<
 
 // Everything Cash Friday reads (design 4.2). Paid instants become dates in the tenant's zone here,
 // so the engine sees only dates. The pay run preview is one settlement input per driver active in
-// the one open week; when the week is not exactly one, or a driver's input cannot be built (no
-// pay rules version for the week, a record that does not fit), previews are null and the engine
-// refuses the pay run as unknown rather than counting it as zero. An invoice with a live factoring
+// the week paid next (dueWeekOf); when no week is open, the held lines did not read (held null),
+// or a driver's input cannot be built (no pay rules version for the week, a record that does not
+// fit), previews are null and the engine refuses the pay run as unknown rather than counting it
+// as zero. held defaults to nothing held, as for the seed's plan (one open week, every older week
+// paid, so no unpaid stub holds anything). An invoice with a live factoring
 // line (any status but declined or failed: submitted, unknown and funded all mean the partner may
 // hold it) is marked factored, so the engine neither counts its receipt nor offers it again.
 export function cashFridayInputOf(
   rows: CashFridayRows,
   zone: string,
   limits: CashFridayLimits,
+  held: ReadonlyMap<string, HeldRecoveries> | null = new Map(),
 ): CashFridayInput {
   if (rows.cash_settings.length > 1) throw new Error("more than one cash settings row");
   const paidOn = (at: string | null): LocalDate | null => (at === null ? null : localDateOf(at, zone));
@@ -464,7 +518,8 @@ export function cashFridayInputOf(
     settings: rows.cash_settings.length === 1 ? cashSettingsOf(rows.cash_settings[0]) : null,
     periods: rows.settlement_periods.map(periodOf),
     settlements: rows.settlements.map((r) => ({ ...settlementOf(r), paidOn: paidOn(r.paid_at) })),
-    previews: previewsOf(rows),
+    payDays: payDaysOf(rows),
+    previews: previewsOf(rows, held),
     advances: rows.advances.map((r) => ({ ...advanceOf(r), paidOn: paidOn(r.paid_at) })),
     invoices: rows.invoices.map((r) => (factored.has(r.id) ? { ...invoiceOf(r), factored: true } : invoiceOf(r))),
     payments: rows.customer_payments.map(paymentOf),
@@ -479,15 +534,86 @@ export function factoredInvoiceIds(lines: readonly { invoice_id: string; status:
   return new Set(lines.filter((l) => l.status !== "declined" && l.status !== "failed").map((l) => l.invoice_id));
 }
 
-function previewsOf(rows: CashFridayRows): SettlementInput[] | null {
-  const open = rows.settlement_periods.filter((p) => p.status === "open");
-  if (open.length !== 1) return null;
-  const period: Period = { start: open[0].period_start, end: open[0].period_end };
+// The days that carry pay (dueWeek), each one a day "Run the week" drafts a paystub for: a load a
+// driver delivered (delivered or invoiced, as the engine pays it), a pay item (every kind makes a
+// line), and a day worked only where it makes a line on its own (dayDrafts).
+export function payDaysOf(
+  rows: Pick<TenantRows, "loads" | "pay_items" | "driver_days" | "pay_configs" | "drivers" | "deduction_schedules">,
+): LocalDate[] {
+  const drafts = dayDrafts(rows);
+  return [
+    ...rows.loads
+      .filter((l) => l.driver_id !== null && l.delivered_on !== null && PAID_STATUSES.includes(l.status))
+      .map((l) => l.delivered_on as LocalDate),
+    ...rows.pay_items.map((i) => i.item_date),
+    ...rows.driver_days.filter(drafts).map((d) => d.day),
+  ];
+}
+
+// Whether a day worked drafts a paystub with no load or pay item beside it: only through the
+// deductions the engine always takes (hardDeductionLines: insurance for the drivers it applies to,
+// a lease or other scheduled deduction active that week), since with no gross nothing else makes a
+// line. A company driver's day with no insurance and no schedule drafts nothing, so it never holds
+// the week paid next back. A day whose driver, week or pay rules do not read counts, as it did
+// (unknown is not "drafts nothing"), so the week stays the one reported and its previews decide.
+// One answer per driver and week.
+function dayDrafts(
+  rows: Pick<TenantRows, "driver_days" | "pay_configs" | "drivers" | "deduction_schedules">,
+): (d: DriverDayRow) => boolean {
+  const seen = new Map<string, boolean>();
+  return (d) => {
+    const driver = rows.drivers.find((x) => x.id === d.driver_id);
+    if (!driver) return true;
+    try {
+      const week = periodContaining(d.day, sortVersions(rows.pay_configs)[0].week_start_dow);
+      const key = `${d.driver_id}:${week.start}`;
+      const known = seen.get(key);
+      if (known !== undefined) return known;
+      const lines = hardDeductionLines(
+        payConfigOf(configFor(rows.pay_configs, week.start)),
+        driverOf(driver),
+        week,
+        [],
+        rows.deduction_schedules.filter((x) => x.driver_id === d.driver_id).map(scheduleOf),
+        rows.driver_days.filter((x) => x.driver_id === d.driver_id).map(dayOf),
+      ).lines;
+      seen.set(key, lines.length > 0);
+      return lines.length > 0;
+    } catch {
+      return true;
+    }
+  };
+}
+
+// The week Cash Friday reports (dueWeek, D-090), as its row.
+export function dueWeekOf(
+  rows: Pick<
+    CashFridayRows,
+    "settlement_periods" | "settlements" | "loads" | "pay_items" | "driver_days" | "pay_configs" | "drivers" | "deduction_schedules"
+  >,
+): SettlementPeriodRow | null {
+  const due = dueWeek(
+    rows.settlement_periods.map(periodOf),
+    rows.settlements.map((s) => ({ periodId: s.period_id })),
+    payDaysOf(rows),
+  );
+  return due ? (rows.settlement_periods.find((p) => p.id === due.id) ?? null) : null;
+}
+
+// The previews describe the week Cash Friday reports (dueWeekOf), so the pay run total and the
+// previews are one week's. Each driver's preview reads what the driver's other unpaid stubs hold
+// (held, by driver id in lower case, from heldByDriver for that week), as a run of the week does,
+// so a preview and the run agree; a driver missing from it holds nothing, and null (the held lines did
+// not read) makes the previews null, so the pay run reads unknown.
+function previewsOf(rows: CashFridayRows, held: ReadonlyMap<string, HeldRecoveries> | null): SettlementInput[] | null {
+  const due = dueWeekOf(rows);
+  if (!due || held === null) return null;
+  const period: Period = { start: due.period_start, end: due.period_end };
   const active = rows.drivers
     .filter((d) => d.active_from <= period.end && (d.active_to === null || d.active_to >= period.start))
     .sort((a, b) => (a.code < b.code ? -1 : a.code > b.code ? 1 : 0));
   try {
-    return active.map((d) => settlementInputOf(rows, d.id, period));
+    return active.map((d) => settlementInputOf(applyHeld(rows, d.id, held.get(d.id.toLowerCase()) ?? NOTHING_HELD), d.id, period));
   } catch (error) {
     if (error instanceof ConfigError || error instanceof InputError) return null;
     throw error;

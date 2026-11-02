@@ -56,13 +56,13 @@ export function configForDay<T extends Version>(versions: readonly T[], day: Loc
   return configFor(versions, period.start);
 }
 
-// The version the pay checks read: the open period's; with no open period, the newest.
+// The version the pay checks read: the newest open period's (the current week, where new records
+// land, D-090); with no open period, the newest version.
 export function checkVersionOf<T extends Version>(
   versions: readonly T[],
   periods: readonly Pick<SettlementPeriodRow, "period_start" | "status">[],
 ): T {
-  const open = periods.filter((p) => p.status === "open");
-  if (open.length > 1) throw new ConfigError("more_than_one_open_period");
-  if (open.length === 1) return configFor(versions, open[0].period_start);
+  const open = periods.filter((p) => p.status === "open").sort((a, b) => compareText(a.period_start, b.period_start));
+  if (open.length > 0) return configFor(versions, open[open.length - 1].period_start);
   return sortVersions(versions).pop()!;
 }

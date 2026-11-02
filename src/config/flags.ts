@@ -316,6 +316,10 @@ export type Flags = {
   // finding it can fix and lists the rest for a person. It only proposes; a person approves.
   // Off means the Sweep page shows its reason text and the routes refuse before any work.
   sweepEnabled: boolean;
+  // The pay sweep opens the pay week holding today when no period holds it, so deliveries after
+  // the seeded week draft. Off means the sweep only sweeps a week that already exists
+  // (no_open_period once the seeded week has ended and been paid).
+  payWeekRoll: { enabled: boolean };
   // The nightly kicker (infra sweep stack). Off means the internal route refuses every call.
   sweepScheduleEnabled: boolean;
   // A person's approval of a pay correction (drafted by the sweep or in chat) writes its pay item
@@ -1065,6 +1069,7 @@ export const flags: Flags = {
     proposeTimeoutMs: 20_000,
   },
   sweepEnabled: true,
+  payWeekRoll: { enabled: false },
   sweepScheduleEnabled: true,
   payCorrectionsEnabled: true,
   sweepLimits: { maxItems: 40, maxRunCents: 150, maxExplainCents: 5, sliceMs: 20_000, maxAuditAttempts: 3 },

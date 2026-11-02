@@ -5,7 +5,9 @@ import { useState } from "react";
 import { Button } from "@/components/ui/button";
 
 // "Run sweep now": makes the run id here (a double press or a retry replays the same run), opens
-// the run and goes to its page, which carries it on. Fixed sentences only.
+// the run and goes to its page, which carries it on. It never names a week: the start picks the
+// newest open week after the pay week roll (D-090), so a week the roll opens on this press is the
+// one swept, not the older week the page was showing. Fixed sentences only.
 
 const NOTICE: Readonly<Record<string, string>> = {
   disabled: "The sweep is switched off right now.",
@@ -15,7 +17,7 @@ const NOTICE: Readonly<Record<string, string>> = {
 };
 const FALLBACK = "The sweep did not start. Try again.";
 
-export function StartSweep({ periodId, running }: { periodId: string | null; running: boolean }) {
+export function StartSweep({ hasOpenWeek, running }: { hasOpenWeek: boolean; running: boolean }) {
   const router = useRouter();
   const [runId, setRunId] = useState<string | null>(null);
   const [pending, setPending] = useState(false);
@@ -30,7 +32,7 @@ export function StartSweep({ periodId, running }: { periodId: string | null; run
       const res = await fetch("/api/sweeps", {
         method: "POST",
         headers: { "content-type": "application/json" },
-        body: JSON.stringify(periodId ? { runId: id, periodId } : { runId: id }),
+        body: JSON.stringify({ runId: id }),
       });
       const body = (await res.json().catch(() => ({}))) as { runId?: string; error?: string };
       if (res.ok && typeof body.runId === "string") {
@@ -48,7 +50,7 @@ export function StartSweep({ periodId, running }: { periodId: string | null; run
 
   return (
     <div className="grid gap-2">
-      <Button disabled={running || periodId === null} pending={pending} pendingLabel="Starting" onClick={() => void start()}>
+      <Button disabled={running || !hasOpenWeek} pending={pending} pendingLabel="Starting" onClick={() => void start()}>
         Run sweep now
       </Button>
       {notice ? (

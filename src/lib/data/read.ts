@@ -35,17 +35,21 @@ import { isUuid } from "../uuid";
 import { extractAmountsCents } from "../voice/amount";
 import { configFor, configForDay, sortVersions } from "./config-version";
 import {
+  applyHeld,
   cashFridayInputOf,
   checkInputOf,
   customerOf,
   deficitRecoveryApplies,
   driverOf,
+  dueWeekOf,
   loadsOf,
   payConfigOf,
   receivablesInputOf,
   settlementInputOf,
   advanceOf,
+  type CashFridayRows,
   type DeficitRow,
+  type HeldRecoveries,
 } from "./records";
 import type { PayConfigRow, TenantRows } from "./rows";
 import { assertIdentifier, TABLE_SPECS, TENANT_TABLES, type TenantTable } from "./tables";
@@ -302,38 +306,106 @@ export async function readDriverDeficits(q: Queryable, driverId: string, timeZon
   });
 }
 
-const HELD_DEFICIT_SQL = `SELECT CAST(l.sources AS text) AS sources, CAST(l.amount_cents AS text) AS amount_cents
+export const HELD_SQL = `SELECT l.kind, CAST(l.sources AS text) AS sources, CAST(l.amount_cents AS text) AS amount_cents
   FROM settlement_lines l
   JOIN settlements s ON s.tenant_id = l.tenant_id AND s.id = l.settlement_id
- WHERE l.tenant_id = current_tenant_id() AND l.kind = 'deficit_recovery'
-   AND s.driver_id = CAST($1 AS uuid) AND s.status = 'approved' AND s.period_id <> CAST($2 AS uuid)`;
+  JOIN settlement_periods p ON p.tenant_id = s.tenant_id AND p.id = s.period_id
+ WHERE l.tenant_id = current_tenant_id() AND l.kind IN ('advance_recovery', 'deficit_recovery', 'escrow')
+   AND s.driver_id = CAST($1 AS uuid)
+   AND ((s.status = 'draft' AND p.period_start < CAST($3 AS date))
+        OR (s.status = 'approved' AND s.period_id <> CAST($2 AS uuid)))`;
 
-// What the driver's other approved stubs (approved, so their payout may already be out, but not
-// yet booked as paid) take from each deficit, keyed by deficit id. The stub of the period itself
-// is left out, so the pre-pay recheck of that stub reads what its own draft read. A line that does
-// not read as one deficit and a whole negative amount fails the read (unknown is not zero).
-async function readHeldDeficitRecoveries(q: Queryable, driverId: string, periodId: string): Promise<Map<string, number>> {
-  const rows = await q.query<{ sources: unknown; amount_cents: unknown }>(HELD_DEFICIT_SQL, [driverId, periodId]);
-  const held = new Map<string, number>();
+// HELD_SQL for every driver of the tenant at once, each line with its driver: what Cash Friday's
+// previews read for the week paid next, in one query.
+export const HELD_ALL_SQL = `SELECT CAST(s.driver_id AS text) AS driver_id, l.kind, CAST(l.sources AS text) AS sources,
+       CAST(l.amount_cents AS text) AS amount_cents
+  FROM settlement_lines l
+  JOIN settlements s ON s.tenant_id = l.tenant_id AND s.id = l.settlement_id
+  JOIN settlement_periods p ON p.tenant_id = s.tenant_id AND p.id = s.period_id
+ WHERE l.tenant_id = current_tenant_id() AND l.kind IN ('advance_recovery', 'deficit_recovery', 'escrow')
+   AND ((s.status = 'draft' AND p.period_start < CAST($2 AS date))
+        OR (s.status = 'approved' AND s.period_id <> CAST($1 AS uuid)))`;
+
+// What the driver's other unpaid stubs that come before this one hold on each balance a week
+// draws down (D-090): every draft in an older week, and every approved stub (its payout may
+// already be out, but not yet booked as paid) in any other week. Advance and deficit recoveries
+// are keyed by the record they cite, escrow is summed for the driver. The stub of the period
+// itself is left out, so the pre-pay recheck of that stub reads what its own draft read. A
+// recovery line that does not cite one record, a recovery that takes nothing back and an escrow
+// line that pays out fail the read (unknown is not zero).
+async function readHeldRecoveries(
+  q: Queryable,
+  driverId: string,
+  period: { id: string; start: LocalDate },
+): Promise<HeldRecoveries> {
+  return heldOf(await readHeldLines(q, driverId, period));
+}
+
+export type HeldLine = { kind: string; sources: unknown; amount_cents: unknown };
+
+function readHeldLines(q: Queryable, driverId: string, period: { id: string; start: LocalDate }): Promise<HeldLine[]> {
+  return q.query<HeldLine>(HELD_SQL, [driverId, period.id, period.start]);
+}
+
+// The held lines of every driver (HELD_ALL_SQL) summed by driver id in lower case. Pure; null when
+// any line does not read, so the previews read unknown rather than a guess.
+export function heldByDriver(rows: readonly (HeldLine & { driver_id: string })[]): Map<string, HeldRecoveries> | null {
+  const byDriver = new Map<string, HeldLine[]>();
   for (const r of rows) {
-    const sources: unknown = typeof r.sources === "string" ? JSON.parse(r.sources) : null;
-    const ref = Array.isArray(sources) && sources.length === 1 ? (sources[0] as { table?: unknown; id?: unknown }) : null;
-    if (ref?.table !== "driver_deficits" || typeof ref.id !== "string") {
-      throw new Error("a held deficit recovery line does not cite one deficit");
-    }
-    const taken = -wholeCents(r.amount_cents, "settlement_lines.amount_cents");
-    if (taken <= 0) throw new Error("a held deficit recovery line takes nothing back");
-    const key = ref.id.toLowerCase();
-    held.set(key, (held.get(key) ?? 0) + taken);
+    const key = String(r.driver_id).toLowerCase();
+    byDriver.set(key, [...(byDriver.get(key) ?? []), r]);
+  }
+  const held = new Map<string, HeldRecoveries>();
+  try {
+    for (const [driverId, lines] of byDriver) held.set(driverId, heldOf(lines));
+  } catch {
+    return null;
   }
   return held;
 }
 
+// The held lines summed (readHeldRecoveries). Pure; throws on a line that does not read.
+function heldOf(rows: readonly HeldLine[]): HeldRecoveries {
+  const advances = new Map<string, number>();
+  const deficits = new Map<string, number>();
+  let escrowCents = 0;
+  for (const r of rows) {
+    const taken = -wholeCents(r.amount_cents, "settlement_lines.amount_cents");
+    if (r.kind === "escrow") {
+      if (taken < 0) throw new Error("a held escrow line pays out");
+      escrowCents += taken;
+      continue;
+    }
+    const sources: unknown = typeof r.sources === "string" ? JSON.parse(r.sources) : null;
+    const refs = (Array.isArray(sources) ? sources : []) as { table?: unknown; id?: unknown }[];
+    // As the booking reads them (paidWritesOf): an advance recovery cites exactly one advance, a
+    // deficit recovery exactly one deficit and nothing else.
+    const cited =
+      r.kind === "advance_recovery"
+        ? refs.filter((ref) => ref?.table === "advances")
+        : refs.length === 1 && refs[0]?.table === "driver_deficits"
+          ? refs
+          : [];
+    const what = r.kind === "advance_recovery" ? "advance" : "deficit";
+    const held = r.kind === "advance_recovery" ? advances : deficits;
+    const id = cited.length === 1 ? cited[0].id : null;
+    if (typeof id !== "string") throw new Error(`a held ${what} recovery line does not cite one ${what}`);
+    if (taken <= 0) throw new Error(`a held ${what} recovery line takes nothing back`);
+    const key = id.toLowerCase();
+    held.set(key, (held.get(key) ?? 0) + taken);
+  }
+  if (!Number.isSafeInteger(escrowCents)) throw new Error("held escrow did not add up as whole cents");
+  return { advances, deficits, escrowCents };
+}
+
 // One driver's settlement for one period, from the escrow balance the driver holds now. The
 // advances are the ones a pay run may recover from (no live card pull), and the deficits are read
-// only while deficit recovery applies to the period. A deficit counts what the driver's other
-// approved, unbooked stubs hold on it as recovered already (never past its amount), since their
-// payout can go out before booking adds it: a later stub takes only what is left, and a draft that
+// only while deficit recovery applies to the period. Each balance a week draws down (an advance,
+// a deficit, the escrow balance toward its target) counts what the driver's other unpaid stubs
+// before this one hold as taken already (readHeldRecoveries, applyHeld): with two open weeks the
+// older stub takes and the newer one takes only what is left, and once the older is paid the
+// records have moved by the same cents, so no cent is taken twice in any pay order. An approved
+// stub's payout can go out before booking adds it, so it holds in every other week; a draft that
 // took the same part before the other was approved parks at its own approval's recheck.
 export async function readSettlementInput(
   q: Queryable,
@@ -346,15 +418,12 @@ export async function readSettlementInput(
   if (periods.length !== 1) throw new Error("no such pay period");
   const rows = await readDriverRows(q, driverId, true);
   const period = { start: periods[0].period_start, end: periods[0].period_end };
-  if (!deficitRecoveryApplies(period)) return settlementInputOf(rows, driverId, period);
+  const held = await readHeldRecoveries(q, driverId, { id: periods[0].id, start: period.start });
+  if (!deficitRecoveryApplies(period)) return settlementInputOf(applyHeld(rows, driverId, held), driverId, period);
   const tenant = await readTenant(q);
   if (!tenant) throw new Error("no tenant is set");
-  const held = await readHeldDeficitRecoveries(q, driverId, periodId);
-  const deficits = (await readDriverDeficits(q, driverId, tenant.timezone)).map((d) => {
-    const h = held.get(d.id.toLowerCase()) ?? 0;
-    return h === 0 ? d : { ...d, recovered_cents: Math.min(d.amount_cents, d.recovered_cents + h) };
-  });
-  return settlementInputOf({ ...rows, driver_deficits: deficits }, driverId, period);
+  const deficits = await readDriverDeficits(q, driverId, tenant.timezone);
+  return settlementInputOf(applyHeld({ ...rows, driver_deficits: deficits }, driverId, held), driverId, period);
 }
 
 // What advanceEligibility needs for one request: the date is the tenant's own, the loads
@@ -435,29 +504,33 @@ export async function readCashFridayInput(
   zone: string,
   limits: CashFridayLimits,
 ): Promise<CashFridayInput> {
-  return cashFridayInputOf(
-    {
-      pay_configs: await readTable(q, "pay_configs"),
-      settlement_periods: await readTable(q, "settlement_periods"),
-      settlements: await readTable(q, "settlements"),
-      drivers: await readTable(q, "drivers"),
-      loads: await readTable(q, "loads"),
-      load_state_miles: await readTable(q, "load_state_miles"),
-      load_accessorials: await readTable(q, "load_accessorials"),
-      driver_days: await readTable(q, "driver_days"),
-      pay_items: await readTable(q, "pay_items"),
-      deduction_schedules: await readTable(q, "deduction_schedules"),
-      advances: await readTable(q, "advances"),
-      invoices: await readTable(q, "invoices"),
-      customer_payments: await readTable(q, "customer_payments"),
-      payment_applications: await readTable(q, "payment_applications"),
-      vendor_bills: await readTable(q, "vendor_bills"),
-      cash_settings: await readTable(q, "cash_settings"),
-      factoring_request_invoices: await readTable(q, "factoring_request_invoices"),
-    },
-    zone,
-    limits,
-  );
+  const rows: CashFridayRows = {
+    pay_configs: await readTable(q, "pay_configs"),
+    settlement_periods: await readTable(q, "settlement_periods"),
+    settlements: await readTable(q, "settlements"),
+    drivers: await readTable(q, "drivers"),
+    loads: await readTable(q, "loads"),
+    load_state_miles: await readTable(q, "load_state_miles"),
+    load_accessorials: await readTable(q, "load_accessorials"),
+    driver_days: await readTable(q, "driver_days"),
+    pay_items: await readTable(q, "pay_items"),
+    deduction_schedules: await readTable(q, "deduction_schedules"),
+    advances: await readTable(q, "advances"),
+    invoices: await readTable(q, "invoices"),
+    customer_payments: await readTable(q, "customer_payments"),
+    payment_applications: await readTable(q, "payment_applications"),
+    vendor_bills: await readTable(q, "vendor_bills"),
+    cash_settings: await readTable(q, "cash_settings"),
+    factoring_request_invoices: await readTable(q, "factoring_request_invoices"),
+  };
+  // The previews read what each driver's other unpaid stubs hold on the week paid next, as a run
+  // of that week does (readSettlementInput), so the two agree. A held line that does not read
+  // makes the previews unknown (held null), never a guess; a database error fails the read.
+  const due = dueWeekOf(rows);
+  const held = due
+    ? heldByDriver(await q.query<HeldLine & { driver_id: string }>(HELD_ALL_SQL, [due.id, due.period_start]))
+    : new Map<string, HeldRecoveries>();
+  return cashFridayInputOf(rows, zone, limits, held);
 }
 
 // Only the named tables, whole, for the current tenant: what one report reads. A report is a view

@@ -11,6 +11,7 @@ import {
   type SettlementResult,
   type SourceRef,
 } from "../rules-engine";
+import { isUuid } from "../uuid";
 import { findContradictions, isNamed, readSourceFacts } from "./contradiction";
 import {
   checkLineSources,
@@ -234,6 +235,20 @@ export async function parkSettlement(
       WHERE tenant_id = current_tenant_id() AND id = CAST($1 AS uuid) AND status = 'draft'
         AND parked_reason IS NULL`,
     [settlementId, reason, now.toISOString()],
+  );
+}
+
+// The drivers' rows, locked for the rest of the caller's transaction in id order, after the
+// paystubs' locks: the lock the booking holds while it dates a carried shortfall into a later
+// week (book.ts). An approval takes it before its pre-pay recheck, so that read and the stub's
+// move to approved never interleave with a booking of another week of the same driver: whichever
+// commits second sees the first (D-090).
+export async function lockPayDrivers(q: Queryable, driverIds: readonly string[]): Promise<void> {
+  for (const id of driverIds) if (!isUuid(id)) throw new Error("not a record id");
+  await q.query(
+    `SELECT id FROM drivers WHERE tenant_id = current_tenant_id() AND id = ANY(CAST($1 AS uuid[]))
+      ORDER BY id FOR UPDATE`,
+    [`{${[...new Set(driverIds)].join(",")}}`],
   );
 }
 

@@ -144,6 +144,7 @@ export {
   CHASE_INVOICES_MAX,
   computeCashFriday,
   DEFER_DAYS,
+  dueWeek,
   expectedReceipts,
   factoringOption,
   NO_HISTORY_ON_TIME_BPS,

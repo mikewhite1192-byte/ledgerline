@@ -9,6 +9,7 @@ import {
   fuelPurchaseOf,
   loadsOf,
   payConfigOf,
+  payDaysOf,
   periodOf,
   receivablesInputOf,
   settlementOf,
@@ -97,12 +98,22 @@ export async function computeReport(
       );
     }
     case "cash_needed": {
-      const rows = await readReportInput(q, ["settlement_periods", "settlements", "drivers"]);
+      const rows = await readReportInput(q, [
+        "settlement_periods",
+        "settlements",
+        "drivers",
+        "loads",
+        "pay_items",
+        "driver_days",
+        "pay_configs",
+        "deduction_schedules",
+      ]);
       return computeCashNeeded(
         {
           periods: rows.settlement_periods.map(periodOf),
           settlements: rows.settlements.map(settlementOf),
           drivers: rows.drivers.map(driverOf),
+          payDays: payDaysOf(rows),
         },
         request.args,
         today,

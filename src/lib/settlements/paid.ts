@@ -1,5 +1,5 @@
 import { cents, sub, sum, type Cents, type LineKind, type SourceRef } from "../rules-engine";
-import { addDays, type LocalDate } from "../time/local-date";
+import { addDays, isWithin, type LocalDate, type Period } from "../time/local-date";
 
 // The writes a paid settlement makes, worked out from its paystub lines alone (pure). The seed's
 // history (applyHistory) and the live booking (bookPaidSettlement) both call this, so the two
@@ -49,6 +49,35 @@ export type PaidWrites = {
 
 export const CARRIED_DESCRIPTION = "Shortfall carried from the week before";
 
+// The day a carried shortfall is dated: the first day of the earliest later week that can still
+// draft it (draftingWeek: open, with no approved or paid stub of this driver, D-090), so it lands
+// in a week that charges it even across a week that was never opened. With no such week yet, the
+// first day after the week, unless a later week can no longer draft it (closed, or holding an
+// approved or paid stub of this driver: a newer week paid before this one); then the first day
+// past every such week in a row. notBefore (the first day of the week holding the carrier's local
+// today, the week the next sweep start opens) keeps it out of a week already over that was never
+// opened, which nothing would ever draft. In the normal order that is periodEnd + 1 either way.
+// Each step moves past one week, so the walk ends.
+export function carriedItemDate(
+  periodEnd: LocalDate,
+  settledWeeks: readonly Period[],
+  draftingWeek: LocalDate | null = null,
+  notBefore: LocalDate | null = null,
+): LocalDate {
+  if (draftingWeek !== null) {
+    if (draftingWeek <= periodEnd) throw new RangeError("the drafting week is not after the week");
+    return draftingWeek;
+  }
+  const next = addDays(periodEnd, 1);
+  let day = notBefore !== null && notBefore > next ? notBefore : next;
+  for (let i = 0; i <= settledWeeks.length; i += 1) {
+    const holding = settledWeeks.find((w) => isWithin(day, w));
+    if (!holding) return day;
+    day = addDays(holding.end, 1);
+  }
+  throw new RangeError("the settled weeks overlap");
+}
+
 export function paidWritesOf(input: {
   settlementId: string;
   lines: readonly PaidLine[];
@@ -56,6 +85,11 @@ export function paidWritesOf(input: {
   // The driver's escrow balance just before this booking.
   openingCents: number;
   periodEnd: LocalDate;
+  // Later weeks that can no longer draft this driver's carried item, the first day of the
+  // earliest later week that can, and the earliest day it may fall on (carriedItemDate).
+  settledWeeks?: readonly Period[];
+  draftingWeek?: LocalDate | null;
+  notBefore?: LocalDate | null;
 }): PaidWrites {
   if (!Number.isSafeInteger(input.openingCents)) throw new RangeError("opening balance is not cents");
   const escrowLines = input.lines.filter((l) => l.kind === "escrow");
@@ -112,8 +146,14 @@ export function paidWritesOf(input: {
             kind: "carried_shortfall",
             subkind: "shortfall",
             amountCents: input.carryForwardCents,
-            // Pay periods are whole weeks back to back, so the next one starts the day after.
-            itemDate: addDays(input.periodEnd, 1),
+            // The earliest later week that can still draft it, else the day after the week (never
+            // before the week holding today), past any later week already settled for this driver.
+            itemDate: carriedItemDate(
+              input.periodEnd,
+              input.settledWeeks ?? [],
+              input.draftingWeek ?? null,
+              input.notBefore ?? null,
+            ),
             refTable: "settlements",
             refId: input.settlementId,
             description: CARRIED_DESCRIPTION,

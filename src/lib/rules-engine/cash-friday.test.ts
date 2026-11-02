@@ -4,6 +4,7 @@ import {
   billDeferOption,
   billsDue,
   computeCashFriday,
+  dueWeek,
   expectedReceipts,
   payDayFor,
   typicalDaysLate,
@@ -525,13 +526,22 @@ describe("computeCashFriday refusals", () => {
     expect(computeCashFriday(golden({ settings }), AS_OF)).toEqual({ ok: false, refusal: "balance_in_future" });
   });
 
-  it("refuses with no open week, and with two", () => {
+  it("refuses with no open week", () => {
     expect(computeCashFriday(golden({ periods: [CLOSED] }), AS_OF)).toEqual({ ok: false, refusal: "no_open_period" });
-    const second = { ...CLOSED, id: "per-2", status: "open" as const };
-    expect(computeCashFriday(golden({ periods: [second, PERIOD] }), AS_OF)).toEqual({
-      ok: false,
-      refusal: "more_than_one_open_period",
-    });
+  });
+
+  it("reports the oldest open week when two are open, the week paid next", () => {
+    const one = computeCashFriday(golden(), AS_OF);
+    expect(one.ok).toBe(true);
+    const newer = { ...PERIOD, id: "per-new", periodStart: addDays(PERIOD.periodStart, 7), periodEnd: addDays(PERIOD.periodEnd, 7) };
+    expect(computeCashFriday(golden({ periods: [newer, PERIOD] }), AS_OF)).toEqual(one);
+    expect(computeCashFriday(golden({ periods: [PERIOD, newer] }), AS_OF)).toEqual(one);
+  });
+
+  it("passes over an older open week with no paystub and no pay, which never finishes, for the week with pay to run", () => {
+    const one = computeCashFriday(golden(), AS_OF);
+    const empty = { ...PERIOD, id: "per-empty", periodStart: addDays(PERIOD.periodStart, -14), periodEnd: addDays(PERIOD.periodEnd, -14) };
+    expect(computeCashFriday(golden({ periods: [empty, CLOSED, PERIOD] }), AS_OF)).toEqual(one);
   });
 
   it("refuses when the week has no stored run and no preview could be built", () => {
@@ -948,5 +958,31 @@ describe("billsDue and billDeferOption", () => {
 
   it("has nothing to delay when every bill due is fixed", () => {
     expect(billDeferOption([bill({ id: "f1" })], "2026-11-06", 1)).toBeNull();
+  });
+});
+
+describe("dueWeek", () => {
+  const week = (id: string, periodStart: string, status = "open") => ({ id, periodStart, periodEnd: addDays(periodStart, 6), status });
+  const [a, b, c2] = [week("a", "2026-10-19"), week("b", "2026-10-26"), week("c", "2026-11-02")];
+
+  it("is the oldest open week that holds a paystub", () => {
+    expect(dueWeek([c2, a, b], [{ periodId: "b" }, { periodId: "c" }])).toBe(b);
+    expect(dueWeek([c2, a, b], [{ periodId: "b" }, { periodId: "a" }])).toBe(a);
+  });
+
+  it("counts a day that carries pay as much as a paystub: a week with pay and no stub yet comes first", () => {
+    expect(dueWeek([a, b, c2], [{ periodId: "c" }], ["2026-10-29"])).toBe(b);
+    expect(dueWeek([a, b, c2], [], ["2026-11-01", "2026-11-03"])).toBe(b);
+    expect(dueWeek([a, b, c2], [{ periodId: "c" }], ["2026-10-12"])).toBe(c2);
+  });
+
+  it("is the newest open week when no open week holds a paystub or pay, and the lone open week otherwise", () => {
+    expect(dueWeek([a, c2], [])).toBe(c2);
+    expect(dueWeek([b], [])).toBe(b);
+    expect(dueWeek([week("a", "2026-10-19", "paid"), b], [{ periodId: "a" }])).toBe(b);
+  });
+
+  it("is null with no open week", () => {
+    expect(dueWeek([week("a", "2026-10-19", "paid")], [{ periodId: "a" }])).toBeNull();
   });
 });

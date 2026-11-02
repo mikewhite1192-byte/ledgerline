@@ -152,6 +152,8 @@ const KEPT_OFF = [
   "evalRun.enabled",
   // The card pull-back ships off; its own one-line enable PR turns it on.
   "cardPullback.enabled",
+  // The sweep opening the pay week holding today ships off; its own one-line enable PR turns it on.
+  "payWeekRoll.enabled",
 ] as const;
 
 // The on/off switches in flags.ts, by path: every top-level boolean and every boolean inside a
@@ -460,6 +462,13 @@ describe("flags", () => {
     expect(LOCAL_OFF_ONLY as readonly string[]).toContain("mockTms.newLoad");
   });
 
+  it("ships the pay week roll off, and local mode can never turn it on", () => {
+    expect(flags.payWeekRoll).toEqual({ enabled: false });
+    expect(LOCAL_OVERRIDABLE as readonly string[]).not.toContain("payWeekRoll.enabled");
+    // Listed ahead of its release, so the demo-path run keeps it off once it ships on.
+    expect(LOCAL_OFF_ONLY as readonly string[]).toContain("payWeekRoll.enabled");
+  });
+
   it("releases the invoice on finalize, with a start date, off for the local demo run", () => {
     expect(flags.tmsFinalizeInvoice).toEqual({ enabled: true, startDate: "2026-10-31" });
     expect(isLocalDate(flags.tmsFinalizeInvoice.startDate)).toBe(true);
@@ -515,6 +524,7 @@ describe("flags", () => {
       "stubSent.enabled",
       "mockTms.enabled",
       "mockTms.newLoad",
+      "payWeekRoll.enabled",
     ];
     const offOnly = LOCAL_OFF_ONLY as readonly string[];
     expect(KEPT_OFF.filter((k) => offOnly.includes(k))).toEqual(KEPT_OFF.filter((k) => armedAhead.includes(k)));

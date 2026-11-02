@@ -822,7 +822,12 @@ export type CashFridayInput = {
   settings: CashSettingsRecord | null;
   periods: SettlementPeriodRecord[];
   settlements: (SettlementRecord & PaidOn)[];
-  // One input per driver active in the one open week, under the version that week runs on;
+  // The days that carry pay (each a day a run of the week drafts a paystub for: payDaysOf), so
+  // the week paid next (dueWeek) passes over only an open week that drafts nothing. Absent reads
+  // as none.
+  payDays?: LocalDate[];
+  // One input per driver active in the week paid next (dueWeek, D-090), under the version that
+  // week runs on;
   // null when they could not be built (the pay run is then unknown, never zero).
   previews: SettlementInput[] | null;
   advances: (AdvanceRecord & PaidOn)[];
