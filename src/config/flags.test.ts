@@ -138,6 +138,9 @@ const RELEASED_ON = [
   // Released by the owner (D-071, D-090, 2026-11-02): the pay sweep opens the pay week holding the
   // carrier's local today. It inserts an open week only and moves no money.
   "payWeekRoll.enabled",
+  // Released by the owner (D-071, D-094, 2026-11-02): the owner sets the autopilot rules and the
+  // pause from the app. It changes only the owner's rules and their record, and moves no money.
+  "autopilotRules.enabled",
 ] as const;
 
 // What stays off, each waiting on a missing piece or an outside send the owner has not released.
@@ -155,8 +158,6 @@ const KEPT_OFF = [
   "evalRun.enabled",
   // The card pull-back ships off; its own one-line enable PR turns it on.
   "cardPullback.enabled",
-  // The autopilot's rules from the app ship off; their own one-line enable PR turns them on.
-  "autopilotRules.enabled",
 ] as const;
 
 // The on/off switches in flags.ts, by path: every top-level boolean and every boolean inside a
@@ -465,8 +466,8 @@ describe("flags", () => {
     expect(LOCAL_OFF_ONLY as readonly string[]).toContain("mockTms.newLoad");
   });
 
-  it("ships the autopilot's rules from the app off, and local mode can never turn them on", () => {
-    expect(flags.autopilotRules).toEqual({ enabled: false });
+  it("ships the autopilot's rules from the app on, and local mode can never turn them on", () => {
+    expect(flags.autopilotRules).toEqual({ enabled: true });
     expect(LOCAL_OVERRIDABLE as readonly string[]).not.toContain("autopilotRules.enabled");
     // Listed ahead of its release, so the demo-path run keeps it off once it ships on.
     expect(LOCAL_OFF_ONLY as readonly string[]).toContain("autopilotRules.enabled");
