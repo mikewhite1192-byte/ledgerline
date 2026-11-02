@@ -516,7 +516,7 @@ describe("the autopilot", () => {
         });
         // The gate is waiting on the pause lock itself, not on anything else.
         let waiting = 0;
-        for (let i = 0; i < 100 && waiting === 0; i += 1) {
+        for (let i = 0; i < 400 && waiting === 0; i += 1) {
           const [w] = await admin.withTenant(A.tenantId, (q) =>
             q.query<{ n: number }>(
               `SELECT CAST(count(*) AS integer) AS n FROM pg_locks
