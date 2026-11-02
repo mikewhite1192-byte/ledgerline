@@ -16,11 +16,12 @@ import { setPaused } from "./state";
 // The owner's rule saves and the pause's record against the real database, as the app's role: a
 // first save makes version 1 with one record and no before; the next makes version 2 with the whole
 // before and after; a save on a stale version or a duplicate of one already saved writes nothing
-// and answers changed; two saves of one version at once give one write and one record; a save that
-// changes nothing writes nothing; Auto on a never-alone kind is refused in code and by the 0077
-// check; each carrier sees only its own rules and record, and the record only grows; the readers
-// the autopilot decides with see the new rule; each Pause and Resume is recorded; only an admin
-// saves. A fixed clock; two tenants made here and removed after.
+// and answers changed; two saves of one version at once give one write and one record; a save on the
+// current version that changes nothing writes nothing, and a stale one answers changed; Auto on a
+// never-alone kind is refused in code and by the 0077 check; each carrier sees only its own rules
+// and record, and the record only grows; the readers the autopilot decides with see the new rule;
+// each Pause and Resume is recorded, two first pauses at once in order; only an admin saves. A
+// fixed clock; two tenants made here and removed after.
 
 const savedAutopilot = structuredClone(flags.autopilot);
 const NOW = Date.UTC(2026, 10, 2, 16, 0, 0);
@@ -186,11 +187,18 @@ describe("the owner's autopilot rules", () => {
     expect((await changesOf(A, "rule")).filter((c) => c.kind === "card_match")).toHaveLength(1);
   });
 
-  it("writes nothing when a save changes nothing", async () => {
+  it("writes nothing when a save on the current version changes nothing, and answers changed when a stale one does", async () => {
     await save(ownerA, INVOICE);
     const same = await save(ownerA, { ...INVOICE, expectedVersion: 1 }, at(9));
     expect(same).toMatchObject({ ok: true, unchanged: true, rule: { version: 1, updatedAt: at(0).toISOString() } });
     expect(await changesOf(A, "rule")).toHaveLength(1);
+    // The rule moves to version 2; a save of its values on version 1, or as a first save, is out of date.
+    await save(ownerA, { ...INVOICE, dayMaxCount: 5, expectedVersion: 1 });
+    const stale = await save(ownerA, { ...INVOICE, dayMaxCount: 5, expectedVersion: 1 }, at(10));
+    expect(stale).toMatchObject({ ok: false, category: "changed", rule: { version: 2, dayMaxCount: 5 } });
+    const first = await save(ownerA, { ...INVOICE, dayMaxCount: 5, expectedVersion: null }, at(11));
+    expect(first).toMatchObject({ ok: false, category: "changed", rule: { version: 2, dayMaxCount: 5 } });
+    expect(await changesOf(A, "rule")).toHaveLength(2);
   });
 
   it("refuses Auto on settlement_approve in code and in the database", async () => {
@@ -316,6 +324,20 @@ describe("the owner's autopilot rules", () => {
     // A refused resume records nothing.
     expect(await setPaused(A.session, false, { db: app, clock: () => at(9) })).toEqual({ ok: false, category: "role" });
     expect(await changesOf(A, "pause")).toHaveLength(3);
+  });
+
+  it("orders two first pauses at once: two records, and the second's before is the first's after", async () => {
+    const out = await Promise.all([
+      setPaused(ownerA, true, { db: app, clock: () => at(0) }),
+      setPaused(A.session, true, { db: app, clock: () => at(1) }),
+    ]);
+    expect(out).toEqual([{ ok: true, paused: true }, { ok: true, paused: true }]);
+    const log = await changesOf(A, "pause");
+    expect(log).toHaveLength(2);
+    const firsts = log.filter((c) => c.before === null);
+    expect(firsts).toHaveLength(1);
+    const second = log.find((c) => c.before !== null);
+    expect(second?.before).toEqual(firsts[0].after);
   });
 
   it("lets only an admin save: staff, a demo visitor and the service logins write nothing", async () => {

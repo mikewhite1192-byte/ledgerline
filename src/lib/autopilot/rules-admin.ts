@@ -254,7 +254,7 @@ const sameValues = (a: SavedRule, b: RuleSave): boolean =>
 // Save one parsed rule inside the caller's tenant transaction. The dedupe key is (tenant, kind,
 // expectedVersion): the row is locked, and a write lands only on the version the person saw, so
 // two saves of one version give one write and one record; the other answers changed with the rule
-// as it is now. A save that changes nothing writes nothing.
+// as it is now. A save on the current version that changes nothing writes nothing.
 export async function saveRule(q: Queryable, session: Session, rule: RuleSave, now: Date): Promise<SaveResult> {
   if (isServiceSub(session.sub) || isAutopilotSub(session.sub)) return { ok: false, category: "forbidden" };
   if ((await readRole(q, session)) !== "admin") return { ok: false, category: "role" };
@@ -270,8 +270,8 @@ export async function saveRule(q: Queryable, session: Session, rule: RuleSave, n
     if (rows.length !== 1) throw new DbError("unknown");
     saved = ruleOf(rows[0]);
   } else {
-    if (sameValues(current, rule)) return { ok: true, rule: current, unchanged: true };
     if (rule.expectedVersion !== current.version) return { ok: false, category: "changed", rule: current };
+    if (sameValues(current, rule)) return { ok: true, rule: current, unchanged: true };
     const rows = await q.query<Row>(UPDATE_SQL, [...params, rule.expectedVersion]);
     if (rows.length === 0) return { ok: false, category: "changed", rule: await oneRule(q, rule.kind, false) };
     if (rows.length !== 1) throw new DbError("unknown");

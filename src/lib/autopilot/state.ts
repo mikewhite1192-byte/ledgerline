@@ -28,6 +28,12 @@ ON CONFLICT (tenant_id) DO UPDATE
 
 const ts = (column: string) => `to_char(${column} AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"')`;
 
+// One Pause or Resume at a time per carrier, held until the transaction ends. FOR UPDATE below locks
+// nothing while the carrier has no row yet, so without this two first presses would both record a
+// before of null.
+const LOCK_SQL =
+  "SELECT 1 AS ok FROM (SELECT pg_advisory_xact_lock(hashtextextended('autopilot_state:' || CAST(current_tenant_id() AS text), 0))) AS l";
+
 // The switch as it is, locked until the transaction ends, so the record's before is the row this
 // write replaces.
 const BEFORE_SQL = `SELECT ${ts("paused_at")} AS paused_at, paused_by, ${ts("paused_until")} AS paused_until
@@ -53,6 +59,7 @@ export async function setPaused(
   return db.withTenant(session.tenantId, async (q) => {
     const role = await requireStaff(q, session);
     if (!paused && role !== "admin") return { ok: false, category: "role" } as const;
+    await q.query(LOCK_SQL, []);
     const rows = await q.query<{ paused_at: unknown; paused_by: unknown; paused_until: unknown }>(BEFORE_SQL, []);
     if (rows.length > 1) throw new DbError("unknown");
     const before: PauseValues | null =

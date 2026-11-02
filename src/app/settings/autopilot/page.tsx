@@ -90,7 +90,11 @@ export default async function AutopilotSettings() {
               </CardHeader>
               {flags.autopilot.enabled === true && view.role !== "judge" ? (
                 <CardBody>
-                  <PauseForm paused={view.picture.pause.paused} canResume={view.role === "admin"} />
+                  <PauseForm
+                    paused={view.picture.pause.paused}
+                    pausedUntil={view.picture.pause.pausedUntil}
+                    canResume={view.role === "admin"}
+                  />
                 </CardBody>
               ) : null}
             </Card>
