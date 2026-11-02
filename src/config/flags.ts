@@ -1218,8 +1218,8 @@ export const flags: Flags = {
       money_code: { maxCents: 15_000, dayMaxCents: 60_000, dayMaxCount: 4, driverDayMaxCents: 30_000, armed: false },
     },
   },
-  // Off until its own one-line enable PR. It changes only the owner's rules and their record.
-  autopilotRules: { enabled: false },
+  // On by the owner's call (D-071, D-094, 2026-11-02). It changes only the owner's rules and their record.
+  autopilotRules: { enabled: true },
   // On by the owner's call (D-071, 2026-10-31). A load_move card is still a person's tap.
   loadMovement: { enabled: true, startDate: "2026-10-30" },
   // On by the owner's call (D-071, 2026-10-31). A load moves on it only while loadMovement is on too.
