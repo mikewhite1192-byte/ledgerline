@@ -3,6 +3,7 @@ import { flags } from "../../config/flags";
 import type { Session } from "../auth/claims";
 import { DbError, type Queryable } from "../db";
 import { autopilotModeFor } from "../autopilot/mode";
+import { readRule } from "../autopilot/read";
 import { autopilotSub } from "../autopilot/session";
 import { isServiceSub } from "../sweep/service-session";
 import { clockText } from "../tms/clocks";
@@ -154,6 +155,12 @@ export async function askFor(
   if (p.status !== "proposed") return { kind: "skipped", category: "not_waiting" };
   const mode = opts.mode ?? (await autopilotModeFor(q, p.kind, now.getTime()));
   if (mode !== "ask") return { kind: "skipped", category: mode === "auto" ? "autopilot" : "kept_off" };
+  // The autopilot's own ask was decided in an earlier transaction, and the owner may have set the
+  // kind to Off since: the rule is read again here, locked (this path takes no pause or proposal
+  // lock, so the order stays theirs), and an Off rule asks nobody.
+  if (opts.mode === "ask" && (await readRule(q, p.kind, true))?.mode === "off") {
+    return { kind: "skipped", category: "kept_off" };
+  }
   const live = await q.query<{ id: string }>(
     `SELECT CAST(id AS text) AS id FROM agent_asks
       WHERE tenant_id = current_tenant_id() AND proposal_id = CAST($1 AS uuid) AND kind = 'ask'

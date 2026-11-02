@@ -10,7 +10,7 @@ import { deskHandlers } from "../desk/handlers";
 import { addAdvance, dropTenant, makeTenant, sqlStateOf, type Fixture } from "../money/test-db";
 import { executeProposal, type Executor, type ExecutorRegistry, type ProposalKind } from "../proposals/execute";
 import { serviceSub } from "../sweep/service-session";
-import { readPause } from "./read";
+import { readPause, readZone, todayStartIso } from "./read";
 import { runAutopilot } from "./run";
 import { autopilotSession, autopilotSub } from "./session";
 import { setPaused } from "./state";
@@ -24,7 +24,8 @@ import { PAUSE_LOCK_SQL } from "./state-lock";
 // every limit it approves once (two runs at once still give one execution); over a limit it stores
 // an ask and the proposal waits for a person; a proposal made before the start date is never
 // found or written to; a run that loses a race reports the winner's outcome. A fixed clock; two
-// tenants made here and removed after.
+// tenants made here and removed after. An approval that waited for the rule across the carrier's
+// midnight counts on the new day.
 
 const saved = structuredClone(flags.autopilot);
 const NOW = Date.UTC(2026, 10, 2, 16, 0, 0);
@@ -540,6 +541,100 @@ describe("the autopilot", () => {
       }
       expect(ran).toEqual([]);
       expect(await rowOf(id)).toEqual({ status: "proposed", decided_by: null, decision: null });
+    });
+  });
+
+  describe("the gate's clock", () => {
+    it("reads the time once the rule is locked, so a wait across the carrier's midnight counts on the new day", async () => {
+      // B: its own day, its own rule, no pause.
+      await admin.withTenant(B.tenantId, (q) => q.execute("DELETE FROM autopilot_state WHERE tenant_id = current_tenant_id()"));
+      const pilotB = await autopilotSession(app, B.tenantId);
+      if (!pilotB) throw new Error("no autopilot session");
+      const zone = await app.withTenant(B.tenantId, (q) => readZone(q));
+      const midnight = Date.parse(todayStartIso(new Date(NOW + 24 * HOUR), zone));
+      const ruleOfB = async () =>
+        (
+          await admin.withTenant(B.tenantId, (q) =>
+            q.query<{ id: string; version: number }>(
+              "SELECT CAST(id AS text) AS id, version FROM autopilot_rules WHERE tenant_id = current_tenant_id() AND kind = 'invoice_post'",
+            ),
+          )
+        )[0];
+      // One approval late on the old day, then a day's count of one.
+      const first = await addProposal({ f: B, amountCents: 1_000 });
+      const r1 = await ruleOfB();
+      expect(
+        await executeProposal(pilotB, first, { confirmed: false, autopilot: { ruleId: r1.id, version: r1.version } }, {
+          db: app,
+          clock: () => new Date(midnight - 60_000),
+          executors: REGISTRY,
+        }),
+      ).toMatchObject({ ok: true });
+      await admin.withTenant(B.tenantId, (q) =>
+        q.execute(
+          `UPDATE autopilot_rules SET day_max_count = 1, version = version + 1
+            WHERE tenant_id = current_tenant_id() AND kind = 'invoice_post'`,
+        ),
+      );
+      const r2 = await ruleOfB();
+      const second = await addProposal({ f: B, amountCents: 1_000 });
+      // The clock says the old day until the rule is free again.
+      let t = midnight - 30_000;
+      let release: () => void = () => {};
+      const released = new Promise<void>((r) => {
+        release = () => r();
+      });
+      let held: (pid: number) => void = () => {};
+      const holding = new Promise<number>((r) => {
+        held = r;
+      });
+      // A rule save as saveRule makes it: the rule row locked, the transaction left open.
+      const saving = admin.withTenant(B.tenantId, async (q) => {
+        await q.query("SELECT id FROM autopilot_rules WHERE tenant_id = current_tenant_id() AND kind = 'invoice_post' FOR UPDATE", []);
+        const [me] = await q.query<{ pid: number }>("SELECT pg_backend_pid() AS pid", []);
+        held(me.pid);
+        await released;
+      });
+      try {
+        const pid = await holding;
+        const approving = executeProposal(pilotB, second, { confirmed: false, autopilot: { ruleId: r2.id, version: r2.version } }, {
+          db: app,
+          clock: () => new Date(t),
+          executors: REGISTRY,
+        });
+        // The gate is waiting on the rule lock the save holds.
+        let waiting = 0;
+        for (let i = 0; i < 400 && waiting === 0; i += 1) {
+          const [w] = await admin.withTenant(B.tenantId, (q) =>
+            q.query<{ n: number }>(
+              "SELECT CAST(count(*) AS integer) AS n FROM pg_stat_activity WHERE CAST($1 AS integer) = ANY(pg_blocking_pids(pid))",
+              [pid],
+            ),
+          );
+          waiting = w.n;
+          if (waiting === 0) await new Promise((r) => setTimeout(r, 25));
+        }
+        expect(waiting).toBe(1);
+        t = midnight + 30_000;
+        release();
+        await saving;
+        expect(await approving).toMatchObject({ ok: true });
+      } finally {
+        release();
+        await saving.catch(() => undefined);
+      }
+      const [row] = await admin.withTenant(B.tenantId, (q) =>
+        q.query<{ decided_at: string; decision: Record<string, unknown> }>(
+          `SELECT to_char(decided_at AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"') AS decided_at,
+                  autopilot_decision AS decision
+             FROM proposals WHERE tenant_id = current_tenant_id() AND id = CAST($1 AS uuid)`,
+          [second],
+        ),
+      );
+      // Counted on the new day (nothing approved there yet), and made at that instant.
+      expect(row.decided_at).toBe(new Date(midnight + 30_000).toISOString());
+      expect(row.decision).toMatchObject({ mode: "auto", dayCount: 0, dayMaxCount: 1 });
+      expect(ran).toEqual([first, second]);
     });
   });
 

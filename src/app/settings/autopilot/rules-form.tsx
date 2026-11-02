@@ -6,7 +6,7 @@ import { InlineAlert } from "@/components/ui/inline-alert";
 import { controlClass } from "@/components/ui/input";
 import { cn } from "@/lib/cn";
 import { postJson } from "@/components/invoices/post-json";
-import { MODE_LABELS, NEVER_ALONE_NOTE, NOT_ARMED_NOTE, RULE_SAVE_MESSAGES, messageFor, ruleKindLabel } from "./words";
+import { LIMIT_LABELS, MODE_LABELS, RULE_SAVE_MESSAGES, messageFor, ruleKindLabel, ruleNote } from "./words";
 
 // One kind's rule as the page hands it over: plain values, whole cents.
 export type RuleRowView = {
@@ -118,20 +118,20 @@ function RuleRow({ initial }: { initial: RuleRowView }) {
           </select>
         </label>
         <label className="grid gap-0.5 text-caption text-foreground-2">
-          Most each time, in cents
+          {LIMIT_LABELS.maxCents}
           <input name="maxCents" inputMode="numeric" value={draft.maxCents} onChange={set("maxCents")} disabled={pending} className={input} />
         </label>
         <label className="grid gap-0.5 text-caption text-foreground-2">
-          Most each day, in cents
+          {LIMIT_LABELS.dayMaxCents}
           <input name="dayMaxCents" inputMode="numeric" value={draft.dayMaxCents} onChange={set("dayMaxCents")} disabled={pending} className={input} />
         </label>
         <label className="grid gap-0.5 text-caption text-foreground-2">
-          Most each day, count
+          {LIMIT_LABELS.dayMaxCount}
           <input name="dayMaxCount" inputMode="numeric" value={draft.dayMaxCount} onChange={set("dayMaxCount")} disabled={pending} className={input} />
         </label>
         {row.driver ? (
           <label className="grid gap-0.5 text-caption text-foreground-2">
-            Most per driver each day, in cents
+            {LIMIT_LABELS.driverDayMaxCents}
             <input
               name="driverDayMaxCents"
               inputMode="numeric"
@@ -146,8 +146,7 @@ function RuleRow({ initial }: { initial: RuleRowView }) {
           Save
         </Button>
       </div>
-      {!row.allowedAuto ? <p className="text-caption text-foreground-2">{NEVER_ALONE_NOTE}</p> : null}
-      {row.allowedAuto && !row.armed && row.mode === "auto" ? <p className="text-caption text-foreground-2">{NOT_ARMED_NOTE}</p> : null}
+      {ruleNote(row) !== null ? <p className="text-caption text-foreground-2">{ruleNote(row)}</p> : null}
       {note ? (
         <InlineAlert tone={note.tone} className="w-full">
           {note.text}

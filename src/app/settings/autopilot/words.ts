@@ -32,6 +32,22 @@ export const ADMIN_ONLY = "Only an admin sets the autopilot rules.";
 export const NEVER_ALONE_NOTE = "A person always approves this, so Auto is not offered.";
 export const NOT_ARMED_NOTE = "Auto is saved but waits until this kind is switched on.";
 
+// The limits' names, in the admin form and the read-only table alike.
+export const LIMIT_LABELS = {
+  maxCents: "Most each time, in cents",
+  dayMaxCents: "Most each day, in cents",
+  dayMaxCount: "Most each day, count",
+  driverDayMaxCents: "Most per driver each day, in cents",
+} as const;
+
+// The note under a kind's rule: Auto not offered there, or Auto saved on a kind not switched on
+// yet; null when there is none.
+export function ruleNote(r: { mode: string; allowedAuto: boolean; armed: boolean }): string | null {
+  if (!r.allowedAuto) return NEVER_ALONE_NOTE;
+  if (!r.armed && r.mode === "auto") return NOT_ARMED_NOTE;
+  return null;
+}
+
 // A fixed message per category; nothing the server says is shown. Each table has an unknown one.
 type Messages = Readonly<Record<string, string> & { unknown: string }>;
 

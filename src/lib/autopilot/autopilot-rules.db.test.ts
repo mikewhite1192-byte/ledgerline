@@ -165,7 +165,7 @@ describe("the owner's autopilot rules", () => {
     expect(stale).toMatchObject({ ok: false, category: "changed", rule: { version: 2, dayMaxCount: 5 } });
     const again = await save(ownerA, { ...INVOICE, dayMaxCount: 7, expectedVersion: null });
     expect(again).toMatchObject({ ok: false, category: "changed", rule: { version: 2 } });
-    const none = await save(ownerA, { ...INVOICE, kind: "card_match", maxCents: 1_000, dayMaxCents: 2_000, expectedVersion: 3 });
+    const none = await save(ownerA, { ...INVOICE, kind: "card_match", mode: "ask", maxCents: 1_000, dayMaxCents: 2_000, expectedVersion: 3 });
     expect(none).toEqual({ ok: false, category: "changed", rule: null });
     expect(await changesOf(A, "rule")).toHaveLength(2);
     const [rule] = await app.withTenant(A.tenantId, (q) => q.query<{ version: number; day_max_count: number }>(
@@ -185,8 +185,8 @@ describe("the owner's autopilot rules", () => {
     expect(await changesOf(A, "rule")).toHaveLength(2);
     // Two first saves at once: one rule, one record, the other answers changed.
     const firsts = await Promise.all([
-      save(ownerA, { ...INVOICE, kind: "card_match", maxCents: 1_000, dayMaxCents: 2_000 }),
-      save(ownerA, { ...INVOICE, kind: "card_match", maxCents: 1_500, dayMaxCents: 2_000 }),
+      save(ownerA, { ...INVOICE, kind: "card_match", mode: "ask", maxCents: 1_000, dayMaxCents: 2_000 }),
+      save(ownerA, { ...INVOICE, kind: "card_match", mode: "ask", maxCents: 1_500, dayMaxCents: 2_000 }),
     ]);
     expect(firsts.filter((o) => o.ok)).toHaveLength(1);
     expect(firsts.filter((o) => !o.ok && o.category === "changed")).toHaveLength(1);

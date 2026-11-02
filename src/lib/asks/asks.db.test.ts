@@ -7,7 +7,7 @@ import type { Session } from "../auth/claims";
 import { autopilotSub } from "../autopilot/session";
 import { createPgDb } from "../db/pg";
 import { adminUrl, appUrl } from "../db/test-urls";
-import type { Db, Param, Queryable } from "../db/types";
+import type { Db, Param, Queryable, TenantDb } from "../db/types";
 import { deskHandlers } from "../desk/handlers";
 import { dropTenant, makeTenant, type Fixture } from "../money/test-db";
 import { persistEngineProposal } from "../proposals/engine";
@@ -19,7 +19,8 @@ import { acknowledgeTold, answerAsksFor, askFor, closeStaleAsks, readShowingAsks
 // live question even when two writers race; a person's proposal gets none; a question voids when
 // its proposal expires or is decided elsewhere (and hides at once); snooze hides it until its
 // time; Yes marks it answered once; the autopilot's done proposal gets one told line inside the
-// owner's limit, and Got it marks that line done once; a plain throw writing the question keeps
+// owner's limit, and Got it marks that line done once; an Off saved after the autopilot's look
+// asks nobody; a plain throw writing the question keeps
 // the card; the reason pass keeps a right line, drops a wrong figure, and never calls twice;
 // row-level security holds each carrier to its own questions and the guard refuses a changed word.
 // An advance at pickup the dispatch feed moved names the pickup's wall time. A fixed clock; two
@@ -387,6 +388,74 @@ describe("agent asks", () => {
     );
     expect(out).toMatchObject({ outcome: "done", detail: { category: "over_item_limit" } });
     expect((await asksOf(A, id)).map((r) => [r.kind, r.status])).toEqual([["ask", "open"]]);
+  });
+
+  it("asks nobody when the owner sets the kind to Off after the autopilot's look stored ask", async () => {
+    Object.assign(flags.autopilot, { enabled: true, armed: true, startDate: "2026-10-31" });
+    const id = await deskCard(B, { kind: "invoice_post", amountCents: 900_000 });
+    await admin.withTenant(B.tenantId, (q) =>
+      q.execute(
+        `UPDATE proposals SET auditor_verdict = 'pass', auditor_agrees = true, auditor_concerns = CAST('[]' AS jsonb),
+                auditor_checked_at = CAST($2 AS timestamptz), engine_check = 'matched', engine_cents = amount_cents,
+                engine_checked_at = CAST($2 AS timestamptz)
+          WHERE tenant_id = current_tenant_id() AND id = CAST($1 AS uuid)`,
+        [id, new Date(NOW - HOUR / 2).toISOString()],
+      ),
+    );
+    const setMode = (mode: string) =>
+      admin.withTenant(B.tenantId, (q) =>
+        q.execute(
+          `UPDATE autopilot_rules SET mode = $1, version = version + 1
+            WHERE tenant_id = current_tenant_id() AND kind = 'invoice_post'`,
+          [mode],
+        ),
+      );
+    // The owner saves Off right after the look's transaction stored its ask, before the question.
+    let off = false;
+    const db: TenantDb = {
+      async withTenant(tenantId, fn) {
+        const out = await app.withTenant(tenantId, fn);
+        if (!off) {
+          const [r] = await admin.withTenant(B.tenantId, (q) =>
+            q.query<{ asked: boolean }>(
+              "SELECT autopilot_decision IS NOT NULL AS asked FROM proposals WHERE tenant_id = current_tenant_id() AND id = CAST($1 AS uuid)",
+              [id],
+            ),
+          );
+          if (r?.asked) {
+            off = true;
+            await setMode("off");
+          }
+        }
+        return out;
+      },
+    };
+    try {
+      const out = await deskHandlers({ db }).autopilot.run(
+        desk(B),
+        {
+          eventKey: `autopilot:${id}`,
+          source: "autopilot",
+          subjectId: id,
+          state: "claimed",
+          attempts: 1,
+          carries: 0,
+          threw: 0,
+          runId: null,
+          found: null,
+          firstAt: new Date(NOW).toISOString(),
+        },
+        { deadlineMs: NOW + 60_000, clock },
+      );
+      expect(off).toBe(true);
+      expect(out).toMatchObject({ outcome: "done", detail: { category: "over_item_limit" } });
+      expect(await asksOf(B, id)).toEqual([]);
+      // Called again with the autopilot's ask, an Off rule still asks nobody.
+      expect(await asApp(B, (q) => askFor(q, id, clock(), { mode: "ask" }))).toEqual({ kind: "skipped", category: "kept_off" });
+      expect(await asksOf(B, id)).toEqual([]);
+    } finally {
+      await setMode("auto");
+    }
   });
 
   it("writes a reason once: a right line kept, a wrong figure dropped, no second call", async () => {

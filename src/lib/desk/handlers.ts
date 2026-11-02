@@ -419,7 +419,8 @@ export function deskHandlers(deps: HandlerDeps = {}): Handlers {
       const r = await runAutopilot(session.tenantId, id, { db: db(), clock: ctx.clock });
       if (!r.ok) return failed(r.category);
       const o = r.result;
-      // Done by the autopilot: a told line. Stored as ask: the question, if none is live yet.
+      // Done by the autopilot: a told line. Stored as ask: the question, if none is live yet and the
+      // owner has not set the kind to Off since (askFor reads the rule again).
       if ((o.outcome === "approved" || (o.outcome === "earlier" && o.mine)) && o.status === "done") {
         await noteAsk(session, (q) => tellFor(q, session.tenantId, id, ctx.clock()));
       } else if (o.outcome === "decided" && o.mode === "ask") {

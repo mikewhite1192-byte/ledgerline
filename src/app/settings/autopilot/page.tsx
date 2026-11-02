@@ -13,7 +13,7 @@ import { formatLocalDate } from "@/lib/format/dates";
 import { ForbiddenError, withRequestTenant } from "@/lib/tenant/context";
 import { PauseForm } from "./pause-form";
 import { AutopilotRulesForm, type RuleRowView } from "./rules-form";
-import { ADMIN_ONLY, MODE_LABELS, NEVER_ALONE_NOTE, ruleKindLabel } from "./words";
+import { ADMIN_ONLY, LIMIT_LABELS, MODE_LABELS, ruleKindLabel, ruleNote } from "./words";
 
 export const dynamic = "force-dynamic";
 
@@ -122,15 +122,27 @@ export default async function AutopilotSettings() {
                           <Tr>
                             <Th>Work</Th>
                             <Th>Rule</Th>
+                            <Th>{LIMIT_LABELS.maxCents}</Th>
+                            <Th>{LIMIT_LABELS.dayMaxCents}</Th>
+                            <Th>{LIMIT_LABELS.dayMaxCount}</Th>
+                            <Th>{LIMIT_LABELS.driverDayMaxCents}</Th>
                           </Tr>
                         </THead>
                         <TBody>
-                          {view.picture.kinds.map((k) => (
-                            <Tr key={k.kind}>
-                              <Td>{ruleKindLabel(k.kind)}</Td>
-                              <Td>{k.allowedAuto ? MODE_LABELS[k.mode] : `${MODE_LABELS[k.mode]}. ${NEVER_ALONE_NOTE}`}</Td>
-                            </Tr>
-                          ))}
+                          {/* The same rows, limits and notes the admin form shows, read only. */}
+                          {rowsOf(view.picture).map((r) => {
+                            const note = ruleNote(r);
+                            return (
+                              <Tr key={r.kind}>
+                                <Td>{ruleKindLabel(r.kind)}</Td>
+                                <Td>{note === null ? MODE_LABELS[r.mode] : `${MODE_LABELS[r.mode]}. ${note}`}</Td>
+                                <Td>{r.maxCents}</Td>
+                                <Td>{r.dayMaxCents}</Td>
+                                <Td>{r.dayMaxCount}</Td>
+                                <Td>{r.driverDayMaxCents ?? ""}</Td>
+                              </Tr>
+                            );
+                          })}
                         </TBody>
                       </Table>
                     </div>

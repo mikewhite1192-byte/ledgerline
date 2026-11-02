@@ -210,12 +210,14 @@ export async function runAutopilot(
       return { ok: true, result: { outcome: "decided", mode: looked.mode, reason: looked.reason } };
   }
 
-  // Auto: the gate decides again under the lock, approves and runs the executor.
+  // Auto: the gate decides again under the lock, approves and runs the executor. It gets the clock
+  // itself, never this look's instant: it reads the time once its locks are held, so today's totals
+  // and the approval are on the day the approval is made.
   const out = await executeProposal(
     session,
     proposalId,
     { confirmed: false, autopilot: { ruleId: looked.ruleId, version: looked.version } },
-    { ...deps, db, clock: () => now },
+    { ...deps, db },
   );
   if (out.ok) return { ok: true, result: { outcome: "approved", status: out.status, moneyActionId: out.moneyActionId } };
   // Refused: by the gate (the row still waits, nothing approved) or by the executor after the

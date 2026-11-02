@@ -2,11 +2,12 @@ import { readFileSync } from "node:fs";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
 import { flags } from "../../config/flags";
+import { engineCompares } from "../agent/gateway/store/engine-check";
 import { AUTO_ALLOWED_KINDS } from "../money/never-alone";
-import { MAX_RULE_CENTS, MAX_RULE_COUNT, RULE_KINDS, parseRuleSave } from "./rules-admin";
+import { MAX_RULE_CENTS, MAX_RULE_COUNT, RULE_KINDS, autoOffered, parseRuleSave } from "./rules-admin";
 
-// The owner's rule save, parsed with no database: every bound, the never-alone refusal and the
-// ceilings in flags.autopilot.kinds. RULE_KINDS is proven equal to the kind checks of 0070 and 0089.
+// The owner's rule save, parsed with no database: every bound, the never-alone refusal (a kind the
+// autopilot cannot check too) and the ceilings in flags.autopilot.kinds. RULE_KINDS is proven equal to the kind checks of 0070 and 0089.
 
 const DIR = path.join(process.cwd(), "db/migrations");
 
@@ -112,6 +113,18 @@ describe("parseRuleSave", () => {
     }
   });
 
+  it("refuses Auto on a kind the autopilot may approve alone but cannot check, and passes Off and Ask me there", () => {
+    // Offered exactly where the engine compares the kind, so its check can read matched.
+    for (const kind of AUTO_ALLOWED_KINDS) expect(autoOffered(kind), kind).toBe(engineCompares(kind));
+    const unchecked = AUTO_ALLOWED_KINDS.filter((k) => !autoOffered(k));
+    expect(unchecked).toEqual(["card_match"]);
+    for (const kind of unchecked) {
+      expect(parseRuleSave({ ...PLAIN, kind, mode: "auto" }), kind).toEqual({ ok: false, category: "never_alone" });
+      expect(fieldOf({ ...PLAIN, kind, mode: "ask" }), kind).toBe("ok");
+      expect(fieldOf({ ...PLAIN, kind, mode: "off" }), kind).toBe("ok");
+    }
+  });
+
   it("refuses a limit one above a listed kind's ceiling and passes one at the ceiling", () => {
     const kinds = flags.autopilot.kinds;
     for (const kind of AUTO_ALLOWED_KINDS) {
@@ -120,7 +133,8 @@ describe("parseRuleSave", () => {
       const driver = c!.driverDayMaxCents;
       const at = {
         kind,
-        mode: "auto",
+        // Ask me where Auto is not offered: the ceiling holds there the same.
+        mode: autoOffered(kind) ? "auto" : "ask",
         maxCents: c!.maxCents,
         dayMaxCents: c!.dayMaxCents,
         dayMaxCount: c!.dayMaxCount,
