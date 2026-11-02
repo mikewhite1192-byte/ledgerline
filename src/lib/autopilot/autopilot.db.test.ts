@@ -601,7 +601,12 @@ describe("the autopilot", () => {
           held(me.pid);
           await released;
         });
-        const pid = await holding;
+        // A save that ends without holding fails the wait here instead of leaving it open.
+        const early = saving.then(() => {
+          throw new Error("the save ended before it held the rule");
+        });
+        early.catch(() => undefined);
+        const pid = await Promise.race([holding, early]);
         approving = executeProposal(pilotB, second, { confirmed: false, autopilot: { ruleId: r2.id, version: r2.version } }, {
           db: app,
           clock: () => new Date(t),
