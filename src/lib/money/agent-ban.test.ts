@@ -4,7 +4,7 @@ import { describe, expect, it } from "vitest";
 // The agent proposes; it never moves money. The lint rule in eslint.config.mjs is the wall, and
 // this test keeps it standing: each forbidden import is reported, each allowed one is not. The
 // ledger's allowlist (money/read, types, keys and format; adapters/types and adapters/tms;
-// money-codes/read, words and switches) is the
+// money-codes/read, words and switches; autopilot/facts, mode, read, session and policy) is the
 // gateway's rule, so the probe sits in src/lib/agent/gateway. Agent code outside the gateway may
 // import none of money/ or adapters/ (src/lib/agent/__tests__/agent-ban.test.ts proves that); here
 // it only has to refuse every forbidden case too.
@@ -61,6 +61,16 @@ const FORBIDDEN_IMPORTS = [
   'import { createFactoringSim } from "../adapters/factoring/sim";',
   'import { readRequest } from "../factoring/read/../execute";',
   'import { factoringRequestExecutor } from "../factoring";',
+  // The owner's autopilot rules and the pause switch: the model never sets either.
+  'import { saveRule } from "../autopilot/rules-admin";',
+  'import { saveRule } from "@/lib/autopilot/rules-admin";',
+  'import { setPaused } from "../autopilot/state";',
+  'import { setPaused } from "@/lib/autopilot/state";',
+  'import { setPaused } from "../Autopilot/State";',
+  'import { setPaused } from "../autopilot/read/../state";',
+  'import { saveRule } from "../autopilot";',
+  'import { saveRule } from "../autopilot/";',
+  'import { saveRule } from "../autopilot/index";',
   // createRequire, imported.
   'import { createRequire } from "node:module";',
   'import { createRequire as load } from "module";',
@@ -94,6 +104,12 @@ const ALLOWED = [
   'import { listMoneyCodes } from "../money-codes/read";',
   'import { moneyCodeSentence } from "@/lib/money-codes/words";',
   'import { moneyCodesOn } from "../money-codes/switches";',
+  // The autopilot's readers and its pure policy.
+  'import { isPaused } from "../autopilot/facts";',
+  'import { autopilotModeFor } from "../autopilot/mode";',
+  'import { readRule } from "@/lib/autopilot/read";',
+  'import { isAutopilotSub } from "../autopilot/session";',
+  'import { decide } from "../autopilot/policy";',
   // Names that only start like a banned one.
   'export const schema = { required: ["driverId"] };',
 ];

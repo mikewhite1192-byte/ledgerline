@@ -133,6 +133,9 @@ export const DEMO_RESET_KEPT = {
   autopilot_rules:
     "the owner's Off, Ask me or Auto rule and limits per action kind (0070); it names only the " +
     "carrier, and the owner's choices survive a reset",
+  autopilot_changes:
+    "the record of each rule save and each Pause or Resume a person made (0089); it names only the " +
+    "carrier and its kept rules, and the owner's record survives a reset as the rules do",
   autopilot_state:
     "the carrier's Pause autopilot switch (0070); it names only the carrier, and the reset itself " +
     "sets a 30 minute pause on it",
