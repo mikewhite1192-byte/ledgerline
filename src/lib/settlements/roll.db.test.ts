@@ -158,7 +158,7 @@ describe("the pay week roll at the sweep's start", () => {
   });
 
   it("opens nothing with the switch off, and the sweep runs the seeded week", async () => {
-    expect(flags.payWeekRoll.enabled).toBe(false);
+    flags.payWeekRoll = { enabled: false };
     const runId = await start(MONDAY_NOON);
     expect((await periods()).length).toBe(SEEDED);
     expect(await runPeriod(runId)).toBe(seededWeek.id);

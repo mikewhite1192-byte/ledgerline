@@ -1069,7 +1069,7 @@ export const flags: Flags = {
     proposeTimeoutMs: 20_000,
   },
   sweepEnabled: true,
-  payWeekRoll: { enabled: false },
+  payWeekRoll: { enabled: true },
   sweepScheduleEnabled: true,
   payCorrectionsEnabled: true,
   sweepLimits: { maxItems: 40, maxRunCents: 150, maxExplainCents: 5, sliceMs: 20_000, maxAuditAttempts: 3 },

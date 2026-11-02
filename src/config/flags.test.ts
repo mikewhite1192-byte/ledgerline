@@ -135,6 +135,9 @@ const RELEASED_ON = [
   // carriers. It changes only its own tables and moves no money.
   "mockTms.enabled",
   "mockTms.newLoad",
+  // Released by the owner (D-071, D-090, 2026-11-02): the pay sweep opens the pay week holding the
+  // carrier's local today. It inserts an open week only and moves no money.
+  "payWeekRoll.enabled",
 ] as const;
 
 // What stays off, each waiting on a missing piece or an outside send the owner has not released.
@@ -152,8 +155,6 @@ const KEPT_OFF = [
   "evalRun.enabled",
   // The card pull-back ships off; its own one-line enable PR turns it on.
   "cardPullback.enabled",
-  // The sweep opening the pay week holding today ships off; its own one-line enable PR turns it on.
-  "payWeekRoll.enabled",
 ] as const;
 
 // The on/off switches in flags.ts, by path: every top-level boolean and every boolean inside a
@@ -462,8 +463,8 @@ describe("flags", () => {
     expect(LOCAL_OFF_ONLY as readonly string[]).toContain("mockTms.newLoad");
   });
 
-  it("ships the pay week roll off, and local mode can never turn it on", () => {
-    expect(flags.payWeekRoll).toEqual({ enabled: false });
+  it("ships the pay week roll on, and local mode can never turn it on", () => {
+    expect(flags.payWeekRoll).toEqual({ enabled: true });
     expect(LOCAL_OVERRIDABLE as readonly string[]).not.toContain("payWeekRoll.enabled");
     // Listed ahead of its release, so the demo-path run keeps it off once it ships on.
     expect(LOCAL_OFF_ONLY as readonly string[]).toContain("payWeekRoll.enabled");
