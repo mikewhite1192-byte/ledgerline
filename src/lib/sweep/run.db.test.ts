@@ -20,7 +20,7 @@ import { clearTenantAgent, replaceTenantData } from "../seed/run";
 import type { Checklist } from "../agent/checklist";
 import { fixPlanFor, type FixLeg } from "./plan";
 import { advanceSweep, MAX_DRAFT_ATTEMPTS, startSweep, type SweepDeps } from "./run";
-import { readSweepHome, readSweepPage } from "./view";
+import { readLatestSweepRun, readSweepHome, readSweepPage } from "./view";
 
 // The sweep against the real database, as the app's role, with the real gateway, turn store and
 // pay correction checks. Only the two model calls are stand-ins: the explanation and the auditor
@@ -807,6 +807,8 @@ describe("the sweep's coverage and its starting checklist (verification on)", ()
     const listed = home.runs.find((r) => r.id === runId);
     expect(listed).toBeDefined();
     expect(listed).not.toHaveProperty("coverage");
+    // The home card's reader is the newest of the same runs.
+    expect(await readLatestSweepRun(SESSION, { db: app })).toEqual(home.runs[0]);
   });
 
   it("fails a run whose starting checklist is not the required one checklist_invalid, before any item is written", async () => {

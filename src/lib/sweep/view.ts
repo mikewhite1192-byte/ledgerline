@@ -284,3 +284,14 @@ export async function readSweepHome(session: Session, deps: { db?: TenantDb } = 
     };
   });
 }
+
+// The home card's last sweep: the newest run alone, without the week pick (readDueWeek reads eight
+// tables) the card never shows.
+export async function readLatestSweepRun(session: Session, deps: { db?: TenantDb } = {}): Promise<SweepRunView | null> {
+  const db = deps.db ?? getDb();
+  return db.withTenant(session.tenantId, async (q) => {
+    await assertMembership(q, session);
+    const runs = await q.query<RunRow>(`${runSelect()} ORDER BY r.started_at DESC, r.id LIMIT 1`);
+    return runs[0] ? runOf(runs[0]) : null;
+  });
+}

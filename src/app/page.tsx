@@ -49,7 +49,7 @@ import { readNextWeekStart } from "@/lib/pay-rules/read";
 import { codeToWords, modelCallStatusLabel } from "@/lib/format/labels";
 import { readPaystubAsk } from "@/lib/settlements/list";
 import { readSettlementsView } from "@/lib/settlements/views";
-import { readSweepHome } from "@/lib/sweep/view";
+import { readLatestSweepRun } from "@/lib/sweep/view";
 import { ForbiddenError, withRequestTenant } from "@/lib/tenant/context";
 import { carrierToday } from "@/lib/tenant/shell";
 import { localTimeOf, type LocalDate } from "@/lib/time/local-date";
@@ -166,7 +166,7 @@ export default async function Home({
         // The last sweep, for the Today card while the sweep is on. A failed database or membership
         // read says so on the card; any other error goes on to Next.
         flags.sweepEnabled
-          ? loaded("sweep home", async () => (await readSweepHome(carrier.session)).runs[0] ?? null)
+          ? loaded("sweep home", () => readLatestSweepRun(carrier.session))
           : null,
         // Friday's pay run, when Cash Friday is on: the latest check's verdict, that it is out of
         // date (its pay day has passed), or that there is none.

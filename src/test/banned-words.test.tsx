@@ -364,6 +364,7 @@ vi.mock("@/lib/ai/watch", async (importOriginal) => ({
 vi.mock("@/lib/sweep/view", async (importOriginal) => ({
   ...(await importOriginal<typeof import("@/lib/sweep/view")>()),
   readSweepHome: async () => get("sweepHome"),
+  readLatestSweepRun: async () => ((await get("sweepHome")) as { runs: unknown[] }).runs[0] ?? null,
   readSweepPage: async () => get("sweepPage"),
 }));
 vi.mock("@/lib/fuel/view", async (importOriginal) => ({
