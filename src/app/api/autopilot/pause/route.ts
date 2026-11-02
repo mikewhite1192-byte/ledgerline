@@ -5,9 +5,9 @@ import { setPaused, type PauseChange } from "@/lib/autopilot/state";
 import { isCrossSite } from "@/lib/http/same-site";
 import { failed, objectBody, refused, reply } from "../../sweeps/reply";
 
-// POST: "Pause autopilot" and "Resume". Body { paused: true } or { paused: false, pausedAt }, where
-// pausedAt is the pause the page showed (an ISO instant, or null); a Resume on a pause that has
-// changed since is refused as changed (409). A signed-in staff member may pause; only an admin may
+// POST: "Pause autopilot" and "Resume". Body { paused: true } or { paused: false, revision }, where
+// revision is the pause row's version the page read (digits, or null for no row); a Resume on a
+// pause that has changed since is refused as changed (409). A signed-in staff member may pause; only an admin may
 // resume; a demo visitor may do neither. Pausing stops every approval the autopilot would make (the
 // desk handler and the approval gate both read it); nothing here approves, pays or sends.
 export const dynamic = "force-dynamic";
@@ -19,10 +19,10 @@ function changeOf(body: Record<string, unknown> | null): PauseChange | null {
   if (!body) return null;
   const keys = Object.keys(body).length;
   if (body.paused === true) return keys === 1 ? { paused: true } : null;
-  if (body.paused !== false || keys !== 2 || !Object.hasOwn(body, "pausedAt")) return null;
-  const at = body.pausedAt;
-  if (at === null) return { paused: false, pausedAt: null };
-  return typeof at === "string" && at.length <= 40 ? { paused: false, pausedAt: at } : null;
+  if (body.paused !== false || keys !== 2 || !Object.hasOwn(body, "revision")) return null;
+  const seen = body.revision;
+  if (seen === null) return { paused: false, revision: null };
+  return typeof seen === "string" && /^\d{1,20}$/.test(seen) ? { paused: false, revision: seen } : null;
 }
 
 export async function POST(request: Request) {

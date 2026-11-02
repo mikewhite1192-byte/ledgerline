@@ -56,7 +56,7 @@ describe("autopilotModeFor", () => {
   it("is ask with no rule, a pause, before the start date, or a kind it may never approve", async () => {
     reads.readRule.mockResolvedValueOnce(null);
     expect(await autopilotModeFor(q, "invoice_post", NOW)).toBe("ask");
-    const paused: PauseRow = { pausedAtMs: NOW - 1_000, pausedUntilMs: null, pausedBy: "owner" };
+    const paused: PauseRow = { pausedAtMs: NOW - 1_000, pausedUntilMs: null, pausedBy: "owner", revision: "812" };
     reads.readPause.mockResolvedValueOnce(paused);
     expect(await autopilotModeFor(q, "invoice_post", NOW)).toBe("ask");
     flags.autopilot.startDate = "2026-11-03";
@@ -96,7 +96,7 @@ describe("autopilotModeFor", () => {
 
   it("is off for a kind turned off while paused or before the start date: nobody is asked", async () => {
     reads.readRule.mockResolvedValue(rule("off"));
-    reads.readPause.mockResolvedValue({ pausedAtMs: NOW - 1_000, pausedUntilMs: null, pausedBy: "owner" } satisfies PauseRow);
+    reads.readPause.mockResolvedValue({ pausedAtMs: NOW - 1_000, pausedUntilMs: null, pausedBy: "owner", revision: "812" } satisfies PauseRow);
     expect(await autopilotModeFor(q, "invoice_post", NOW)).toBe("off");
     reads.readPause.mockResolvedValue(null);
     flags.autopilot.startDate = "2026-11-03";

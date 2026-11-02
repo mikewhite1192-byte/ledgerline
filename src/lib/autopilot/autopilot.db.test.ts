@@ -10,6 +10,7 @@ import { deskHandlers } from "../desk/handlers";
 import { addAdvance, dropTenant, makeTenant, sqlStateOf, type Fixture } from "../money/test-db";
 import { executeProposal, type Executor, type ExecutorRegistry, type ProposalKind } from "../proposals/execute";
 import { serviceSub } from "../sweep/service-session";
+import { readPause } from "./read";
 import { runAutopilot } from "./run";
 import { autopilotSession, autopilotSub } from "./session";
 import { setPaused } from "./state";
@@ -690,15 +691,17 @@ describe("the autopilot", () => {
       const staff = A.session;
       const owner: Session = { sub: `owner-${A.tenantId}`, email: "", tenantId: A.tenantId };
       expect(await setPaused(staff, { paused: true }, { db: app, clock })).toEqual({ ok: true, paused: true });
-      expect(await setPaused(staff, { paused: false, pausedAt: new Date(NOW).toISOString() }, { db: app, clock })).toEqual({ ok: false, category: "role" });
-      expect(await setPaused(pilot, { paused: false, pausedAt: new Date(NOW).toISOString() }, { db: app, clock })).toEqual({ ok: false, category: "forbidden" });
+      const revision = (await app.withTenant(A.tenantId, (q) => readPause(q)))?.revision ?? null;
+      expect(revision).toMatch(/^\d{1,20}$/);
+      expect(await setPaused(staff, { paused: false, revision }, { db: app, clock })).toEqual({ ok: false, category: "role" });
+      expect(await setPaused(pilot, { paused: false, revision }, { db: app, clock })).toEqual({ ok: false, category: "forbidden" });
       const [state] = await admin.withTenant(A.tenantId, (q) =>
         q.query<{ paused_by: string; until: string | null }>(
           "SELECT paused_by, paused_until AS until FROM autopilot_state WHERE tenant_id = current_tenant_id()",
         ),
       );
       expect(state).toEqual({ paused_by: staff.sub, until: null });
-      expect(await setPaused(owner, { paused: false, pausedAt: new Date(NOW).toISOString() }, { db: app, clock })).toEqual({ ok: true, paused: false });
+      expect(await setPaused(owner, { paused: false, revision }, { db: app, clock })).toEqual({ ok: true, paused: false });
     });
   });
 

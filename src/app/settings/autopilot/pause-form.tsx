@@ -11,7 +11,7 @@ import { PAUSE_MESSAGES, messageFor } from "./words";
 // (POST /api/autopilot/pause checks both). The button shows what a press would do, read from the
 // page's own picture: after a press, and once a timed pause (the demo reset's) ends, the page reads
 // itself again, so the status line and the button always agree. A Resume names the pause the page
-// showed (pausedAt), so a page showing an older pause never clears a newer one.
+// read (its row's revision), so a page showing an older pause never clears a newer one.
 
 // While the server still reports a timed pause this browser's clock says has ended, the page reads
 // itself again this often, at most this many times.
@@ -20,12 +20,12 @@ const MAX_RECHECKS = 12;
 
 export function PauseForm({
   paused,
-  pausedAt,
+  revision,
   pausedUntil,
   canResume,
 }: {
   paused: boolean;
-  pausedAt: string | null;
+  revision: string | null;
   pausedUntil: string | null;
   canResume: boolean;
 }) {
@@ -55,7 +55,7 @@ export function PauseForm({
     if (pending || refreshing) return;
     setPending(true);
     setProblem(null);
-    const reply = await postJson("/api/autopilot/pause", paused ? { paused: false, pausedAt } : { paused: true });
+    const reply = await postJson("/api/autopilot/pause", paused ? { paused: false, revision } : { paused: true });
     if (reply.ok && reply.error === null && typeof reply.data.paused === "boolean") {
       startRefresh(() => router.refresh());
     } else {

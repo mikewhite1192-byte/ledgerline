@@ -12,8 +12,9 @@ import { isServiceSub } from "../sweep/service-session";
 // is recorded in autopilot_changes (0089) in the same transaction as the switch, with the switch as
 // it was and as it is now. No model call, and nothing here approves or moves money.
 
-// A Resume names the pause it was pressed on: the pausedAt the page showed, or null for none.
-export type PauseChange = { paused: true } | { paused: false; pausedAt: string | null };
+// A Resume names the pause it was pressed on: the revision the page read (the row's version), or
+// null for no row.
+export type PauseChange = { paused: true } | { paused: false; revision: string | null };
 
 export type PauseResult =
   | { ok: true; paused: boolean }
@@ -33,8 +34,10 @@ ON CONFLICT (tenant_id) DO UPDATE
 const ts = (column: string) => `to_char(${column} AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"')`;
 
 // The switch as it is, locked until the transaction ends, so the record's before is the row this
-// write replaces.
-const BEFORE_SQL = `SELECT ${ts("paused_at")} AS paused_at, paused_by, ${ts("paused_until")} AS paused_until
+// write replaces. revision is the row's version (xmin), which every write of the row changes, even
+// two pauses stored with the same instant.
+const BEFORE_SQL = `SELECT ${ts("paused_at")} AS paused_at, paused_by, ${ts("paused_until")} AS paused_until,
+       CAST(xmin AS text) AS revision
   FROM autopilot_state WHERE tenant_id = current_tenant_id() FOR UPDATE`;
 
 const RECORD_SQL = `INSERT INTO autopilot_changes (tenant_id, subject, before, after, changed_by, created_at)
@@ -51,8 +54,8 @@ export async function setPaused(
 ): Promise<PauseResult> {
   const paused: unknown = change.paused;
   if (typeof paused !== "boolean") throw new RangeError("paused must be a boolean");
-  const expected: unknown = paused ? null : (change as { pausedAt?: unknown }).pausedAt;
-  if (expected !== null && typeof expected !== "string") throw new RangeError("a resume names the pausedAt it saw");
+  const expected: unknown = paused ? null : (change as { revision?: unknown }).revision;
+  if (expected !== null && typeof expected !== "string") throw new RangeError("a resume names the revision it saw");
   // A service login (the sweep's or the autopilot's) never sets the switch.
   if (isServiceSub(session.sub) || isAutopilotSub(session.sub)) return { ok: false, category: "forbidden" };
   const db = deps.db ?? getDb();
@@ -63,15 +66,15 @@ export async function setPaused(
     // One Pause or Resume (or demo reset) at a time per carrier. FOR UPDATE below locks nothing while
     // the carrier has no row yet, so without this two first presses would both record a before of null.
     await q.query(PAUSE_LOCK_SQL, []);
-    const rows = await q.query<{ paused_at: unknown; paused_by: unknown; paused_until: unknown }>(BEFORE_SQL, []);
+    const rows = await q.query<{ paused_at: unknown; paused_by: unknown; paused_until: unknown; revision: unknown }>(BEFORE_SQL, []);
     if (rows.length > 1) throw new DbError("unknown");
     const before: PauseValues | null =
       rows.length === 0
         ? null
         : { pausedAt: textOrNull(rows[0].paused_at), pausedBy: textOrNull(rows[0].paused_by), pausedUntil: textOrNull(rows[0].paused_until) };
     // A Resume pressed on another pause than the one now set (a newer one, or none) writes nothing:
-    // the whole stored value, compared as the page was shown it.
-    if (!paused && expected !== (rows.length === 0 ? null : rows[0].paused_at)) return { ok: false, category: "changed" } as const;
+    // the row's whole revision, compared as the page read it.
+    if (!paused && expected !== (rows.length === 0 ? null : rows[0].revision)) return { ok: false, category: "changed" } as const;
     const at = now.toISOString();
     const written = await q.execute(paused ? PAUSE_SQL : RESUME_SQL, paused ? [at, session.sub] : [at]);
     if (written !== 1) throw new DbError("unknown");

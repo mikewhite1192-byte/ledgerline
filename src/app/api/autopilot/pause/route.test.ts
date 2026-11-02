@@ -4,12 +4,12 @@ import type { Session } from "@/lib/auth/claims";
 import { POST } from "./route";
 
 // The pause route's body and its answers, with the switch write a stand-in: a Pause carries
-// nothing else, a Resume must name the pause it saw (an instant or null), and a Resume on a pause
-// that changed since answers 409 changed. The write itself is proven against a real database in
-// src/lib/autopilot/autopilot-rules.db.test.ts. No database and no network here.
+// nothing else, a Resume must name the pause it saw (the row's revision, digits or null), and a
+// Resume on a pause that changed since answers 409 changed. The write itself is proven against a
+// real database in src/lib/autopilot/autopilot-rules.db.test.ts. No database and no network here.
 
 const SESSION: Session = { sub: "sub-test", email: "ops@example.test", tenantId: "11111111-1111-4111-8111-111111111111" };
-const SEEN = "2026-11-02T16:00:00.000Z";
+const SEEN = "48213";
 
 const mocks = vi.hoisted(() => ({ getSession: vi.fn(), staffGate: vi.fn(), setPaused: vi.fn() }));
 
@@ -46,20 +46,24 @@ describe("POST /api/autopilot/pause", () => {
     expect(paused.status).toBe(200);
     expect(await paused.json()).toEqual({ ok: true, paused: true });
     expect(mocks.setPaused).toHaveBeenLastCalledWith(SESSION, { paused: true });
-    for (const pausedAt of [SEEN, null]) {
-      const resumed = await call({ paused: false, pausedAt });
+    for (const revision of [SEEN, "9".repeat(20), null]) {
+      const resumed = await call({ paused: false, revision });
       expect(resumed.status).toBe(200);
-      expect(mocks.setPaused).toHaveBeenLastCalledWith(SESSION, { paused: false, pausedAt });
+      expect(mocks.setPaused).toHaveBeenLastCalledWith(SESSION, { paused: false, revision });
     }
   });
 
   it("refuses a Resume that names no pause, and any other body, before the write", async () => {
     for (const body of [
       { paused: false },
-      { paused: false, pausedAt: 1 },
-      { paused: false, pausedAt: "x".repeat(41) },
-      { paused: true, pausedAt: SEEN },
-      { paused: false, pausedAt: SEEN, more: 1 },
+      { paused: false, revision: 1 },
+      { paused: false, revision: "" },
+      { paused: false, revision: "12a" },
+      { paused: false, revision: "9".repeat(21) },
+      { paused: false, revision: "2026-11-02T16:00:00.000Z" },
+      { paused: false, pausedAt: SEEN },
+      { paused: true, revision: SEEN },
+      { paused: false, revision: SEEN, more: 1 },
       { paused: "no" },
     ]) {
       const res = await call(body);
@@ -71,7 +75,7 @@ describe("POST /api/autopilot/pause", () => {
 
   it("answers 409 changed for a Resume on a pause that changed since", async () => {
     mocks.setPaused.mockResolvedValueOnce({ ok: false, category: "changed" });
-    const res = await call({ paused: false, pausedAt: SEEN });
+    const res = await call({ paused: false, revision: SEEN });
     expect(res.status).toBe(409);
     expect(await res.json()).toEqual({ error: "changed", retryable: false });
   });
