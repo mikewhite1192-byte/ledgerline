@@ -92,6 +92,7 @@ export default async function AutopilotSettings() {
                 <CardBody>
                   <PauseForm
                     paused={view.picture.pause.paused}
+                    revision={view.picture.pause.revision}
                     pausedUntil={view.picture.pause.pausedUntil}
                     canResume={view.role === "admin"}
                   />

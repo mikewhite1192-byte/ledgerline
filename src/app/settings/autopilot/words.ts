@@ -51,6 +51,7 @@ export const PAUSE_MESSAGES: Messages = {
   role: "Only an admin can resume the autopilot. It stays paused.",
   forbidden: "Only staff of this carrier can pause the autopilot. Nothing was changed.",
   bad_request: "That was not understood. Nothing was changed.",
+  changed: "Someone changed the pause a moment ago. The page now shows it as it is. Nothing was changed.",
   unknown: "The change did not confirm. Reload this page to see the switch as saved.",
 };
 

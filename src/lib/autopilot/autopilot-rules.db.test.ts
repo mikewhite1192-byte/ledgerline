@@ -20,8 +20,10 @@ import { setPaused } from "./state";
 // current version that changes nothing writes nothing, and a stale one answers changed; Auto on a
 // never-alone kind is refused in code and by the 0077 check; each carrier sees only its own rules
 // and record, and the record only grows; the readers the autopilot decides with see the new rule;
-// each Pause and Resume is recorded, two first pauses at once in order; only an admin saves. A
-// fixed clock; two tenants made here and removed after.
+// each Pause and Resume is recorded, two first pauses at once in order; a Resume pressed on an
+// older pause than the one set is refused and writes nothing, even one stored at the same instant
+// (the row's revision tells them apart); only an admin saves. A fixed clock; two tenants made here
+// and removed after.
 
 const savedAutopilot = structuredClone(flags.autopilot);
 const NOW = Date.UTC(2026, 10, 2, 16, 0, 0);
@@ -61,6 +63,10 @@ const save = (session: Session, body: Record<string, unknown>, when = at(0)) => 
   if (!parsed.ok) throw new Error(`the test's body did not parse: ${parsed.category}`);
   return app.withTenant(session.tenantId, (q) => saveRule(q, session, parsed.value, when));
 };
+
+// The pause row's revision as the settings page reads it, as the app's role.
+const revisionOf = async (f: Fixture) => (await app.withTenant(f.tenantId, (q) => readRules(q, NOW))).pause.revision;
+const REVISION = expect.stringMatching(/^\d{1,20}$/);
 
 const wipe = (f: Fixture) =>
   admin.withTenant(f.tenantId, async (q) => {
@@ -226,7 +232,7 @@ describe("the owner's autopilot rules", () => {
   it("holds each carrier to its own rules and record, and the record only grows", async () => {
     await save(ownerA, INVOICE);
     await save(ownerB, { ...INVOICE, mode: "off" });
-    await setPaused(ownerA, true, { db: app, clock: () => at(0) });
+    await setPaused(ownerA, { paused: true }, { db: app, clock: () => at(0) });
     for (const [f, mode] of [[A, "auto"], [B, "off"]] as const) {
       const seen = await app.withTenant(f.tenantId, async (q) => ({
         rules: await q.query<{ tenant_id: string; mode: string }>(
@@ -295,13 +301,13 @@ describe("the owner's autopilot rules", () => {
     expect(picture.kinds).toHaveLength(17);
     expect(picture.kinds.find((k) => k.kind === "invoice_post")).toMatchObject({ mode: "ask", allowedAuto: true, listed: true, armed: true });
     expect(picture.kinds.find((k) => k.kind === "settlement_approve")).toMatchObject({ mode: "ask", allowedAuto: false, listed: false, ceiling: null });
-    expect(picture.pause).toEqual({ paused: false, pausedAt: null, pausedUntil: null, pausedBy: null });
+    expect(picture.pause).toEqual({ paused: false, pausedAt: null, pausedUntil: null, pausedBy: null, revision: null });
   });
 
   it("records each Pause and Resume beside the switch, and says who paused only as a category", async () => {
-    expect(await setPaused(ownerA, true, { db: app, clock: () => at(0) })).toEqual({ ok: true, paused: true });
-    expect(await setPaused(ownerA, false, { db: app, clock: () => at(3) })).toEqual({ ok: true, paused: false });
-    expect(await setPaused(A.session, true, { db: app, clock: () => at(7) })).toEqual({ ok: true, paused: true });
+    expect(await setPaused(ownerA, { paused: true }, { db: app, clock: () => at(0) })).toEqual({ ok: true, paused: true });
+    expect(await setPaused(ownerA, { paused: false, revision: await revisionOf(A) }, { db: app, clock: () => at(3) })).toEqual({ ok: true, paused: false });
+    expect(await setPaused(A.session, { paused: true }, { db: app, clock: () => at(7) })).toEqual({ ok: true, paused: true });
     const paused = { pausedAt: at(0).toISOString(), pausedBy: ownerA.sub, pausedUntil: null };
     const cleared = { pausedAt: null, pausedBy: null, pausedUntil: null };
     expect(await changesOf(A, "pause")).toEqual([
@@ -320,16 +326,77 @@ describe("the owner's autopilot rules", () => {
       },
     ]);
     const picture = await app.withTenant(A.tenantId, (q) => readRules(q, NOW + 8 * 60_000));
-    expect(picture.pause).toEqual({ paused: true, pausedAt: at(7).toISOString(), pausedUntil: null, pausedBy: "person" });
+    expect(picture.pause).toEqual({ paused: true, pausedAt: at(7).toISOString(), pausedUntil: null, pausedBy: "person", revision: REVISION });
     // A refused resume records nothing.
-    expect(await setPaused(A.session, false, { db: app, clock: () => at(9) })).toEqual({ ok: false, category: "role" });
+    expect(await setPaused(A.session, { paused: false, revision: picture.pause.revision }, { db: app, clock: () => at(9) })).toEqual({ ok: false, category: "role" });
     expect(await changesOf(A, "pause")).toHaveLength(3);
+  });
+
+  it("refuses a Resume pressed on another pause than the one set, and clears the one the page read", async () => {
+    expect(await setPaused(ownerA, { paused: true }, { db: app, clock: () => at(0) })).toEqual({ ok: true, paused: true });
+    const first = await revisionOf(A);
+    expect(await setPaused(A.session, { paused: true }, { db: app, clock: () => at(2) })).toEqual({ ok: true, paused: true });
+    // A tab that still shows the first pause, and one that showed none: refused, nothing written.
+    for (const revision of [first, null]) {
+      expect(await setPaused(ownerA, { paused: false, revision }, { db: app, clock: () => at(4) })).toEqual({
+        ok: false,
+        category: "changed",
+      });
+    }
+    expect(await changesOf(A, "pause")).toHaveLength(2);
+    const shown = await app.withTenant(A.tenantId, (q) => readRules(q, NOW + 5 * 60_000));
+    expect(shown.pause).toEqual({ paused: true, pausedAt: at(2).toISOString(), pausedUntil: null, pausedBy: "person", revision: REVISION });
+    expect(shown.pause.revision).not.toBe(first);
+    // The pause the page read, sent back as it was read: resumed and recorded.
+    expect(await setPaused(ownerA, { paused: false, revision: shown.pause.revision }, { db: app, clock: () => at(5) })).toEqual({
+      ok: true,
+      paused: false,
+    });
+    const log = await changesOf(A, "pause");
+    expect(log).toHaveLength(3);
+    expect(log[2]).toMatchObject({
+      before: { pausedAt: at(2).toISOString(), pausedBy: A.session.sub, pausedUntil: null },
+      after: { pausedAt: null, pausedBy: null, pausedUntil: null },
+      changed_by: ownerA.sub,
+    });
+    const after = await app.withTenant(A.tenantId, (q) => readRules(q, NOW + 6 * 60_000));
+    expect(after.pause).toEqual({ paused: false, pausedAt: null, pausedUntil: null, pausedBy: null, revision: REVISION });
+  });
+
+  it("refuses a Resume read before a second pause stored at the same instant, and clears the one the page read", async () => {
+    expect(await setPaused(ownerA, { paused: true }, { db: app, clock: () => at(0) })).toEqual({ ok: true, paused: true });
+    const first = await app.withTenant(A.tenantId, (q) => readRules(q, NOW));
+    expect(await setPaused(ownerA, { paused: true }, { db: app, clock: () => at(0) })).toEqual({ ok: true, paused: true });
+    const second = await app.withTenant(A.tenantId, (q) => readRules(q, NOW));
+    // The same stored pause, to the millisecond and by the same person; only the row's revision moved.
+    expect(first.pause).toEqual({ paused: true, pausedAt: at(0).toISOString(), pausedUntil: null, pausedBy: "person", revision: REVISION });
+    expect(second.pause).toEqual({ ...first.pause, revision: REVISION });
+    expect(second.pause.revision).not.toBe(first.pause.revision);
+    // A tab that read the first: refused, nothing written, the row as it was.
+    expect(await setPaused(ownerA, { paused: false, revision: first.pause.revision }, { db: app, clock: () => at(1) })).toEqual({
+      ok: false,
+      category: "changed",
+    });
+    expect(await changesOf(A, "pause")).toHaveLength(2);
+    expect((await app.withTenant(A.tenantId, (q) => readRules(q, NOW))).pause).toEqual(second.pause);
+    // The current revision: resumed and recorded.
+    expect(await setPaused(ownerA, { paused: false, revision: second.pause.revision }, { db: app, clock: () => at(1) })).toEqual({
+      ok: true,
+      paused: false,
+    });
+    const log = await changesOf(A, "pause");
+    expect(log).toHaveLength(3);
+    expect(log[2]).toMatchObject({
+      before: { pausedAt: at(0).toISOString(), pausedBy: ownerA.sub, pausedUntil: null },
+      after: { pausedAt: null, pausedBy: null, pausedUntil: null },
+      changed_by: ownerA.sub,
+    });
   });
 
   it("orders two first pauses at once: two records, and the second's before is the first's after", async () => {
     const out = await Promise.all([
-      setPaused(ownerA, true, { db: app, clock: () => at(0) }),
-      setPaused(A.session, true, { db: app, clock: () => at(1) }),
+      setPaused(ownerA, { paused: true }, { db: app, clock: () => at(0) }),
+      setPaused(A.session, { paused: true }, { db: app, clock: () => at(1) }),
     ]);
     expect(out).toEqual([{ ok: true, paused: true }, { ok: true, paused: true }]);
     const log = await changesOf(A, "pause");

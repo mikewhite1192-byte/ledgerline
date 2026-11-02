@@ -667,7 +667,7 @@ const AUTOPILOT_PICTURE = {
       ceiling,
     };
   }),
-  pause: { paused: false, pausedAt: null, pausedUntil: null, pausedBy: null },
+  pause: { paused: false, pausedAt: null, pausedUntil: null, pausedBy: null, revision: null },
   startDate: "2026-10-31",
 };
 
@@ -1957,7 +1957,7 @@ const PAGES: PageCase[] = [
         setup: () =>
           (state.fx.autopilotRules = {
             ...AUTOPILOT_PICTURE,
-            pause: { paused: true, pausedAt: "2026-11-02T15:00:00.000Z", pausedUntil: null, pausedBy: "person" },
+            pause: { paused: true, pausedAt: "2026-11-02T15:00:00.000Z", pausedUntil: null, pausedBy: "person", revision: "812" },
           }),
         load: () => autopilotPage(),
         shows: ["Resume autopilot", "Paused. A person decides everything until an admin resumes it."],
@@ -1967,7 +1967,7 @@ const PAGES: PageCase[] = [
         setup: () =>
           (state.fx.autopilotRules = {
             ...AUTOPILOT_PICTURE,
-            pause: { paused: true, pausedAt: "2026-11-02T15:00:00.000Z", pausedUntil: "2026-11-02T15:30:00.000Z", pausedBy: "demo_reset" },
+            pause: { paused: true, pausedAt: "2026-11-02T15:00:00.000Z", pausedUntil: "2026-11-02T15:30:00.000Z", pausedBy: "demo_reset", revision: "812" },
           }),
         load: () => autopilotPage(),
         shows: "Paused for a short while after the demo reset. It resumes by itself.",

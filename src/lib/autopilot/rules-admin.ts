@@ -309,6 +309,9 @@ export type PausePicture = {
   pausedUntil: string | null;
   // Who paused, as a category: the demo reset's timed pause or a person. Never the login itself.
   pausedBy: "demo_reset" | "person" | null;
+  // The row's version, which a Resume sends back so it clears only the pause the page read; null
+  // when the carrier has no row.
+  revision: string | null;
 };
 
 export type RulesPicture = {
@@ -339,12 +342,13 @@ export async function readRules(q: Queryable, nowMs: number): Promise<RulesPictu
   const p = await readPause(q);
   const pause: PausePicture =
     p === null
-      ? { paused: false, pausedAt: null, pausedUntil: null, pausedBy: null }
+      ? { paused: false, pausedAt: null, pausedUntil: null, pausedBy: null, revision: null }
       : {
           paused: isPaused(p, nowMs),
           pausedAt: isoOrNull(p.pausedAtMs),
           pausedUntil: isoOrNull(p.pausedUntilMs),
           pausedBy: p.pausedBy === null ? null : p.pausedBy === "demo_reset" ? "demo_reset" : "person",
+          revision: p.revision,
         };
   return { rules, kinds, pause, startDate: flags.autopilot.startDate };
 }
