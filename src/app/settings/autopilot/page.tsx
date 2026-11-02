@@ -5,6 +5,7 @@ import { Wordmark } from "@/components/brand/wordmark";
 import { Card, CardBody, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { TBody, THead, Table, Td, Th, Tr } from "@/components/ui/table";
 import { flags } from "@/config/flags";
+import { readRole } from "@/lib/auth/role";
 import { DRIVER_KINDS } from "@/lib/autopilot/policy";
 import { readRules, type RulesPicture } from "@/lib/autopilot/rules-admin";
 import { DbError } from "@/lib/db";
@@ -56,10 +57,7 @@ export default async function AutopilotSettings() {
   let problem: "forbidden" | "unreadable" | null = null;
   try {
     view = await withRequestTenant<View>(async (q, session) => {
-      const members = await q.query<{ role: unknown }>("SELECT role FROM memberships WHERE cognito_sub = $1", [session.sub]);
-      if (members.length !== 1) throw new ForbiddenError();
-      const role = members[0].role;
-      if (role !== "admin" && role !== "staff" && role !== "judge") throw new ForbiddenError();
+      const role = await readRole(q, session);
       return { role, picture: await readRules(q, Date.now()) };
     });
   } catch (err) {

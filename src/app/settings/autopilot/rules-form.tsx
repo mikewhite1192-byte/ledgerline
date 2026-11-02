@@ -142,7 +142,6 @@ function RuleRow({ initial }: { initial: RuleRowView }) {
             />
           </label>
         ) : null}
-        <input type="hidden" name="version" value={row.version === null ? "" : String(row.version)} />
         <Button type="submit" variant="secondary" pending={pending} pendingLabel="Saving">
           Save
         </Button>
