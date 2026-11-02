@@ -200,8 +200,9 @@ export async function runPayPeriod(
     if (period.status !== "open") return { ok: false as const, category: "not_open" as const };
     if (period.start < flags.settlementsStart) return { ok: false as const, category: "before_start" as const };
     const drivers = await candidates(q, period);
-    // Findings once per run, over the tenant's records; each draft takes its driver's.
-    const findings = runAllChecks(await readCheckInput(q));
+    // Findings once per run, over the tenant's records, under this week's pay rules version
+    // (D-093); each draft takes its driver's.
+    const findings = runAllChecks(await readCheckInput(q, period.start));
     return { ok: true as const, period, drivers, findings };
   });
   if (!start.ok) return start;

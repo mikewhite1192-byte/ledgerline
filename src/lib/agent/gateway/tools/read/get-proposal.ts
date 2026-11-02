@@ -322,7 +322,10 @@ async function advanceEngine(
 async function payCorrectionEngine(q: Queryable, args: Record<string, unknown>): Promise<Engine> {
   const { driverId, periodId, payItemId, deltaCents } = args;
   if (!isUuid(driverId) || !isUuid(periodId) || !Number.isSafeInteger(deltaCents)) return UNAVAILABLE;
-  const findings = runAllChecks(await readCheckInput(q))
+  // The checks run under the correction's own week's pay rules version, the one its draft was
+  // computed under (D-093); a week not found keeps the newest open week's.
+  const [period] = await readRowsWhereId(q, "settlement_periods", "id", periodId);
+  const findings = runAllChecks(await readCheckInput(q, period?.period_start))
     .filter((f) => f.driverId === driverId)
     .slice(0, MAX_FINDINGS)
     .map((f) => ({
@@ -331,7 +334,6 @@ async function payCorrectionEngine(q: Queryable, args: Record<string, unknown>):
       amountCents: f.amountCents ?? null,
       sources: refList(f.sources, 4),
     }));
-  const [period] = await readRowsWhereId(q, "settlement_periods", "id", periodId);
   const item = isUuid(payItemId) ? (await readRowsWhereId(q, "pay_items", "id", payItemId))[0] : undefined;
   return {
     ok: true,
