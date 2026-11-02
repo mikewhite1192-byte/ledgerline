@@ -6,8 +6,8 @@ import { Button } from "@/components/ui/button";
 
 // "Run sweep now": makes the run id here (a double press or a retry replays the same run), opens
 // the run and goes to its page, which carries it on. It never names a week: the start picks the
-// newest open week after the pay week roll (D-090), so a week the roll opens on this press is the
-// one swept, not the older week the page was showing. Fixed sentences only.
+// week paid next after the pay week roll (D-093), so an older week is swept until it is paid and a
+// week the roll opens on this press is swept after it. Fixed sentences only.
 
 const NOTICE: Readonly<Record<string, string>> = {
   disabled: "The sweep is switched off right now.",

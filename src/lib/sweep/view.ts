@@ -5,6 +5,7 @@ import { parseSweepCoverage, type SweepCoverage } from "../agent/verify/required
 import { readProposalViews } from "../agent/gateway/store/views";
 import type { ProposalView } from "../agent/view";
 import type { Session } from "../auth/claims";
+import { readDueWeek } from "../data/read";
 import { getDb, type TenantDb } from "../db";
 import { assertMembership } from "../tenant/context";
 import { isUuid } from "../uuid";
@@ -269,20 +270,16 @@ export type SweepHome = {
   runs: SweepRunView[];
 };
 
-// The sweep's own page and the home card: the newest open week (the one a run sweeps, D-090) and
-// the latest runs.
+// The sweep's own page and the home card: the week paid next (readDueWeek, the one a run sweeps,
+// D-093) and the latest runs.
 export async function readSweepHome(session: Session, deps: { db?: TenantDb } = {}): Promise<SweepHome> {
   const db = deps.db ?? getDb();
   return db.withTenant(session.tenantId, async (q) => {
     await assertMembership(q, session);
-    const open = await q.query<{ id: string; period_start: string; period_end: string }>(
-      `SELECT id, CAST(period_start AS text) AS period_start, CAST(period_end AS text) AS period_end
-         FROM settlement_periods WHERE status = 'open' ORDER BY period_start DESC LIMIT 1`,
-    );
+    const open = await readDueWeek(q);
     const runs = await q.query<RunRow>(`${runSelect()} ORDER BY r.started_at DESC, r.id LIMIT 10`);
     return {
-      openPeriod:
-        open[0] ? { id: open[0].id, periodStart: open[0].period_start, periodEnd: open[0].period_end } : null,
+      openPeriod: open ? { id: open.id, periodStart: open.period_start, periodEnd: open.period_end } : null,
       runs: runs.map(runOf),
     };
   });

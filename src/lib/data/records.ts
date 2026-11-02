@@ -342,7 +342,8 @@ export function cashSettingsOf(r: CashSettingsRow): CashSettingsRecord {
 
 // ---- Whole inputs, from one tenant's rows ----
 
-// Everything the six pay checks read, under the open period's pay rules version.
+// Everything the six pay checks read, under the pay rules version of the week starting weekStart
+// (the week a sweep runs, D-093), else the newest open period's (checkVersionOf).
 export function checkInputOf(
   rows: Pick<
     TenantRows,
@@ -357,9 +358,11 @@ export function checkInputOf(
     | "pay_items"
     | "advances"
   >,
+  weekStart?: LocalDate,
 ): CheckInput {
+  const version = weekStart ? configFor(rows.pay_configs, weekStart) : checkVersionOf(rows.pay_configs, rows.settlement_periods);
   return {
-    config: payConfigOf(checkVersionOf(rows.pay_configs, rows.settlement_periods)),
+    config: payConfigOf(version),
     drivers: rows.drivers.map(driverOf),
     loads: loadsOf(rows.loads, rows.load_state_miles, rows.load_accessorials),
     days: rows.driver_days.map(dayOf),

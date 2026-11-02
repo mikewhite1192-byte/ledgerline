@@ -57,7 +57,8 @@ export function configForDay<T extends Version>(versions: readonly T[], day: Loc
 }
 
 // The version the pay checks read: the newest open period's (the current week, where new records
-// land, D-090); with no open period, the newest version.
+// land, D-090); with no open period, the newest version. A sweep reads its own week's version
+// instead (checkInputOf with the week's start, D-093), which may be the older open week's.
 export function checkVersionOf<T extends Version>(
   versions: readonly T[],
   periods: readonly Pick<SettlementPeriodRow, "period_start" | "status">[],

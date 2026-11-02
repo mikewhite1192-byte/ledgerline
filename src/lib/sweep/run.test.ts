@@ -54,18 +54,15 @@ describe("an earlier fix's outcome", () => {
   });
 });
 
-// A stand-in for the periods table: it keeps the open rows the SQL names and, as the SQL asks,
-// returns the newest by start, one row.
+// A stand-in for the periods table: it keeps the open row the SQL names, one row. The week picked
+// when none is named (readDueWeek) reads against the real database (roll.db.test.ts).
 function periodsDb(rows: { id: string; period_start: string; status: string }[]): Queryable {
   return {
     async query<T>(sql: string, params: Param[] = []): Promise<T[]> {
-      expect(sql).toMatch(/ORDER BY period_start DESC LIMIT 1/);
-      const named = params[0];
-      const open = rows
-        .filter((r) => r.status === "open" && (named === null || r.id === named))
-        .map((r) => ({ id: r.id, period_start: r.period_start, period_end: r.period_start }))
-        .sort((a, b) => (a.period_start < b.period_start ? 1 : -1));
-      return open.slice(0, 1) as T[];
+      expect(sql).toMatch(/status = 'open' AND id = CAST\(\$1 AS uuid\)/);
+      return rows
+        .filter((r) => r.status === "open" && r.id === params[0])
+        .map((r) => ({ id: r.id, period_start: r.period_start, period_end: r.period_start })) as T[];
     },
     async execute() {
       throw new Error("openPeriod writes nothing");
@@ -80,12 +77,9 @@ describe("the run's open week", () => {
     { id: "w-new", period_start: "2026-11-02", status: "open" },
   ];
 
-  it("is the newest of two open weeks when none is named", async () => {
-    expect((await openPeriod(periodsDb(rows), null))?.id).toBe("w-new");
-  });
-
   it("is the named week while it is open, and none when the named week is not open", async () => {
     expect((await openPeriod(periodsDb(rows), "w-old"))?.id).toBe("w-old");
+    expect((await openPeriod(periodsDb(rows), "w-new"))?.id).toBe("w-new");
     expect(await openPeriod(periodsDb(rows), "w-paid")).toBeNull();
   });
 });

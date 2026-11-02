@@ -1,5 +1,9 @@
 import { describe, expect, it } from "vitest";
-import { cashFridayInputOf, factoredInvoiceIds, type CashFridayRows } from "./records";
+import { DEMO_ANCHOR } from "../seed/anchor";
+import { DEMO_CARRIERS } from "../seed/carriers";
+import { buildCarrierPlan } from "../seed/plan";
+import { configFor } from "./config-version";
+import { cashFridayInputOf, checkInputOf, factoredInvoiceIds, payConfigOf, type CashFridayRows } from "./records";
 import type { FactoringRequestInvoiceRow, InvoiceRow } from "./rows";
 
 // The factoring marks Cash Friday and the factoring engine read: an invoice on a live factoring
@@ -116,5 +120,43 @@ describe("cashFridayInputOf factoring marks", () => {
   it("marks nothing when no invoice was ever sent to factoring", () => {
     const input = cashFridayInputOf(rows([invoice(1)], []), "America/Chicago", LIMITS);
     expect(input.invoices.every((i) => i.factored !== true)).toBe(true);
+  });
+});
+
+// The pay checks a sweep reads run under its own week's pay rules version (D-093). With one open
+// week that is the version the checks read with no week named, so a sweep with the roll off reads
+// exactly what it did. With two open weeks under two versions, the older week's start takes the
+// older version and no week named still takes the newest open week's.
+describe("checkInputOf's pay rules version", () => {
+  const plan = buildCarrierPlan(DEMO_CARRIERS[0], DEMO_ANCHOR);
+  const seeded = plan.rows.settlement_periods.filter((p) => p.status === "open");
+  const own = configFor(plan.rows.pay_configs, seeded[0].period_start);
+
+  it("is the same input for the one open week as with no week named", () => {
+    expect(seeded.length).toBe(1);
+    expect(checkInputOf(plan.rows, seeded[0].period_start)).toEqual(checkInputOf(plan.rows));
+  });
+
+  it("takes the named week's version, and the newest open week's with none named", () => {
+    const nextStart = "2026-11-02";
+    expect(seeded[0].period_end < nextStart).toBe(true);
+    const later = {
+      ...own,
+      id: "00000000-0000-4000-8000-000000000901",
+      effective_from: nextStart,
+      insurance_per_day_cents: own.insurance_per_day_cents + 100,
+    };
+    const rows = {
+      ...plan.rows,
+      pay_configs: [...plan.rows.pay_configs, later],
+      settlement_periods: [
+        ...plan.rows.settlement_periods,
+        { id: "00000000-0000-4000-8000-000000000902", period_start: nextStart, period_end: "2026-11-08", status: "open" as const },
+      ],
+    };
+    expect(checkInputOf(rows, seeded[0].period_start).config).toEqual(payConfigOf(own));
+    expect(checkInputOf(rows, nextStart).config).toEqual(payConfigOf(later));
+    expect(checkInputOf(rows).config).toEqual(payConfigOf(later));
+    expect(payConfigOf(later)).not.toEqual(payConfigOf(own));
   });
 });
