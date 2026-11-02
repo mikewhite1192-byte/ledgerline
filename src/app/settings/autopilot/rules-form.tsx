@@ -157,12 +157,13 @@ function RuleRow({ initial }: { initial: RuleRowView }) {
   );
 }
 
-// Every kind's rule, one small form each. A save changes only that kind; each is recorded.
+// Every kind's rule, one small form each. A save changes only that kind; each is recorded. Each
+// form is keyed by its kind and saved version, so a page refresh that brings a newer rule shows it.
 export function AutopilotRulesForm({ rows }: { rows: RuleRowView[] }) {
   return (
     <div className="grid">
       {rows.map((r) => (
-        <RuleRow key={r.kind} initial={r} />
+        <RuleRow key={`${r.kind}:${r.version ?? "none"}`} initial={r} />
       ))}
     </div>
   );

@@ -32,8 +32,10 @@ export const ADMIN_ONLY = "Only an admin sets the autopilot rules.";
 export const NEVER_ALONE_NOTE = "A person always approves this, so Auto is not offered.";
 export const NOT_ARMED_NOTE = "Auto is saved but waits until this kind is switched on.";
 
-// A fixed message per category; nothing the server says is shown.
-export const RULE_SAVE_MESSAGES: Readonly<Record<string, string>> = {
+// A fixed message per category; nothing the server says is shown. Each table has an unknown one.
+type Messages = Readonly<Record<string, string> & { unknown: string }>;
+
+export const RULE_SAVE_MESSAGES: Messages = {
   not_found: "The autopilot rules are off for this carrier. Nothing was changed.",
   role: ADMIN_ONLY + " Nothing was changed.",
   forbidden: ADMIN_ONLY + " Nothing was changed.",
@@ -44,7 +46,7 @@ export const RULE_SAVE_MESSAGES: Readonly<Record<string, string>> = {
   unknown: "The save did not confirm. Reload this page to see the rule as saved.",
 };
 
-export const PAUSE_MESSAGES: Readonly<Record<string, string>> = {
+export const PAUSE_MESSAGES: Messages = {
   disabled: "The autopilot is off. Nothing was changed.",
   role: "Only an admin can resume the autopilot. It stays paused.",
   forbidden: "Only staff of this carrier can pause the autopilot. Nothing was changed.",
@@ -52,7 +54,7 @@ export const PAUSE_MESSAGES: Readonly<Record<string, string>> = {
   unknown: "The change did not confirm. Reload this page to see the switch as saved.",
 };
 
-export const FALLBACK = "Could not save the change. Try again in a moment.";
-
-export const messageFor = (table: Readonly<Record<string, string>>, category: string | null): string =>
-  (category !== null && Object.hasOwn(table, category) ? table[category] : null) ?? FALLBACK;
+// Any other category ("unavailable" included) may follow a change that committed and lost its
+// reply, so it reads as the table's unknown sentence: reload to see, never "try again".
+export const messageFor = (table: Messages, category: string | null): string =>
+  category !== null && Object.hasOwn(table, category) ? table[category] : table.unknown;

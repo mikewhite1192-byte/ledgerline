@@ -24,7 +24,8 @@ import { runPayPeriod } from "./run";
 // the carrier's today only with the switch on, once however many starts race, and leaves the
 // seeded week and its stubs as they were. The start then sweeps the week paid next (D-093): the
 // seeded week while it is open, the week the roll opened once the seeded week is paid. The tenant
-// is removed after.
+// is removed after. Each test runs whole sweeps, so each has room for a slow runner: a test cut off
+// at the default timeout would keep writing into the next one.
 
 const CARRIER = DEMO_CARRIERS[0];
 const plan = buildCarrierPlan(CARRIER, DEMO_ANCHOR);
@@ -135,13 +136,13 @@ describe("the pay week roll at the sweep's start", () => {
         [SESSION.sub, SESSION.email],
       ),
     );
-  });
+  }, 120_000);
 
   beforeEach(async () => {
     Object.assign(flags, structuredClone(saved));
     flags.sweepEnabled = true;
     await app.withTenant(T, (q) => resetDemoInTransaction(q, plan));
-  });
+  }, 60_000);
 
   afterEach(() => {
     Object.assign(flags, structuredClone(saved));
@@ -162,7 +163,7 @@ describe("the pay week roll at the sweep's start", () => {
     const runId = await start(MONDAY_NOON);
     expect((await periods()).length).toBe(SEEDED);
     expect(await runPeriod(runId)).toBe(seededWeek.id);
-  });
+  }, 60_000);
 
   it("opens the week holding today with the switch on, sweeps the seeded week first, and leaves it and its stubs as they were", async () => {
     flags.payWeekRoll = { enabled: true };
@@ -175,7 +176,7 @@ describe("the pay week roll at the sweep's start", () => {
     expect(await runPeriod(runId)).toBe(seededWeek.id);
     expect(after.find((p) => p.id === seededWeek.id)?.status).toBe("open");
     expect(await seededRows()).toEqual(before);
-  });
+  }, 60_000);
 
   it("opens the week once when two starts race", async () => {
     flags.payWeekRoll = { enabled: true };
@@ -184,7 +185,7 @@ describe("the pay week roll at the sweep's start", () => {
     expect((await periods()).length).toBe(SEEDED + 1);
     expect(await runPeriod(a)).toBe(await runPeriod(b));
     expect(await runPeriod(a)).toBe(seededWeek.id);
-  });
+  }, 60_000);
 
   it("sweeps the week the roll opened once the seeded week is paid, and the sweep home follows", async () => {
     flags.payWeekRoll = { enabled: true };
@@ -196,7 +197,7 @@ describe("the pay week roll at the sweep's start", () => {
     const runId = await start(new Date("2026-11-06T18:00:00.000Z"));
     expect(await runPeriod(runId)).toBe(opened?.id);
     expect(await homeWeek()).toBe(opened?.id);
-  });
+  }, 60_000);
 
   it("still sweeps the seeded week while its stubs are approved but not paid", async () => {
     flags.payWeekRoll = { enabled: true };
@@ -206,7 +207,7 @@ describe("the pay week roll at the sweep's start", () => {
     expect((await periods()).find((p) => p.id === seededWeek.id)?.status).toBe("open");
     expect(await runPeriod(runId)).toBe(seededWeek.id);
     expect(await homeWeek()).toBe(seededWeek.id);
-  });
+  }, 60_000);
 
   it("opens nothing more on a later day inside the opened week", async () => {
     flags.payWeekRoll = { enabled: true };
@@ -215,14 +216,14 @@ describe("the pay week roll at the sweep's start", () => {
     expect(later).toEqual({ opened: false, periodStart: null, reason: "week_exists" });
     await start(new Date("2026-11-04T18:00:00.000Z"));
     expect((await periods()).length).toBe(SEEDED + 1);
-  });
+  }, 60_000);
 
   it("opens nothing on Sunday evening in the carrier's zone, still the seeded week's last day", async () => {
     flags.payWeekRoll = { enabled: true };
     const runId = await start(new Date("2026-11-02T03:00:00.000Z"));
     expect((await periods()).length).toBe(SEEDED);
     expect(await runPeriod(runId)).toBe(seededWeek.id);
-  });
+  }, 60_000);
 
   it("gives the same Cash Friday figures for the seeded week after the roll", async () => {
     const before = await cashFriday("2026-11-02");
@@ -230,7 +231,7 @@ describe("the pay week roll at the sweep's start", () => {
     flags.payWeekRoll = { enabled: true };
     await start(MONDAY_NOON);
     expect(await cashFriday("2026-11-02")).toEqual(before);
-  });
+  }, 60_000);
 
   it("passes over an older open week with no paystub, so Cash Friday still reports the seeded week and the sweep runs it", async () => {
     const before = await cashFriday("2026-11-02");
@@ -249,7 +250,7 @@ describe("the pay week roll at the sweep's start", () => {
     const runId = await start(MONDAY_NOON);
     expect((await periods()).filter((p) => p.status === "open").length).toBe(3);
     expect(await runPeriod(runId)).toBe(seededWeek.id);
-  });
+  }, 60_000);
 
   it("is put back to the seeded weeks by the demo reset, the hero's net unchanged", async () => {
     flags.payWeekRoll = { enabled: true };
@@ -258,5 +259,5 @@ describe("the pay week roll at the sweep's start", () => {
     const report = await app.withTenant(T, (q) => resetDemoInTransaction(q, plan));
     expect(report.heroNetCents).toBe(HERO_OPEN_WEEK.netCents);
     expect((await periods()).map((p) => p.period_start)).toEqual(plan.rows.settlement_periods.map((p) => p.period_start).sort());
-  });
+  }, 60_000);
 });
