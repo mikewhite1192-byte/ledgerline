@@ -94,6 +94,18 @@ describe("autopilotModeFor", () => {
     expect(await autopilotModeFor(q, "invoice_post", NOW)).toBe("off");
   });
 
+  it("is off for a kind turned off while paused or before the start date: nobody is asked", async () => {
+    reads.readRule.mockResolvedValue(rule("off"));
+    reads.readPause.mockResolvedValue({ pausedAtMs: NOW - 1_000, pausedUntilMs: null, pausedBy: "owner" } satisfies PauseRow);
+    expect(await autopilotModeFor(q, "invoice_post", NOW)).toBe("off");
+    reads.readPause.mockResolvedValue(null);
+    flags.autopilot.startDate = "2026-11-03";
+    expect(await autopilotModeFor(q, "invoice_post", NOW)).toBe("off");
+    // Still ask, before any read, while the autopilot is off.
+    flags.autopilot.enabled = false;
+    expect(await autopilotModeFor(q, "invoice_post", NOW)).toBe("ask");
+  });
+
   it("throws when a read fails", async () => {
     reads.readPause.mockRejectedValueOnce(new Error("db down"));
     await expect(autopilotModeFor(q, "invoice_post", NOW)).rejects.toThrow("db down");

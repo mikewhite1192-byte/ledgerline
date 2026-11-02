@@ -12,9 +12,12 @@ import { isServiceSub } from "../sweep/service-session";
 // is recorded in autopilot_changes (0089) in the same transaction as the switch, with the switch as
 // it was and as it is now. No model call, and nothing here approves or moves money.
 
+// A Resume names the pause it was pressed on: the pausedAt the page showed, or null for none.
+export type PauseChange = { paused: true } | { paused: false; pausedAt: string | null };
+
 export type PauseResult =
   | { ok: true; paused: boolean }
-  | { ok: false; category: "role" | "forbidden" };
+  | { ok: false; category: "role" | "forbidden" | "changed" };
 
 const PAUSE_SQL = `INSERT INTO autopilot_state (tenant_id, paused_at, paused_by, paused_until, updated_at)
 VALUES (current_tenant_id(), CAST($1 AS timestamptz), $2, NULL, CAST($1 AS timestamptz))
@@ -43,10 +46,13 @@ const textOrNull = (v: unknown): string | null => (typeof v === "string" ? v : n
 
 export async function setPaused(
   session: Session,
-  paused: boolean,
+  change: PauseChange,
   deps: { db?: TenantDb; clock?: () => Date } = {},
 ): Promise<PauseResult> {
+  const paused: unknown = change.paused;
   if (typeof paused !== "boolean") throw new RangeError("paused must be a boolean");
+  const expected: unknown = paused ? null : (change as { pausedAt?: unknown }).pausedAt;
+  if (expected !== null && typeof expected !== "string") throw new RangeError("a resume names the pausedAt it saw");
   // A service login (the sweep's or the autopilot's) never sets the switch.
   if (isServiceSub(session.sub) || isAutopilotSub(session.sub)) return { ok: false, category: "forbidden" };
   const db = deps.db ?? getDb();
@@ -63,6 +69,9 @@ export async function setPaused(
       rows.length === 0
         ? null
         : { pausedAt: textOrNull(rows[0].paused_at), pausedBy: textOrNull(rows[0].paused_by), pausedUntil: textOrNull(rows[0].paused_until) };
+    // A Resume pressed on another pause than the one now set (a newer one, or none) writes nothing:
+    // the whole stored value, compared as the page was shown it.
+    if (!paused && expected !== (rows.length === 0 ? null : rows[0].paused_at)) return { ok: false, category: "changed" } as const;
     const at = now.toISOString();
     const written = await q.execute(paused ? PAUSE_SQL : RESUME_SQL, paused ? [at, session.sub] : [at]);
     if (written !== 1) throw new DbError("unknown");

@@ -11,6 +11,7 @@ import { assertMembership } from "../tenant/context";
 import { decide, driverOf, isPaused, recordOf, type DecisionRecord } from "../autopilot/policy";
 import { midnightMs, readDriverToday, readPause, readRule, readToday, readZone, todayStartIso } from "../autopilot/read";
 import { autopilotSub, isAutopilotSub } from "../autopilot/session";
+import { PAUSE_SHARED_LOCK_SQL } from "../autopilot/state-lock";
 import { namedPersonRequired } from "../money/never-alone";
 import { isServiceSub } from "../sweep/service-session";
 import { isUuid } from "../uuid";
@@ -384,9 +385,10 @@ function principalRefusal(session: Session, opts: ApproveOptions, role: string |
 }
 
 // The autopilot's policy, decided again inside the gate's transaction with the proposal locked:
-// the switch, its arming and start date read now, the pause, the rule (locked, so two approvals
-// of one kind read today's totals one after the other) and today's totals, the driver's own too on a
-// kind that pays a driver (a plain read: no driver or load lock is taken here). Anything but auto is
+// the switch, its arming and start date read now, the pause (under the pause lock the gate took
+// shared, so a Pause either committed before this read or waits until the approval commits), the
+// rule (locked, so two approvals of one kind read today's totals one after the other) and today's
+// totals, the driver's own too on a kind that pays a driver (a plain read: no driver or load lock is taken here). Anything but auto is
 // refused with the policy's reason word and nothing written; a rule changed since the decision
 // (another id or version) is refused too. Reads only.
 async function autopilotDecision(
@@ -459,6 +461,10 @@ async function gate(
   const principal = principalRefusal(session, opts, member.length === 1 ? member[0].role : undefined);
   if (principal) return { result: principal };
   const auto = opts.autopilot !== undefined;
+  // The autopilot's approval holds the pause lock shared until it commits, so a Pause or a demo reset
+  // waits for it and it waits for them. Taken before the proposal row lock, as the reset and a press
+  // take theirs before any row, so the order is the same everywhere and nothing deadlocks.
+  if (auto) await q.query(PAUSE_SHARED_LOCK_SQL, []);
   const cutoff = new Date(now.getTime() - flags.proposalMaxAgeDays * DAY_MS).toISOString();
   const rows = await q.query<Row>(
     `SELECT id, conversation_id, turn_id, kind, subject_table, subject_id, amount_cents, direction,
