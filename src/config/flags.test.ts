@@ -153,6 +153,9 @@ const RELEASED_ON = [
   // Released by the owner (D-098, D-103, 2026-11-03): the driver's phone on the sample board. One
   // model read per tap, and it moves a load on the sample board only, never money.
   "driverPaperwork.enabled",
+  // Released by the owner (D-103, 2026-11-03): the plain trace and the plain fix card. Presentation
+  // only; it changes no number and moves no money.
+  "plainTrace.enabled",
 ] as const;
 
 // What stays off, each waiting on a missing piece or an outside send the owner has not released.
@@ -171,9 +174,6 @@ const KEPT_OFF = [
   // Read only, but it changes where sign-in lands and adds a panel on Home: the owner turns it on in
   // its own PR.
   "signInTour.enabled",
-  // Presentation only, but it changes what the trace and a card show: the owner turns it on in its
-  // own PR.
-  "plainTrace.enabled",
 ] as const;
 
 // The on/off switches in flags.ts, by path: every top-level boolean and every boolean inside a
@@ -443,8 +443,8 @@ describe("flags", () => {
     expect(LOCAL_OFF_ONLY as readonly string[]).toContain("simpleShape.enabled");
   });
 
-  it("ships the plain trace off, off for the local demo run", () => {
-    expect(flags.plainTrace).toEqual({ enabled: false });
+  it("ships the plain trace on, off for the local demo run", () => {
+    expect(flags.plainTrace).toEqual({ enabled: true });
     // Listed ahead of its release, so the demo-path run keeps it off once it ships on.
     expect(LOCAL_OFF_ONLY as readonly string[]).toContain("plainTrace.enabled");
   });
