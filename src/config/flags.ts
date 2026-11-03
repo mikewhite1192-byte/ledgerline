@@ -1291,8 +1291,8 @@ export const flags: Flags = {
   cancelledTrip: { enabled: true, startDate: "2026-11-02" },
   // On by the owner's call (D-071, 2026-11-01). One model call per carrier per day; sends nothing.
   morningDigest: { enabled: true, startDate: "2026-11-02", maxCostCents: 4, maxOutputTokens: 400 },
-  // Off until the owner turns it on in its own PR. Read only.
-  activityFeed: { enabled: false, pollSeconds: 15, pageSize: 50 },
+  // On by the owner's call (D-071, D-097, 2026-11-03). Read only; it moves no money.
+  activityFeed: { enabled: true, pollSeconds: 15, pageSize: 50 },
   // Off until the owner turns it on in its own PR. Read only.
   signInTour: { enabled: false },
 };

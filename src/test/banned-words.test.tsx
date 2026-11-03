@@ -567,6 +567,9 @@ vi.mock("@/lib/tour/facts", async (importOriginal) => ({
 
 function defaults(): Record<string, unknown> {
   return {
+    // Home's live feed card, its switch on.
+    feed: { rows: FEED_ROWS.slice(0, 3), next: null },
+    feedHeader: { deskCheckedAt: null, paused: false },
     drivers: fx.DRIVERS,
     advances: fx.ADVANCES,
     advanceRecord: fx.ADVANCE_RECORD,
