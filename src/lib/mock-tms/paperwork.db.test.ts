@@ -315,6 +315,20 @@ describe("driver sends paperwork", () => {
     expect(await eventsOf(f, l.ourId)).toHaveLength(1);
   });
 
+  it("sends the same file on a tap minutes later before the stop's fixed clock, so no second row and no second read", async () => {
+    const f = await carrier();
+    const l = await load(f);
+    flags.loadMovement = { ...flags.loadMovement, enabled: false };
+    const early = { arrived: "11/03/2026 12:01 AM CST", departed: "11/03/2026 12:19 AM CST" };
+    const complete = reader(reading(l.reference, "pickup", early));
+    // 6:00 and 6:07 CST, both before the 8:05 AM pickup clock.
+    expect(await tap(f.session, l.reference, "pickup", complete, T0 - 3 * HOUR)).toEqual({ kind: "refused", category: "moves_off" });
+    expect(await tap(f.session, l.reference, "pickup", complete, T0 - 3 * HOUR + 7 * MINUTE)).toEqual({ kind: "refused", category: "moves_off" });
+    expect(complete).toHaveBeenCalledTimes(1);
+    expect(await documentsOf(f)).toEqual([{ id: expect.any(String), filename: `driver-${l.reference}-pickup.pdf`, read_status: "read" }]);
+    expect((await ours(f, l.ourId)).status).toBe("planned");
+  });
+
   it("moves nothing on a paper read as another load's", async () => {
     const f = await carrier();
     const l = await load(f);

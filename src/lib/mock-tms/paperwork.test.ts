@@ -54,11 +54,22 @@ describe("paperDatesFor", () => {
     });
   });
 
-  it("uses 20 and 2 minutes ago, to the minute, when the fixed clock is still ahead today", () => {
+  it("uses the early clock, 12:01 to 12:19 AM, when the fixed clock is still ahead today", () => {
     expect(dates("pickup", {}, at(7, 0, 42))).toEqual({
       ok: true,
-      times: { date: "2026-11-03", arrivedAt: iso(at(6, 40)), departedAt: iso(at(6, 58)) },
+      times: { date: "2026-11-03", arrivedAt: iso(at(0, 1)), departedAt: iso(at(0, 19)) },
     });
+  });
+
+  it("gives the same times to every tap before the fixed clock that day, whatever the minute", () => {
+    for (const stage of ["pickup", "delivery"] as const) {
+      const first = dates(stage, {}, at(0, 19));
+      expect(first.ok).toBe(true);
+      for (const later of [at(0, 25), at(6, 3, 17), at(7, 59, 59)]) expect(dates(stage, {}, later)).toEqual(first);
+    }
+    const left = { pickupDepartedAt: iso(at(8, 5)) };
+    const delivery = dates("delivery", left, at(9, 0));
+    for (const later of [at(9, 7, 30), at(13, 49), at(14, 13, 59)]) expect(dates("delivery", left, later)).toEqual(delivery);
   });
 
   it("dates an old load's pickup on the last day the window allows", () => {
@@ -83,13 +94,18 @@ describe("paperDatesFor", () => {
   it("starts a same day delivery after the pickup left", () => {
     expect(timesOf("delivery", { pickupDepartedAt: iso(at(8, 5)) }, at(9, 0))).toEqual({
       date: "2026-11-03",
-      arrivedAt: iso(at(8, 40)),
-      departedAt: iso(at(8, 58)),
+      arrivedAt: iso(at(8, 6)),
+      departedAt: iso(at(8, 6)),
     });
     expect(timesOf("delivery", { pickupDepartedAt: iso(at(8, 50, 30)) }, at(9, 0))).toEqual({
       date: "2026-11-03",
       arrivedAt: iso(at(8, 52)),
-      departedAt: iso(at(8, 58)),
+      departedAt: iso(at(8, 52)),
+    });
+    expect(timesOf("delivery", { pickupDepartedAt: iso(at(14, 0)) }, at(15, 0))).toEqual({
+      date: "2026-11-03",
+      arrivedAt: iso(at(14, 1)),
+      departedAt: iso(at(14, 14)),
     });
     expect(dates("delivery", { pickupDepartedAt: iso(at(8, 59, 30)) }, at(9, 0, 10))).toEqual({ ok: false, reason: "too_soon" });
   });
@@ -229,5 +245,12 @@ describe("the rendered paper", () => {
     expect(a.subarray(0, 5).toString("latin1")).toBe("%PDF-");
     expect(Buffer.compare(a, b)).toBe(0);
     expect(Buffer.compare(a, c)).not.toBe(0);
+  });
+
+  it("is the same bytes for a same day paper tapped at different minutes before the fixed clock", async () => {
+    const info = { title: "Bill of Lading BR-L10417 (SAMPLE)" };
+    const a = await renderPdfContent(paperContentFor(LOAD, "pickup", timesOf("pickup", {}, at(6, 2))), info);
+    const b = await renderPdfContent(paperContentFor(LOAD, "pickup", timesOf("pickup", {}, at(6, 47, 31))), info);
+    expect(Buffer.compare(a, b)).toBe(0);
   });
 });

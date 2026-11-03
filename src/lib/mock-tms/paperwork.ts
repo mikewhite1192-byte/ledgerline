@@ -141,7 +141,6 @@ export type PaperTimes = { date: LocalDate; arrivedAt: Instant; departedAt: Inst
 export type PaperDates = { ok: true; times: PaperTimes } | { ok: false; reason: "not_due" | "too_soon" };
 
 const MINUTE_MS = 60_000;
-const floorMinute = (ms: number) => Math.floor(ms / MINUTE_MS) * MINUTE_MS;
 const ceilMinute = (ms: number) => Math.ceil(ms / MINUTE_MS) * MINUTE_MS;
 const iso = (ms: number) => new Date(ms).toISOString();
 
@@ -151,11 +150,18 @@ const STOP_CLOCK: Record<PaperStage, { arrived: [number, number]; departed: [num
   delivery: { arrived: [13, 50], departed: [14, 14] },
 };
 
+// A paper dated today whose fixed clock is still ahead: 12:01 to 12:19 AM that day. Fixed, never
+// the tap's minute, so every tap before the fixed clock renders the same bytes.
+const EARLY_CLOCK = { arrived: [0, 1], departed: [0, 19] } as const;
+
 // The paper's date and its stop's times. Pure. The date is the last day the paperwork rules allow
 // (src/lib/loads/paperwork.ts), never after today: a pickup paper on min(today, pickup + 2 days),
 // a delivery on min(today, pickup + 14 days). The times are the stop's fixed clock in the carrier's
-// zone; a paper dated today whose fixed time is still ahead uses 20 and 2 minutes ago instead. A
-// delivery always starts after the pickup left.
+// zone; a paper dated today whose fixed time is still ahead uses the early clock instead (12:01 to
+// 12:19 AM). A delivery always starts after the pickup left. The times depend only on the date,
+// the stage, the stored pickup departure and whether the fixed clock has passed, never on the tap's
+// minute, so a repeat tap renders the same paper and the documents content_hash keeps it once (the
+// paper changes at most once a day, when the fixed clock passes).
 export function paperDatesFor(
   stage: PaperStage,
   load: { pickupOn: LocalDate; pickupDepartedAt: Instant | null },
@@ -172,8 +178,8 @@ export function paperDatesFor(
   let arrived = Date.parse(instantAt(date, clock.arrived[0], clock.arrived[1], zone));
   let departed = Date.parse(instantAt(date, clock.departed[0], clock.departed[1], zone));
   if (departed > nowMs) {
-    arrived = floorMinute(nowMs - 20 * MINUTE_MS);
-    departed = floorMinute(nowMs - 2 * MINUTE_MS);
+    arrived = Date.parse(instantAt(date, EARLY_CLOCK.arrived[0], EARLY_CLOCK.arrived[1], zone));
+    departed = Date.parse(instantAt(date, EARLY_CLOCK.departed[0], EARLY_CLOCK.departed[1], zone));
   }
   if (stage === "delivery" && load.pickupDepartedAt !== null) {
     const left = Date.parse(load.pickupDepartedAt);
