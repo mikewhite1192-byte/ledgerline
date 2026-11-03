@@ -34,7 +34,10 @@ export type ExplainDeps = { complete?: CompleteFn; ai?: AiDeps };
 
 export const EXPLANATION_MAX_CHARS = 400;
 // The explanation call's own time limit; the sweep's draft lease is sized to cover it.
-export const EXPLAIN_TIMEOUT_MS = 8_000;
+export const EXPLAIN_TIMEOUT_MS = 12_000;
+// Reasoning and the answer share this cap. At 400, production calls spent 398 tokens on reasoning
+// and were cut off before the sentence (2026-11-03), so the cap leaves several times that.
+export const EXPLAIN_MAX_OUTPUT_TOKENS = 1_600;
 
 const FORMAT = {
   name: "sweep_explanation",
@@ -98,7 +101,7 @@ export async function explainFix(
         maxCostCents: input.maxCostCents,
         timeoutMs: EXPLAIN_TIMEOUT_MS,
         traceId: input.traceId,
-        maxOutputTokens: 400,
+        maxOutputTokens: EXPLAIN_MAX_OUTPUT_TOKENS,
         reasoningEffort: "low",
         messages: [
           { role: "system", content: PROMPT },

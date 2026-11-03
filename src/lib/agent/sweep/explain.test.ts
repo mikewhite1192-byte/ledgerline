@@ -68,7 +68,7 @@ describe("explainFix", () => {
     const [target, request, session] = complete.mock.calls[0];
     expect(target).toBe("spark");
     expect(session).toBe(SESSION);
-    expect(request).toMatchObject({ purpose: "sweep_explain", maxCostCents: 5, maxOutputTokens: 400, traceId: INPUT.traceId });
+    expect(request).toMatchObject({ purpose: "sweep_explain", maxCostCents: 5, maxOutputTokens: 1600, traceId: INPUT.traceId });
     const finding = JSON.parse(request.messages[1].content as string);
     expect(finding).toMatchObject({ amount: "$340.00", correction: "adds to the driver's pay", driver: "BR-D17" });
   });

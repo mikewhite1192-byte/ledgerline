@@ -49,7 +49,7 @@ export const SEGMENT_TRANSCRIBE = { purpose: "call_segment_transcribe", maxCostC
 export const SEGMENT_UPDATE = {
   purpose: "call_segment_update",
   timeoutMs: 12_000,
-  maxOutputTokens: 700,
+  maxOutputTokens: 1600,
   reasoningEffort: "minimal",
 } as const;
 

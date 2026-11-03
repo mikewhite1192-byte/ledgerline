@@ -19,7 +19,9 @@ import { kindInWords } from "./words";
 // question still shows. Never inside a database transaction.
 
 export const REASON_MAX_CHARS = 200;
-export const REASON_TIMEOUT_MS = 6_000;
+// Reasoning and the line share flags.agentAsks.reasonMaxOutputTokens, so the call needs time for
+// both: at 80 tokens and 6 s every production call was cut off (2026-11-03).
+export const REASON_TIMEOUT_MS = 10_000;
 
 export type ReasonCompleteFn = (target: AiTextTarget, request: AiRequest, session: Session) => Promise<AiResult>;
 

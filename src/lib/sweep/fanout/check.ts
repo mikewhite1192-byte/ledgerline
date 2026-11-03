@@ -26,9 +26,9 @@ export const MIN_CALL_MS = 4_000;
 const MAX_CALL_MS = 60_000;
 // Reasoning and the answer share this cap. Measured on muse-spark-1.3 at low effort (2026-10-27):
 // the answering call spent 650 to 700 tokens on reasoning alone, so a 700 cap cut every answer
-// off. 2,000 leaves room for an eight-issue answer, and its reserve (about 1.6 cents with a full
-// set of read results) still fits callCents.
-const MAX_OUTPUT_TOKENS = 2_000;
+// off. 3,000 leaves room for an eight-issue answer with reasoning to spare, and its reserve (about
+// 2.0 cents with a full set of read results) still fits callCents.
+const MAX_OUTPUT_TOKENS = 3_000;
 
 export type CheckStatus = "done" | "unparsed" | "timed_out" | "budget" | "error";
 

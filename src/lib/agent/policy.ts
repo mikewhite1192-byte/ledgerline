@@ -220,28 +220,31 @@ export const STATE_HEADER = "Current state (from the database, for this turn onl
 
 // The operator's calls to Muse Spark. maxCostCents bounds one call's reserve, which is a worst
 // case: with tool search on, the wrapper reserves the request's input twice (SEARCH_INPUT_FACTOR),
-// and each call after a search sends the loaded tools back. At Muse Spark's list price, 1,200
-// output tokens reserve about 0.51 cents and each request byte 0.000125 cents (half a token, read
-// twice), so 20 cents holds a request of about 155,900 bytes. A turn's first request is about
+// and each call after a search sends the loaded tools back. At Muse Spark's list price, 2,400
+// output tokens reserve about 1.02 cents and each request byte 0.000125 cents (half a token, read
+// twice), so 20 cents holds a request of about 151,800 bytes. A turn's first request is about
 // 47,000 bytes (57,000 with a full summary), one search's echo adds about 36,000, and each tool
 // result is at most about 8,000 (the gateway's limit), so even six of them come to about 141,000.
-// At 10 cents (about 75,900 bytes) the call right after a search was refused. The turn's own
+// At 10 cents (then about 75,900 bytes) the call right after a search was refused. The turn's own
 // maxTurnCents still bounds the whole turn: each call's cap is the lower of this and what the
 // turn has left.
 export const OPERATOR_CALL = {
   purpose: "agent_operator_turn",
   reasoningEffort: "low",
-  maxOutputTokens: 1200,
+  maxOutputTokens: 2400,
   maxCostCents: 20,
   cacheKeyPrefix: "ledgerline-operator",
 } as const;
 
-// The one escalation per turn to Muse Wonder after two schema failures on the same tool.
+// The one escalation per turn to Muse Wonder after two schema failures on the same tool. High
+// effort reasons before it answers, and reasoning shares maxOutputTokens, so the cap matches the
+// auditor's (2,400 tokens, 4.80 cents at $20.00 per million), and the cost cap keeps more room
+// for the request than it had at 800 tokens.
 export const ESCALATION_CALL = {
   purpose: "agent_operator_escalation",
   reasoningEffort: "high",
-  maxOutputTokens: 800,
-  maxCostCents: 15,
+  maxOutputTokens: 2400,
+  maxCostCents: 20,
   maxTimeoutMs: 15_000,
   // Only when at least this much of the turn's clock is left.
   minRemainingMs: 12_000,

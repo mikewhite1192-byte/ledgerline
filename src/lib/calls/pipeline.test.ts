@@ -783,8 +783,8 @@ describe("receiveSegment", () => {
     const h = harness();
     await h.send(0);
     const [, ask] = h.complete.mock.calls[0];
-    expect(ask).toMatchObject({ reasoningEffort: "minimal", maxOutputTokens: 700 });
-    expect(P.SEGMENT_UPDATE).toMatchObject({ reasoningEffort: "minimal", maxOutputTokens: 700 });
+    expect(ask).toMatchObject({ reasoningEffort: "minimal", maxOutputTokens: 1600 });
+    expect(P.SEGMENT_UPDATE).toMatchObject({ reasoningEffort: "minimal", maxOutputTokens: 1600 });
   });
 
   it("keeps a segment done when the hand-off is refused or fails, for the hand-off route to finish", async () => {

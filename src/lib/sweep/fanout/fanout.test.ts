@@ -4,14 +4,24 @@ import type { OpenedTurn, StepFinish, StepStart } from "@/lib/agent/gateway/stor
 import type { StepView } from "@/lib/agent/view";
 import type { GatewayOutcome } from "@/lib/agent/gateway/types";
 import { AiError, type AiRequest, type AiResult, type AiTool } from "@/lib/ai";
-import { NANOCENTS_PER_CENT } from "@/lib/ai/prices";
+import { estimateReserve, NANOCENTS_PER_CENT, priceFor, type TokenPrice } from "@/lib/ai/prices";
+import { metaBody } from "@/lib/ai/providers/meta";
+import { FINDING_CATEGORIES } from "@/lib/rules-engine/types";
 import { DbError, type Queryable } from "@/lib/db";
 import { CHECK_TOOLS, runChildCheck, sourcesFrom, validateCheck, type ChildDeps, type ChildInput } from "./check";
-import { refusedByProvider } from "./limits";
-import { defaultOrder, validatePlan, type Roster } from "./plan";
-import { computeCounts, fanoutFindingKey, validateReconcile, type CheckRow, type EngineFinding } from "./reconcile";
-import { openLeasedTurn, type FanoutCtx, type FanoutDeps } from "./run";
-import { parseJson, scrubFigures } from "./schemas";
+import { fanoutLimits, refusedByProvider } from "./limits";
+import { defaultOrder, PLAN_PROMPT, planInput, validatePlan, type Roster } from "./plan";
+import {
+  computeCounts,
+  fanoutFindingKey,
+  RECONCILE_PROMPT,
+  reconcileInput,
+  validateReconcile,
+  type CheckRow,
+  type EngineFinding,
+} from "./reconcile";
+import { MIN_WONDER_MS, openLeasedTurn, PLAN_CALL, RECONCILE_CALL, type FanoutCtx, type FanoutDeps } from "./run";
+import { MAX_ISSUES, MAX_SOURCES, OTHER_CATEGORY, PLAN_FORMAT, RECONCILE_FORMAT, parseJson, scrubFigures } from "./schemas";
 import { treeOf, type FanoutCheckRow, type FanoutRow } from "./tree";
 
 // The second opinion's server rules, without a database or a model: the plan, check and
@@ -268,13 +278,13 @@ describe("runChildCheck", () => {
     expect(out.costNanocents).toBe(10 * NANOCENTS_PER_CENT);
   });
 
-  it("stops at fifteen seconds on the clock and never asks for longer than is left", async () => {
-    const h = harness([() => result({ toolCalls: [toolCall("get_loads")] })], { stepMs: 6_000 });
+  it("stops at the check's own clock and never asks for longer than is left", async () => {
+    const h = harness([() => result({ toolCalls: [toolCall("get_loads")] })], { stepMs: 8_000 });
     const out = await runChildCheck(input(), h.deps);
     expect(out.status).toBe("timed_out");
     expect(h.complete).toHaveBeenCalledTimes(2);
     expect(h.requests[0].timeoutMs).toBeLessThanOrEqual(LIMITS.childTimeoutMs);
-    expect(h.requests[1].timeoutMs).toBeLessThanOrEqual(LIMITS.childTimeoutMs - 6_000);
+    expect(h.requests[1].timeoutMs).toBeLessThanOrEqual(LIMITS.childTimeoutMs - 8_000);
   });
 
   it("refuses a write tool and another driver's records without asking the gateway", async () => {
@@ -524,5 +534,85 @@ describe("openLeasedTurn", () => {
       });
       await expect(openLeasedTurn(failing, "Second opinion: compare the checks", async () => 1)).rejects.toBe(err);
     }
+  });
+});
+
+describe("the ordering and comparison calls' caps", () => {
+  // The reserve the wrapper takes for a Wonder request: the body's bytes as input plus every output
+  // token, at the Wonder price (src/lib/ai/index.ts textPlan, with no attachments and no search).
+  const wonderReserveCents = (request: AiRequest, options: { maxOutputTokens: number; reasoningEffort: "low" | "medium" }) => {
+    const body = JSON.stringify(metaBody("muse-wonder-1.0", request, options));
+    const price = priceFor("wonder", "meta", "muse-wonder-1.0") as TokenPrice;
+    return estimateReserve(price, new TextEncoder().encode(body).length, options.maxOutputTokens) / NANOCENTS_PER_CENT;
+  };
+  const id = (n: number) => `${n.toString(16).padStart(8, "0")}-aaaa-4aaa-8aaa-aaaaaaaaaaaa`;
+  const window = { start: "2026-10-26", end: "2026-11-01" };
+
+  it("leave reasoning room under each output cap, and the full-roster worst case fits each cost cap", () => {
+    const l = fanoutLimits();
+    expect(PLAN_CALL.maxOutputTokens).toBeGreaterThanOrEqual(l.maxDrivers * 100 * 2);
+    expect(RECONCILE_CALL.maxOutputTokens).toBeGreaterThanOrEqual(4_000);
+    const full: Roster = {
+      rows: Array.from({ length: l.maxDrivers }, (_, n) => ({
+        driverId: id(n),
+        code: `D-${n}`,
+        netCents: null,
+        loads: 99,
+        payItems: 99,
+        advances: 99,
+        days: 7,
+        findings: Object.fromEntries(FINDING_CATEGORIES.map((c) => [c, 9])),
+      })),
+      skipped: Array.from({ length: 20 }, (_, n) => ({ driverId: id(1_000 + n), reason: "over_limit" as const })),
+      payBases: ["per_mile", "percent", "flat"],
+    };
+    const plan: AiRequest = {
+      purpose: "fanout_plan",
+      messages: [
+        { role: "system", content: PLAN_PROMPT },
+        { role: "user", content: planInput(full, window) },
+      ],
+      format: PLAN_FORMAT,
+    };
+    expect(wonderReserveCents(plan, PLAN_CALL)).toBeLessThanOrEqual(l.planCents);
+
+    const checks: CheckRow[] = full.rows.map((r) => ({
+      driverId: r.driverId,
+      status: "done",
+      answer: {
+        driverId: r.driverId,
+        checkedAll: true,
+        confidence: "low",
+        issues: Array.from({ length: MAX_ISSUES }, () => ({
+          category: OTHER_CATEGORY,
+          sources: Array.from({ length: MAX_SOURCES }, (_, k) => ({ table: "deduction_schedules", id: id(k) })),
+          note: "",
+        })),
+      },
+    }));
+    const engine: EngineFinding[] = Array.from({ length: flags.sweepLimits.maxItems }, (_, n) => ({
+      driverId: id(n % l.maxDrivers),
+      category: FINDING_CATEGORIES[0],
+      table: "deduction_schedules",
+      id: id(n),
+    }));
+    const reconcile: AiRequest = {
+      purpose: "fanout_reconcile",
+      messages: [
+        { role: "system", content: RECONCILE_PROMPT },
+        { role: "user", content: reconcileInput(computeCounts(engine, checks).counts, engine, checks) },
+      ],
+      format: RECONCILE_FORMAT,
+    };
+    expect(wonderReserveCents(reconcile, RECONCILE_CALL)).toBeLessThanOrEqual(l.reconcileCents);
+    // Both, with every driver's check, fit the second opinion's share of the run's cap.
+    expect(l.maxDrivers * l.driverCents + l.planCents + l.reconcileCents).toBeLessThanOrEqual(
+      l.runCapCents - flags.sweepLimits.maxRunCents,
+    );
+  });
+
+  it("start a Wonder call only with at least 20 s for it, inside the route's 30 s", () => {
+    expect(MIN_WONDER_MS + 5_000).toBeGreaterThanOrEqual(20_000);
+    expect(MIN_WONDER_MS).toBeLessThanOrEqual(flags.sweepLimits.sliceMs);
   });
 });
