@@ -503,3 +503,169 @@ describe("home, the sign-in walkthrough", () => {
     }
   });
 });
+
+// The simple Home (flags.simpleShape): three blocks from the same reads. The describes above run
+// with the switch off, as it ships.
+const FEED_ROW = {
+  key: "desk:0f0e0d0c-0b0a-4908-8706-050403020100",
+  at: "2026-11-10T14:10:00.000000Z",
+  event: "desk_done",
+  actor: "desk",
+  cents: null,
+  direction: null,
+  title: null,
+  kind: "customer_payment",
+  code: null,
+  reason: null,
+  count: null,
+  limitCents: null,
+  dayLimitCents: null,
+  until: null,
+  channel: null,
+  system: null,
+  once: false,
+  record: null,
+};
+const NEEDS_ROWS = [
+  {
+    key: "past_due",
+    count: 4,
+    atLeast: false,
+    what: "invoices past due",
+    amounts: [{ cents: 610_000, label: "past due" }],
+    href: "/invoices?tab=invoices",
+    linkLabel: "Open invoices",
+  },
+  {
+    key: "paystubs",
+    count: 3,
+    atLeast: false,
+    what: "paystubs waiting for approval",
+    amounts: [{ cents: 582_000, label: "to pay drivers" }],
+    href: "/settlements",
+    linkLabel: "Open settlements",
+  },
+  {
+    key: "advances",
+    count: 1,
+    atLeast: false,
+    what: "advance request waiting for a decision",
+    amounts: [{ cents: 30_000, label: "requested" }],
+    href: "/advances?status=requested",
+    linkLabel: "Open advances",
+  },
+  {
+    key: "invoice_cards",
+    count: 2,
+    atLeast: false,
+    what: "invoice cards waiting for approval",
+    amounts: [{ cents: 14_600, label: "to bill" }],
+    href: "/invoices?tab=to-invoice",
+    linkLabel: "Open invoices to send",
+  },
+];
+const savedSimple = flags.simpleShape.enabled;
+const headings = () => screen.getAllByRole("heading", { level: 2 }).map((h) => h.textContent);
+
+describe("home, the simple shape", () => {
+  beforeEach(() => {
+    flags.simpleShape.enabled = true;
+    flags.activityFeed.enabled = true;
+    mocks.readFeed.mockResolvedValue({ rows: [FEED_ROW], next: null });
+  });
+  afterEach(() => {
+    flags.simpleShape.enabled = savedSimple;
+  });
+
+  it("shows three blocks under the greeting, and reads none of the full Home's cards", async () => {
+    flags.cashFridayEnabled = true;
+    render(await Home({ searchParams: Promise.resolve({}) }));
+    expect(screen.getByText(/^Good morning, Blue Ridge$/)).toBeTruthy();
+    expect(screen.queryByRole("list", { name: "Shortcuts" })).toBeNull();
+    expect(headings()).toEqual(["What I did today", "Needs you", "Ask me anything"]);
+    const did = region("What I did today");
+    expect(within(did).getAllByRole("listitem").map((li) => li.textContent)).toEqual([
+      "Read 2 documents and 1 message from drivers.",
+      "Checked a customer payment against its invoice.9:10 AM",
+    ]);
+    expect(within(did).getByRole("link", { name: "See everything" }).getAttribute("href")).toBe("/activity");
+    expect(mocks.readFeed).toHaveBeenCalledWith(expect.anything(), { limit: 12 });
+    expect(screen.queryByRole("heading", { name: "This pay week" })).toBeNull();
+    expect(screen.queryByRole("region", { name: "Live feed" })).toBeNull();
+    expect(screen.queryByRole("region", { name: "Today" })).toBeNull();
+    expect(mocks.readCashHome).not.toHaveBeenCalled();
+    expect(mocks.readSettlementsView).not.toHaveBeenCalled();
+    expect(mocks.readMoneyFlow).not.toHaveBeenCalled();
+    expect(mocks.readInvoiceList).not.toHaveBeenCalled();
+    // The ask box is on the page, so the top bar leaves its own out; the agent's button stays.
+    expect(screen.queryByText("Search or ask anything")).toBeNull();
+    const ask = region("Ask me anything");
+    // The first three of Home's questions; the launcher is faked here, so each is a link to Home's ask.
+    expect(within(within(ask).getByRole("list", { name: "Questions to ask" })).getAllByRole("link").map((b) => b.textContent)).toEqual([
+      "Who has a problem on this week's paystub?",
+      "Who owes us money past 60 days?",
+      "Can we make Friday's pay run?",
+    ]);
+    expect(screen.getByRole("button", { name: "Ask the agent" })).toBeTruthy();
+    expect(document.getElementById("ask")).toBeNull();
+    // No model cost, model name or model time on an everyday screen.
+    expect(document.body.textContent).not.toMatch(/cents|Muse|model time/i);
+  });
+
+  it("cuts Needs you to the three that matter most, with one line for the rest, and the bell counts all", async () => {
+    mocks.readNeedsYou.mockResolvedValue(NEEDS_ROWS);
+    render(await Home({ searchParams: Promise.resolve({}) }));
+    const needs = region("Needs you");
+    expect(within(needs).getAllByRole("listitem").map((li) => li.textContent)).toEqual([
+      "3 paystubs to approve$5,820.00Review",
+      "1 advance request$300.00Review",
+      "2 invoices to approve$146.00Review",
+    ]);
+    expect(within(needs).getByRole("link", { name: "and 4 more on Billing" }).getAttribute("href")).toBe("/invoices?tab=invoices");
+    expect(screen.getByRole("link", { name: "Needs you, 4 waiting" })).toBeTruthy();
+  });
+
+  it("says when nothing finished and nothing needs you, and when neither could be read", async () => {
+    mocks.readTodayIntake.mockResolvedValue({ documents: 0, voiceNotes: 0, messages: 0 });
+    mocks.readFeed.mockResolvedValue({ rows: [], next: null });
+    render(await Home({ searchParams: Promise.resolve({}) }));
+    expect(within(region("What I did today")).getByText(/^Nothing finished yet today\./)).toBeTruthy();
+    expect(within(region("Needs you")).getByText("Nothing needs you right now.")).toBeTruthy();
+    cleanup();
+
+    mocks.readTodayIntake.mockRejectedValue(new DbError("timeout"));
+    mocks.readFeed.mockRejectedValue(new DbError("timeout"));
+    mocks.readNeedsYou.mockRejectedValue(new DbError("timeout"));
+    const log = vi.spyOn(console, "error").mockImplementation(() => {});
+    try {
+      render(await Home({ searchParams: Promise.resolve({}) }));
+      expect(within(region("What I did today")).getByRole("status").textContent).toBe("Could not read today's work. Nothing changed.");
+      expect(within(region("Needs you")).getByRole("status").textContent).toBe(
+        "Could not check everything that is waiting right now. Reload the page to try again.",
+      );
+      expect(within(region("Needs you")).queryByText("Nothing needs you right now.")).toBeNull();
+    } finally {
+      log.mockRestore();
+    }
+  });
+
+  it("leaves the ask block out while the agent is off, and keeps the top bar's box away", async () => {
+    flags.agentEnabled = false;
+    render(await Home({ searchParams: Promise.resolve({}) }));
+    expect(headings()).toEqual(["What I did today", "Needs you"]);
+    expect(screen.queryByRole("button", { name: "Ask the agent" })).toBeNull();
+  });
+
+  it("opens a three step walkthrough after a sign-in, one step per block", async () => {
+    flags.signInTour.enabled = true;
+    mocks.readTourFacts.mockResolvedValue(TOUR_FACTS);
+    render(await Home({ searchParams: Promise.resolve({ welcome: "1" }) }));
+    const panel = walkthrough()!;
+    expect(panel.textContent).toContain("step 1 of 3");
+    expect(panel.textContent).toContain("Last checked the books at 9:00 AM and finished 2 things today.");
+    expect(panel.textContent).not.toContain("Good morning. Nothing is late this week.");
+    expect(panel.textContent).toContain("Written from today's numbers.");
+    expect(panel.textContent).not.toMatch(/Muse|model/i);
+    within(panel).getByRole("button", { name: "Skip" }).click();
+  });
+});

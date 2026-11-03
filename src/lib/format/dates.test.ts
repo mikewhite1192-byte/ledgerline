@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { formatInstant, formatLocalDate, formatPeriod, zoneName } from "./dates";
+import { formatClock, formatInstant, formatLocalDate, formatPeriod, zoneName } from "./dates";
 
 describe("formatLocalDate", () => {
   it("formats a calendar day from its digits, with no zone shift", () => {
@@ -69,6 +69,20 @@ describe("formatInstant", () => {
       );
     }
     expect(formatInstant("2028-02-29T23:59:59Z", "UTC")).toBe("Feb 29, 2028, 11:59 PM UTC");
+  });
+});
+
+describe("formatClock", () => {
+  it("prints the time of day alone in the named zone, with a plain space", () => {
+    expect(formatClock("2026-11-10T14:10:00.000Z", "America/New_York")).toBe("9:10 AM");
+    expect(formatClock("2026-11-10T14:10:00.000Z", "America/Chicago")).toBe("8:10 AM");
+    expect(formatClock("2026-11-10T23:05:00.000000Z", "America/New_York")).toBe("6:05 PM");
+    expect(formatClock("2026-11-10T05:00:00Z", "America/New_York")).toBe("12:00 AM");
+  });
+
+  it("refuses a value that is not an instant with a zone", () => {
+    expect(() => formatClock("2026-11-10", "America/New_York")).toThrow(RangeError);
+    expect(() => formatClock("2026-11-10T09:00:00", "America/New_York")).toThrow(RangeError);
   });
 });
 

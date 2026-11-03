@@ -1,10 +1,8 @@
-import { formatCents } from "@/lib/format/money";
-
 // The thin line on every page of a demo visit (a judge login, src/app/sign-in/try-demo-action.ts).
 // "Start over" opens Home with an empty thread; the next question starts a new conversation in the
 // same visit and the same budget (it never starts a new visit). "Leave" is the normal sign-out,
-// which clears both cookies.
-export function DemoBanner({ carrier, visitCapCents }: { carrier: string; visitCapCents: number }) {
+// which clears both cookies. The visit's budget is still enforced; the line does not print it.
+export function DemoBanner({ carrier }: { carrier: string }) {
   return (
     <div
       role="region"
@@ -12,8 +10,7 @@ export function DemoBanner({ carrier, visitCapCents }: { carrier: string; visitC
       className="flex flex-wrap items-center gap-x-4 gap-y-2 border-b border-border bg-secondary px-4 py-2 text-small text-secondary-foreground md:px-6"
     >
       <p className="min-w-0 flex-1">
-        You are visiting {carrier}, a demo carrier with made-up data. This visit can use{" "}
-        {formatCents(visitCapCents)} of model time.
+        You are visiting {carrier}, a demo carrier with made-up data.
       </p>
       <div className="flex shrink-0 items-center gap-4">
         {/* A plain GET form, so the page loads fresh and the chat starts with no thread. */}

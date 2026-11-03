@@ -15,12 +15,11 @@ const tenant = (role: "admin" | "staff" | "judge") => ({
 });
 
 describe("DemoBanner", () => {
-  it("names the carrier and the visit's budget, with Start over and Leave", () => {
-    render(<DemoBanner carrier="Blue Ridge Freight Lines" visitCapCents={100} />);
+  it("names the carrier, never the visit's model budget, with Start over and Leave", () => {
+    render(<DemoBanner carrier="Blue Ridge Freight Lines" />);
     const region = screen.getByRole("region", { name: "Demo visit" });
-    expect(region.textContent).toContain(
-      "You are visiting Blue Ridge Freight Lines, a demo carrier with made-up data. This visit can use $1.00 of model time.",
-    );
+    expect(region.textContent).toContain("You are visiting Blue Ridge Freight Lines, a demo carrier with made-up data.");
+    expect(region.textContent).not.toMatch(/model time|\$/);
     const over = screen.getByRole("button", { name: "Start over" }).closest("form");
     expect(over?.getAttribute("action")).toBe("/");
     expect(over?.getAttribute("method")).toBe("get");

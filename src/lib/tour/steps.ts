@@ -1,11 +1,12 @@
 import { NEEDS_YOU_ANCHOR, TODAY_ANCHOR } from "@/components/app/anchors";
 import { ruleKindLabel } from "@/app/settings/autopilot/words";
 import type { Role } from "@/lib/auth/role";
-import { formatInstant } from "@/lib/format/dates";
+import { formatClock, formatInstant } from "@/lib/format/dates";
 import { formatCents } from "@/lib/format/money";
 import type { Payday } from "@/lib/home/cards";
 import type { Loaded } from "@/lib/home/loaded";
 import type { NeedsYouView } from "@/lib/home/needs-you";
+import { localDateOf, type LocalDate } from "@/lib/time/local-date";
 import type { AutopilotFacts, TourFacts } from "./facts";
 
 // The walkthrough's steps, from the carrier's own numbers: code words around live figures, so they
@@ -36,18 +37,18 @@ export type TourInput = {
   payday: Loaded<Payday> | null;
   // The first of the agent's suggested questions, for the last step's Ask.
   firstQuestion?: string;
+  // The carrier's today, so a check-in from today reads as a time of day alone.
+  today?: LocalDate;
   on: {
     activityFeed: boolean;
     adminAboveCents: number;
     judgeTurns: number;
-    judgeCapCents: number;
+    // The simple Home (flags.simpleShape): three steps, one per block on Home.
+    simpleShape?: boolean;
   };
 };
 
-export const TOUR_FOOTER =
-  "Written from today's numbers. The morning line is the agent's daily digest: Muse Spark writes it " +
-  "and each number is checked against the facts, or code writes it when a check fails.";
-export const TOUR_FOOTER_NO_DIGEST = "Written from today's numbers.";
+export const TOUR_FOOTER = "Written from today's numbers.";
 
 export const TOUR_ASKS: Readonly<Record<Exclude<TourStepId, "ask">, string>> = {
   working: "What has the desk done for us today?",
@@ -63,7 +64,30 @@ const plural = (n: number, one: string, many: string) => `${n.toLocaleString("en
 const unread = (text: string): TourLine => ({ text, unread: true });
 const line = (text: string): TourLine => ({ text });
 
-function working(i: TourInput): TourStep {
+// "Last checked the books at 9:00 AM": the time alone when the check-in was today.
+function checkedWhen(checkedAt: string, i: TourInput): string {
+  try {
+    if (i.today !== undefined && localDateOf(checkedAt, i.timezone) === i.today) return `at ${formatClock(checkedAt, i.timezone)}`;
+  } catch {
+    // An instant that does not read falls through to the full form, which throws the same way.
+  }
+  return `on ${formatInstant(checkedAt, i.timezone)}`;
+}
+
+function simpleWorking(i: TourInput): TourLine[] {
+  const { desk } = i.facts;
+  if (!desk.ok) return [unread("Could not read when I last checked the books.")];
+  if (desk.value.checkedAt === null) return [line("Not checked yet today.")];
+  return [
+    line(
+      `Last checked the books ${checkedWhen(desk.value.checkedAt, i)} and finished ` +
+        `${plural(desk.value.doneToday, "thing", "things")} today.`,
+    ),
+  ];
+}
+
+function workingLines(i: TourInput): TourLine[] {
+  if (i.on.simpleShape === true) return simpleWorking(i);
   const lines: TourLine[] = [];
   const { digest, desk } = i.facts;
   if (!digest.ok) lines.push(unread("Could not read the agent's latest morning line."));
@@ -78,6 +102,11 @@ function working(i: TourInput): TourStep {
       ),
     );
   }
+  return lines;
+}
+
+function working(i: TourInput): TourStep {
+  const lines = workingLines(i);
   return {
     id: "working",
     title: "Your AI accountant is already working",
@@ -186,9 +215,7 @@ function ask(i: TourInput): TourStep {
     i.role === "judge"
       ? [
           line("Ask in plain English. Every number comes from the carrier's pay rules, and anything it drafts waits for the carrier's staff."),
-          line(
-            `This visit has ${plural(i.on.judgeTurns, "question", "questions")} and ${formatCents(i.on.judgeCapCents)} of model time.`,
-          ),
+          line(`This visit has ${plural(i.on.judgeTurns, "question", "questions")}.`),
         ]
       : [line("Ask in plain English. Every number comes from your pay rules, and anything it drafts waits for your approval.")];
   return { id: "ask", title: "Ask the agent", lines, ask: i.firstQuestion ?? ASK_FALLBACK };
@@ -203,7 +230,9 @@ const feed = (): TourStep => ({
 });
 
 // The steps in order; a step whose page or switch is off is left out.
+// Under the simple Home, one step per block on Home: what was done, what waits, and the ask box.
 export function tourSteps(i: TourInput): TourStep[] {
+  if (i.on.simpleShape === true) return [working(i), waiting(i), ask(i)];
   const out: (TourStep | null)[] = [
     working(i),
     waiting(i),
@@ -216,7 +245,3 @@ export function tourSteps(i: TourInput): TourStep[] {
   return out.filter((s) => s !== null);
 }
 
-// The footer names the model only when the digest's line is on the first step.
-export function tourFooter(facts: TourFacts): string {
-  return facts.digest.ok && facts.digest.value !== null ? TOUR_FOOTER : TOUR_FOOTER_NO_DIGEST;
-}

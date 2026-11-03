@@ -986,6 +986,10 @@ export type Flags = {
   // of its own, nothing written. Off, sign-in lands on / as before, and there is no panel and no
   // "Show me around" shortcut.
   signInTour: { enabled: boolean };
+  // The simple shape of Home (src/components/home/simple-home.tsx): three blocks only, what the
+  // coworker finished today, at most three things that need a person, and an ask box. It reuses the
+  // reads Home already makes and changes no number. Off, Home renders as before.
+  simpleShape: { enabled: boolean };
 };
 
 // One kind's ceiling over the owner's autopilot limits: one item, and the carrier's local day.
@@ -1295,6 +1299,8 @@ export const flags: Flags = {
   activityFeed: { enabled: true, pollSeconds: 15, pageSize: 50 },
   // Off until the owner turns it on in its own PR. Read only.
   signInTour: { enabled: false },
+  // Off until the owner turns it on in its own PR. Presentation only.
+  simpleShape: { enabled: false },
 };
 
 applyLocalOverrides(flags);

@@ -81,6 +81,23 @@ export function formatInstant(iso: string, timeZone: string): string {
   return `${get("month")} ${get("day")}, ${get("year")}, ${get("hour")}:${get("minute")} ${get("dayPeriod")} ${get("timeZoneName")}`;
 }
 
+// The time of day alone, "9:10 AM", in the carrier's zone: for a line that already sits under
+// today's date. Built from parts so it never carries the runtime's narrow no-break space.
+export function formatClock(iso: string, timeZone: string): string {
+  if (!isRealInstant(iso)) {
+    throw new RangeError("an instant must be an ISO timestamp with a zone");
+  }
+  const parts = new Intl.DateTimeFormat("en-US", {
+    timeZone,
+    hour: "numeric",
+    minute: "2-digit",
+    hour12: true,
+  }).formatToParts(new Date(iso));
+  const get = (type: Intl.DateTimeFormatPartTypes) =>
+    parts.find((p) => p.type === type)?.value ?? "";
+  return `${get("hour")}:${get("minute")} ${get("dayPeriod")}`;
+}
+
 // Arizona keeps standard time all year, so from March to November it is an hour behind Mountain
 // time (Denver). The runtime calls it "Mountain Standard Time", which would read "Mountain time"
 // like Denver, so it has its own name. US/Arizona is the same zone under its older id.

@@ -1,12 +1,17 @@
 // @vitest-environment jsdom
 import { cleanup, render, screen, within } from "@testing-library/react";
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
+import { PanelContext } from "@/components/agent/panel-context";
+import { TRUST_LINE } from "@/components/agent/words";
+import { NEEDS_YOU_UNREAD } from "@/components/app/needs-you";
+import type { DoneLine } from "@/lib/feed/words";
 import type { Payday } from "@/lib/home/cards";
 import type { NeedsYouRow } from "@/lib/home/needs-you";
 import type { SweepRunView } from "@/lib/sweep/view";
 import { Greeting, greetingFor } from "./greeting";
 import { CashFlowCard, IN_LABEL, OUT_LABEL, OwedCard } from "./money-cards";
 import { PaydayCard } from "./payday-card";
+import { AskAnything, DID_TODAY_EMPTY, DID_TODAY_UNREAD, DidToday, NEEDS_YOU_NONE, NeedsYouShort } from "./simple-home";
 import { TodayCard } from "./today-card";
 
 // Home's own cards, each in its normal, empty and unavailable state. Every input is fixed; nothing
@@ -308,5 +313,176 @@ describe("OwedCard", () => {
     const card = screen.getByRole("region", { name: "Owed to you" });
     expect(within(card).getByRole("status").textContent).toBe("Could not read what customers owe.");
     expect(card.querySelector("[data-money]")).toBeNull();
+  });
+});
+
+// The simple Home's three blocks (flags.simpleShape).
+
+const DONE: DoneLine[] = [
+  { key: "desk:a", at: "2026-11-02T15:40:00.000000Z", time: "9:40 AM", words: "Checked a customer payment against its invoice.", href: null },
+  {
+    key: "money:b:settled",
+    at: "2026-11-02T16:10:00.000000Z",
+    time: "10:10 AM",
+    words: "Paid an advance, $200.00.",
+    href: "/records/advances/8f1d2c3b-0000-4000-8000-000000000002",
+  },
+];
+
+const SHOWN = { ...ALL_SHOWN, notesPage: true };
+
+const didToday = (over: Partial<Parameters<typeof DidToday>[0]> = {}) =>
+  render(
+    <DidToday
+      sweep={{ ok: true, value: RUN }}
+      intake={{ ok: true, value: { documents: 2, voiceNotes: 0, messages: 1 } }}
+      shown={SHOWN}
+      done={{ ok: true, value: DONE }}
+      today="2026-11-02"
+      timezone="America/Chicago"
+      {...over}
+    />,
+  );
+
+const lines = () =>
+  within(screen.getByRole("list", { name: "Done today" }))
+    .getAllByRole("listitem")
+    .map((li) => li.textContent);
+
+describe("DidToday", () => {
+  it("lists the pay check, what came in and today's finished work, each with its time and page", () => {
+    didToday();
+    expect(screen.getByRole("heading", { name: "What I did today" })).toBeTruthy();
+    expect(lines()).toEqual([
+      "Checked every driver's pay for the week of Oct 26 to Nov 1. Found 7 mistakes and drafted fixes for 5.9:00 AM",
+      "Read 2 documents and 1 message from drivers.",
+      "Checked a customer payment against its invoice.9:40 AM",
+      "Paid an advance, $200.00.10:10 AM",
+    ]);
+    expect(screen.getByRole("link", { name: /Checked every driver's pay/ }).getAttribute("href")).toBe(`/sweep/${RUN.id}`);
+    expect(screen.getByRole("link", { name: /Read 2 documents/ }).getAttribute("href")).toBe("/documents");
+    expect(screen.getByRole("link", { name: /Paid an advance/ }).getAttribute("href")).toBe(DONE[1].href);
+    expect(screen.queryByRole("link", { name: /customer payment/ })).toBeNull();
+    expect(screen.getByRole("link", { name: "See everything" }).getAttribute("href")).toBe("/activity");
+    expect(document.body.textContent).not.toMatch(ISO_DATE);
+  });
+
+  it("leaves out a pay check from another day, kinds that are off and kinds with nothing", () => {
+    didToday({
+      today: "2026-11-03",
+      intake: { ok: true, value: { documents: 0, voiceNotes: 1, messages: 4 } },
+      shown: { ...SHOWN, documents: false, voiceNotes: false },
+    });
+    expect(lines()[0]).toBe("Read 4 messages from drivers.");
+    expect(screen.getByRole("link", { name: /Read 4 messages/ }).getAttribute("href")).toBe("/driver-notes");
+    expect(document.body.textContent).not.toContain("Checked every driver's pay");
+  });
+
+  it("says nothing finished yet on a quiet day, without the feed link", () => {
+    didToday({ sweep: { ok: true, value: null }, intake: { ok: true, value: { documents: 0, voiceNotes: 0, messages: 0 } }, done: { ok: true, value: [] } });
+    expect(screen.getByText(DID_TODAY_EMPTY)).toBeTruthy();
+    expect(screen.queryByRole("link", { name: "See everything" })).toBeNull();
+  });
+
+  it("drops only a failed read's lines, and says so when every read failed, never nothing", () => {
+    didToday({ done: { ok: false } });
+    expect(lines()).toHaveLength(2);
+    cleanup();
+    didToday({ sweep: { ok: false }, intake: { ok: false }, done: { ok: false } });
+    expect(screen.getByRole("status").textContent).toBe(DID_TODAY_UNREAD);
+    expect(screen.queryByText(DID_TODAY_EMPTY)).toBeNull();
+  });
+
+  it("words a pay check still running or one that stopped", () => {
+    didToday({ sweep: { ok: true, value: { ...RUN, status: "running" } }, done: null, intake: null });
+    expect(lines()).toEqual(["Checking every driver's pay for the week of Oct 26 to Nov 1 now.9:00 AM"]);
+    // The feed is off: no link to it.
+    expect(screen.queryByRole("link", { name: "See everything" })).toBeNull();
+    cleanup();
+    didToday({ sweep: { ok: true, value: { ...RUN, status: "failed" } }, done: null, intake: null });
+    expect(lines()).toEqual(["The pay check stopped before it finished.9:00 AM"]);
+  });
+});
+
+const NEEDS: NeedsYouRow[] = [
+  { ...ROW, key: "escalated", count: 1, amounts: [], href: "#ask", linkLabel: "Open the chat" },
+  { ...ROW, key: "past_due", count: 4, amounts: [{ cents: 610_000, label: "past due" }], href: "/invoices?tab=invoices" },
+  { ...ROW, key: "advances", count: 1, amounts: [{ cents: 30_000, label: "requested" }], href: "/advances?status=requested" },
+  ROW,
+  { ...ROW, key: "cards", count: 2, amounts: [{ cents: 14_600, label: "in fixes" }], href: "#card-1" },
+];
+
+const rowsOf = () =>
+  within(screen.getByRole("list", { name: "Waiting on you" }))
+    .getAllByRole("listitem")
+    .map((li) => li.textContent);
+
+describe("NeedsYouShort", () => {
+  it("shows the three that matter most, each one tap with Review, and what was cut", () => {
+    render(<NeedsYouShort view={{ rows: NEEDS, unread: false }} />);
+    expect(screen.getByRole("heading", { name: "Needs you" })).toBeTruthy();
+    expect(rowsOf()).toEqual([
+      "3 paystubs to approve$1,500.00Review",
+      "1 advance request$300.00Review",
+      "2 cards in your chat to approve$146.00Review",
+    ]);
+    const links = within(screen.getByRole("list", { name: "Waiting on you" })).getAllByRole("link");
+    expect(links.map((a) => a.getAttribute("href"))).toEqual(["/settlements", "/advances?status=requested", "#card-1"]);
+    expect(document.body.textContent).not.toMatch(/Approve\b/);
+    // The cut rows: past due on Billing, the escalated ask in the chat.
+    const more = screen.getByRole("link", { name: "and 5 more on Billing" });
+    expect(more.getAttribute("href")).toBe("/invoices?tab=invoices");
+    // Its amounts never hide under the eye.
+    expect(screen.getByRole("list", { name: "Waiting on you" }).getAttribute("data-amounts")).toBe("shown");
+  });
+
+  it("shows every row with no more line when three or fewer wait, and says or more for a cut count", () => {
+    render(<NeedsYouShort view={{ rows: [{ ...ROW, atLeast: true }, NEEDS[0]], unread: false }} />);
+    expect(rowsOf()).toEqual(["3 or more paystubs to approveAt least $1,500.00Review", "1 request from your chat needs youReview"]);
+    expect(screen.queryByText(/more on/)).toBeNull();
+  });
+
+  it("says nothing needs you, or that it could not check, never both", () => {
+    render(<NeedsYouShort view={{ rows: [], unread: false }} />);
+    expect(screen.getByText(NEEDS_YOU_NONE)).toBeTruthy();
+    cleanup();
+    render(<NeedsYouShort view={{ rows: [], unread: true }} />);
+    expect(screen.getByRole("status").textContent).toBe(NEEDS_YOU_UNREAD);
+    expect(screen.queryByText(NEEDS_YOU_NONE)).toBeNull();
+  });
+});
+
+const SUGGESTIONS = [
+  { id: "a", label: "Who has a problem on this week's paystub?", reason: "r" },
+  { id: "b", label: "Who owes us money past 60 days?", reason: "r" },
+  { id: "c", label: "Pay rule change", reason: "r", fill: "Starting Nov 16, pay Dana 60 cents a mile.", help: "Say the rule." },
+  { id: "d", label: "Who is over their advance limit?", reason: "r" },
+];
+
+describe("AskAnything", () => {
+  it("opens the card from the box, puts a chip's question in it, and says nothing moves without you", () => {
+    const open = vi.fn();
+    render(
+      <PanelContext.Provider value={{ open }}>
+        <AskAnything suggestions={SUGGESTIONS} />
+      </PanelContext.Provider>,
+    );
+    expect(screen.getByRole("heading", { name: "Ask me anything" })).toBeTruthy();
+    const chips = within(screen.getByRole("list", { name: "Questions to ask" })).getAllByRole("button");
+    expect(chips.map((c) => c.textContent)).toEqual(SUGGESTIONS.slice(0, 3).map((s) => s.label));
+    chips[0].click();
+    expect(open).toHaveBeenLastCalledWith({ draft: SUGGESTIONS[0].label, help: undefined });
+    chips[2].click();
+    expect(open).toHaveBeenLastCalledWith({ draft: SUGGESTIONS[2].fill, help: "Say the rule." });
+    screen.getByRole("link", { name: /Ask about pay, invoices, drivers/ }).click();
+    expect(screen.getByText(TRUST_LINE)).toBeTruthy();
+    // Home's ask box never takes the #ask anchor, which the card's own links use.
+    expect(document.getElementById("ask")).toBeNull();
+  });
+
+  it("makes each chip a plain link to Home's ask without a card on the page", () => {
+    render(<AskAnything suggestions={SUGGESTIONS} />);
+    const chips = within(screen.getByRole("list", { name: "Questions to ask" })).getAllByRole("link");
+    expect(chips.map((c) => c.getAttribute("href"))).toEqual(["/#ask", "/#ask", "/#ask"]);
   });
 });
