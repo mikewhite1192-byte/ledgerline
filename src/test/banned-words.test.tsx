@@ -817,6 +817,8 @@ afterAll(() => {
 beforeEach(() => {
   state.fx = defaults();
   state.session = null;
+  // The pages are checked in the full shape; the simple variants turn its switch on.
+  flags.simpleShape = { enabled: false };
 });
 const savedSimpleShape = { ...flags.simpleShape };
 afterEach(() => {
