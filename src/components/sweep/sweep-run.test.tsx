@@ -130,6 +130,22 @@ describe("SweepRun", () => {
     expect(list.compareDocumentPosition(counts) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
   });
 
+  // The simple shape (flags.simpleShape, passed in): one outcome line, no counters, and the
+  // checklist only while the run is running.
+  it("under the simple shape, drops the counters and shows the checklist only while running", () => {
+    const list = endSweep(tickSweep(sweepChecklist(false), "draft"), "stopped");
+    const { unmount } = render(<SweepRun initial={{ ...page, run: { ...page.run, checklist: list } }} auditorOn={false} simple />);
+    expect(screen.queryByRole("region", { name: "Counts" })).toBeNull();
+    expect(screen.queryByRole("list", { name: "Checklist" })).toBeNull();
+    expect(screen.getByRole("heading", { level: 1, name: "Pay check" })).toBeTruthy();
+    unmount();
+    vi.stubGlobal("fetch", vi.fn(() => new Promise(() => {})));
+    render(
+      <SweepRun initial={{ ...page, run: { ...page.run, status: "running", phase: "check", finishedAt: null, checklist: list } }} auditorOn={false} simple />,
+    );
+    expect(screen.getByRole("list", { name: "Checklist" })).toBeTruthy();
+  });
+
   it("shows no checklist for a run started without one", () => {
     render(<SweepRun initial={page} auditorOn={false} />);
     expect(screen.queryByRole("list", { name: "Checklist" })).toBeNull();
@@ -232,7 +248,7 @@ describe("SweepRun while the run is running", () => {
       </ViewerRoleProvider>,
     );
     await waitFor(() => expect(fetchMock).toHaveBeenCalledWith(advanceUrl, { method: "POST" }));
-    await waitFor(() => expect(screen.getByText(/LedgerLine checked the week/)).toBeTruthy());
+    await waitFor(() => expect(screen.getByText(/before payday|No mistakes/)).toBeTruthy());
     expect(screen.queryByText(STAFF_ONLY_BODY, { exact: false })).toBeNull();
   });
 });
@@ -344,7 +360,7 @@ describe("SweepRun approve all", () => {
     confirmAll();
     expect(await screen.findByText("Approved 0. 2 did not go through; each card says why.")).toBeTruthy();
     expect(noticeOf("D-a")).toBe(
-      "The records changed since this was drafted, so it was not applied. Reject it if it still waits, then run the sweep again.",
+      "The records changed since this was drafted, so it was not applied. Reject it if it still waits, then run the pay check again.",
     );
     expect(noticeOf("D-b")).toBe(
       "The answer did not come back, so this may or may not have been approved. Check the card's status before trying again.",

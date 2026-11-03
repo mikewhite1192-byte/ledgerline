@@ -10,7 +10,7 @@ import type { NeedsYouView } from "@/lib/home/needs-you";
 // reads "or more", and its total "At least", since it sums only the rows read. A read that failed
 // never shows as "nothing is waiting".
 
-export const NEEDS_YOU_EMPTY = "Nothing is waiting on you. Ask a question or open a page from the menu.";
+export const NEEDS_YOU_EMPTY = "Nothing needs you right now.";
 export const NEEDS_YOU_UNREAD = "Could not check everything that is waiting right now. Reload the page to try again.";
 
 export function NeedsYou({ view }: { view: NeedsYouView }) {

@@ -7,7 +7,7 @@ export const sweep = {
   area: "pay",
   order: 10,
   href: "/sweep",
-  label: "Pay sweep",
+  label: "Pay check",
   icon: <ScanSearch aria-hidden />,
   shown: () => flags.sweepEnabled === true,
   section: "pay",

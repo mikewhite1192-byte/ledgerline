@@ -4,18 +4,18 @@ import { useRouter } from "next/navigation";
 import { useState } from "react";
 import { Button } from "@/components/ui/button";
 
-// "Run sweep now": makes the run id here (a double press or a retry replays the same run), opens
+// "Check pay now" (the sweep): makes the run id here (a double press or a retry replays the same run), opens
 // the run and goes to its page, which carries it on. It never names a week: the start picks the
 // week paid next after the pay week roll (D-093), so an older week is swept until it is paid and a
 // week the roll opens on this press is swept after it. Fixed sentences only.
 
 const NOTICE: Readonly<Record<string, string>> = {
-  disabled: "The sweep is switched off right now.",
-  no_open_period: "There is no open pay week to sweep.",
-  not_configured: "The sweep is not set up for this carrier yet.",
-  unauthenticated: "Your sign-in ended. Sign in again to run the sweep.",
+  disabled: "The pay check is switched off right now.",
+  no_open_period: "There is no open pay week to check.",
+  not_configured: "The pay check is not set up for this carrier yet.",
+  unauthenticated: "Your sign-in ended. Sign in again to run the pay check.",
 };
-const FALLBACK = "The sweep did not start. Try again.";
+const FALLBACK = "The pay check did not start. Try again.";
 
 export function StartSweep({ hasOpenWeek, running }: { hasOpenWeek: boolean; running: boolean }) {
   const router = useRouter();
@@ -51,7 +51,7 @@ export function StartSweep({ hasOpenWeek, running }: { hasOpenWeek: boolean; run
   return (
     <div className="grid gap-2">
       <Button disabled={running || !hasOpenWeek} pending={pending} pendingLabel="Starting" onClick={() => void start()}>
-        Run sweep now
+        Check pay now
       </Button>
       {notice ? (
         <p role="status" className="text-small text-foreground-2">

@@ -104,7 +104,7 @@ describe("the words line", () => {
       "Morning digest. Needs you: 2 card breaks, 1 parked advance (name mismatch), 2 invoices to send, 1 load to fix. " +
         "Card check: statement verified. " +
         "Yesterday: 1 trip cancelled, 1 hand load ($150.00), 3 advances paid ($450.00). " +
-        "Billing: SEND 2, FIX 1, ADD 4, FYI 1 past due ($1,200.00).",
+        "Billing: 2 invoices to send, 1 load to fix, 4 loads to bill, 1 invoice past due ($1,200.00).",
     );
   });
 
@@ -114,7 +114,7 @@ describe("the words line", () => {
     expect(line).toContain("Card check: not read.");
     expect(line).toContain("trips cancelled not read");
     expect(line).toContain("hand loads not read (not read)");
-    expect(line).toContain("SEND not read, FIX not read, ADD not read, FYI not read past due (not read)");
+    expect(line).toContain("Billing: not read.");
     expect(line).not.toMatch(/\b0\b/);
     expect(line.length).toBeLessThanOrEqual(DIGEST_TEXT_MAX);
   });
@@ -122,6 +122,13 @@ describe("the words line", () => {
   it("says nothing needs you when every need is zero", () => {
     const quiet = { ...DAILY, card_breaks: 0, parked: 0, send: 0, fix: 0 };
     expect(digestWords(factsFor(WEDNESDAY, quiet))).toMatch(/^Morning digest\. Needs you: nothing\. /);
+  });
+
+  it("leaves a billing part at zero out, and says nothing waiting when every part is zero", () => {
+    const some = { ...DAILY, send: 0, fix: 0 };
+    expect(digestWords(factsFor(WEDNESDAY, some))).toContain("Billing: 4 loads to bill, 1 invoice past due ($1,200.00).");
+    const none = { ...DAILY, send: 0, fix: 0, add: 0, past_due: 0 };
+    expect(digestWords(factsFor(WEDNESDAY, none))).toContain("Billing: nothing waiting.");
   });
 
   it("adds the week's paystubs on a Friday", () => {

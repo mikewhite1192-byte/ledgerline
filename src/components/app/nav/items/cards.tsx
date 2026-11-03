@@ -7,7 +7,7 @@ export const cards = {
   area: "pay",
   order: 45,
   href: "/cards",
-  label: "Card check",
+  label: "Card charges",
   icon: <CreditCard aria-hidden />,
   shown: () => flags.cardRecon.enabled === true,
   section: "pay",

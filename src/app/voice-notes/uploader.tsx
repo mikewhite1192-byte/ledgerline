@@ -26,8 +26,8 @@ export type UploaderLimits = { maxWavBytes: number; maxOriginalBytes: number; ma
 type Stage = "converting" | "transcribing" | "preparing" | "handing_off";
 const STAGES: { key: Stage; label: string }[] = [
   { key: "converting", label: "Getting the clip ready" },
-  { key: "transcribing", label: "Transcribing (Muse Voice Transcribe)" },
-  { key: "preparing", label: "Screening, translating and sorting (Muse Spark Open, Muse Spark)" },
+  { key: "transcribing", label: "Listening" },
+  { key: "preparing", label: "Working out what it says" },
   { key: "handing_off", label: "Handing to the agent" },
 ];
 

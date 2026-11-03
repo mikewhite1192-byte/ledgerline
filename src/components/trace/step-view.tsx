@@ -11,7 +11,8 @@ import { NOTE_REF_TABLE, noteHref } from "@/lib/memory/links";
 import { hrefOrNull, type HrefFor } from "@/lib/records/href";
 
 // One row of a trace (who did it, its time and cost, what happened, the records it read), shared
-// by the list of steps and the step-through. step, when set, is the row's place in the list.
+// by the list of steps and the step-through. step, when set, is the row's place in the list. A
+// plain row (plain-lines.ts) has no who and no time or cost, so only its words and records show.
 export function TraceRow({
   line,
   step,
@@ -32,7 +33,7 @@ export function TraceRow({
             {step}.
           </span>
         ) : null}
-        <span className="text-small font-semibold text-foreground">{line.who}</span>
+        {line.who ? <span className="text-small font-semibold text-foreground">{line.who}</span> : null}
         {line.meta.length > 0 ? (
           <span className="text-small text-muted-foreground tabular-nums">{line.meta.join(", ")}</span>
         ) : null}

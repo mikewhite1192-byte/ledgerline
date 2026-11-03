@@ -173,7 +173,7 @@ const SIMPLE_NAV: NavItem[] = [
   { group: "Today", area: "primary", section: "home", sectionOrder: 0, href: "/", label: "Home", icon: null },
   { group: "Today", area: "pay", section: "home", sectionOrder: 10, href: "/activity", label: "Live feed", icon: null },
   { group: "Pay", area: "pay", section: "pay", sectionOrder: 10, sectionLabel: "Paystubs", href: "/settlements", label: "Settlements", icon: null },
-  { group: "Pay", area: "pay", section: "pay", sectionOrder: 20, sectionLabel: "Pay check", href: "/sweep", label: "Pay sweep", icon: null },
+  { group: "Pay", area: "pay", section: "pay", sectionOrder: 20, sectionLabel: "Pay check", href: "/sweep", label: "Pay check", icon: null },
   { group: "Pay", area: "pay", section: "pay", sectionOrder: 30, href: "/advances", label: "Advances", icon: null },
   { group: "Money in", area: "billing", section: "billing", sectionOrder: 10, href: "/invoices", label: "Invoices", icon: null },
   { group: "Drivers", area: "pay", section: "drivers", sectionOrder: 10, href: "/drivers", label: "Drivers", icon: null },

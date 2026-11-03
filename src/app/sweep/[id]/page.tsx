@@ -10,12 +10,12 @@ import { readSweepPage, type SweepPage } from "@/lib/sweep/view";
 import { isUuid } from "@/lib/uuid";
 import { NoCarrier, readCarrier, SignOut, SweepOffPage } from "../carrier";
 
-// One sweep run: its counts, its drafted fixes and the lines for a person. The page carries a
+// One pay check (a sweep run): its counts, its drafted fixes and the lines for a person. The page carries a
 // running run on itself, one slice per request.
 export const dynamic = "force-dynamic";
 
 export default async function SweepRunPage({ params }: { params: Promise<{ id: string }> }) {
-  if (!flags.sweepEnabled) return <SweepOffPage title="Pay sweep" />;
+  if (!flags.sweepEnabled) return <SweepOffPage title="Pay check" />;
   const { id } = await params;
   if (!isUuid(id)) notFound();
   const read = await readCarrier();
@@ -36,14 +36,19 @@ export default async function SweepRunPage({ params }: { params: Promise<{ id: s
     <AppShell
       tenant={{ name: carrier.name, email: carrier.email, timezone: carrier.timezone, role: carrier.role }}
       nav={appNav("/sweep")}
-      title="Sweep"
+      title="Pay check"
       signOut={<SignOut />}
     >
       {page ? (
-        <SweepRun initial={page} auditorOn={flags.auditorEnabled} timezone={carrier.timezone} />
+        <SweepRun
+          initial={page}
+          auditorOn={flags.auditorEnabled}
+          timezone={carrier.timezone}
+          simple={flags.simpleShape.enabled === true}
+        />
       ) : (
         <div className="mx-auto grid w-full max-w-[880px] gap-6 px-4 py-6 md:px-6 md:py-8">
-          <PageHeader title="Pay sweep" />
+          <PageHeader title="Pay check" />
           <Card>
             <ErrorState category={problem ?? "unknown"} />
           </Card>

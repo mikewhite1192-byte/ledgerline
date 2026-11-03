@@ -40,7 +40,7 @@ const link = "text-link underline-offset-4 hover:underline";
 // agent's card), then every code on file, newest first. Dark while the switch is off, and reads
 // nothing else then.
 export default async function MoneyCodesPage() {
-  if (!moneyCodesOn()) return <CodesOffPage title="Money codes" />;
+  if (!moneyCodesOn()) return <CodesOffPage title="Driver codes" />;
   let page: { shell: ShellTenant; cards: InvoiceCard[]; codes: MoneyCodeRow[] } | null = null;
   let problem: CodesProblem | null = null;
   try {
@@ -65,9 +65,9 @@ export default async function MoneyCodesPage() {
     iso ? <span className="whitespace-nowrap">{formatInstant(iso, zone)}</span> : <span className="text-muted-foreground">None</span>;
 
   return (
-    <CodesFrame shell={page.shell} title="Money codes">
+    <CodesFrame shell={page.shell} title="Driver codes">
       <PageHeader
-        title={<CodesTitle>Money codes</CodesTitle>}
+        title={<CodesTitle>Driver codes</CodesTitle>}
         description={CODES_HELP}
         actions={
           <Link href="/money-codes/new" className={buttonVariants({ variant: "primary" })}>

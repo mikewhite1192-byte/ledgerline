@@ -29,8 +29,9 @@ const WORKING: Readonly<Record<string, string>> = {
 
 const plural = (n: number, one: string, many: string) => `${n} ${n === 1 ? one : many}`;
 
+// A driver by name first, the code after.
 function who(d: { driverCode: string | null; driverLabel: string | null }): string {
-  if (d.driverCode && d.driverLabel) return `${d.driverCode}, ${d.driverLabel}`;
+  if (d.driverCode && d.driverLabel) return `${d.driverLabel} (${d.driverCode})`;
   return d.driverCode ?? d.driverLabel ?? "A driver";
 }
 
@@ -69,7 +70,7 @@ function agreement(tree: FanoutTree): string | null {
   lines.push(
     c.spark_only === 0
       ? "It found nothing your pay rules did not."
-      : `It noticed ${c.spark_only} more your pay rules did not; ${c.spark_only === 1 ? "it is" : "they are"} under Needs a person.`,
+      : `It noticed ${c.spark_only} more your pay rules did not; ${c.spark_only === 1 ? "it is" : "they are"} under Needs you.`,
   );
   return lines.join(" ");
 }
@@ -107,7 +108,7 @@ export function WeekChecks({ tree, runId, running }: { tree: FanoutTree; runId: 
         <p className="text-body text-foreground-2">
           {tree.reconcile.summary ? (
             <>
-              <span className="font-semibold">Muse Wonder:</span> {tree.reconcile.summary}
+              <span className="font-semibold">Second check:</span> {tree.reconcile.summary}
             </>
           ) : (
             "No summary this run."
@@ -135,7 +136,7 @@ export function WeekChecks({ tree, runId, running }: { tree: FanoutTree; runId: 
                 <p className="text-body font-semibold text-foreground">Ordering the drivers</p>
                 {tree.plan.summary ? (
                   <p className="text-small text-foreground-2">
-                    <span className="font-semibold">Muse Wonder:</span> {tree.plan.summary}
+                    <span className="font-semibold">Second check:</span> {tree.plan.summary}
                   </p>
                 ) : null}
                 {tree.plan.turnId ? <HowWorkedOut turnId={tree.plan.turnId} load={load} /> : null}

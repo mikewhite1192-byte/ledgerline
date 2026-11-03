@@ -72,12 +72,12 @@ describe("appNav", () => {
       ["Today", "/activity", "Live feed", false],
       ["Today", "/profit", "Profit brief", false],
       ["Today", "/quarter", "Quarter review", false],
-      ["Pay", "/sweep", "Pay sweep", false],
+      ["Pay", "/sweep", "Pay check", false],
       ["Pay", "/settlements", "Settlements", false],
       ["Pay", "/driver-notes", "Driver notes", false],
       ["Pay", "/advances", "Advances", false],
-      ["Pay", "/money-codes", "Money codes", false],
-      ["Pay", "/cards", "Card check", false],
+      ["Pay", "/money-codes", "Driver codes", false],
+      ["Pay", "/cards", "Card charges", false],
       ["Money in", "/invoices", "Invoices", true],
       ["Money in", "/customer-payments/new", "Payments", false],
       ["Money in", "/collections", "Collections", false],
@@ -86,7 +86,7 @@ describe("appNav", () => {
       ["Drivers", "/drivers", "Drivers", false],
       ["Drivers", "/documents", "Documents", false],
       ["Drivers", "/voice-notes", "Voice notes", false],
-      ["Drivers", "/clips", "Dock clips", false],
+      ["Drivers", "/clips", "Dock videos", false],
       ["Settings", "/settings/accounting", "QuickBooks", false],
       ["Settings", "/settings/pay-rules", "Pay rules", false],
       ["Settings", "/models", "Models and spend", false],
@@ -206,14 +206,14 @@ describe("the menu registry", () => {
     expect(byArea("pay")).toEqual(
       [
         "Advances",
-        "Card check",
+        "Card charges",
         "Documents",
-        "Dock clips",
+        "Dock videos",
         "Driver notes",
         "Drivers",
         "Live feed",
-        "Money codes",
-        "Pay sweep",
+        "Driver codes",
+        "Pay check",
         "Settlements",
         "Voice notes",
       ].sort(),
@@ -258,8 +258,8 @@ describe("the menu registry", () => {
       ["/sweep", "Pay check"],
       ["/advances", "Advances"],
       ["/driver-notes", "Driver notes"],
-      ["/money-codes", "Money codes"],
-      ["/cards", "Card check"],
+      ["/money-codes", "Driver codes"],
+      ["/cards", "Card charges"],
       ["/cash", "Friday's cash"],
     ]);
     expect(under("billing")).toEqual([
@@ -274,7 +274,7 @@ describe("the menu registry", () => {
       ["/drivers", "Drivers"],
       ["/documents", "Documents"],
       ["/voice-notes", "Voice notes"],
-      ["/clips", "Dock clips"],
+      ["/clips", "Dock videos"],
     ]);
     expect(under("settings")).toEqual([
       ["/settings", "Settings"],
@@ -296,7 +296,7 @@ describe("NavList", () => {
     setAll(true);
     render(<NavList items={appNav("/advances")} />);
     const pay = screen.getByRole("list", { name: "Pay" });
-    expect(Array.from(pay.querySelectorAll("a")).map((a) => a.textContent)).toEqual(["Pay sweep", "Settlements", "Driver notes", "Advances", "Money codes", "Card check"]);
+    expect(Array.from(pay.querySelectorAll("a")).map((a) => a.textContent)).toEqual(["Pay check", "Settlements", "Driver notes", "Advances", "Driver codes", "Card charges"]);
     expect(screen.getByRole("link", { name: "Advances" }).getAttribute("aria-current")).toBe("page");
     expect(screen.getByRole("link", { name: "Home" }).getAttribute("aria-current")).toBeNull();
     expect(screen.getAllByText("Money in")).toHaveLength(1);

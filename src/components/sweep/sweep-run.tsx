@@ -16,21 +16,24 @@ import { useViewerRole } from "@/components/app/viewer-role";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
 import type { ProposalView } from "@/lib/agent/view";
-import { formatPeriod } from "@/lib/format/dates";
 import { codeToWords, recordNamer } from "@/lib/format/labels";
 import { formatCents } from "@/lib/format/money";
 import { hrefOrNull, recordHref } from "@/lib/records/href";
 import type { SweepItemView, SweepPage } from "@/lib/sweep/view";
+import { sweepOutcome } from "@/lib/sweep/words";
 import { batchFor, type HeldBatch } from "./batch-id";
 import { WeekChecks } from "./week-checks";
 
 // A sweep run's page (design 3.10): the run's checklist of phases, ticked as it moves (agents-101
 // 3.1), the run's counts, how the week was checked a second time when
 // the run did that (week-checks.tsx), then Clean fixes (each card keeps its own
-// Approve and Reject, plus one "Approve all clean" bar), Needs a look, Needs a person, and the
+// Approve and Reject, plus one "Approve all clean" bar), Needs a look, Needs you, and the
 // fixed, declined and expired ones folded away. While the run is running the page carries it on
 // one slice at a time. Every word is a fixed label; the only model text is an explanation or a
-// second check's note that passed the figures check.
+// second check's note that passed the figures check. Drivers read by name first, the code after.
+// Under the simple shape (flags.simpleShape, passed in as simple) the checklist shows only while
+// the run is running, the counts leave (the outcome line says them), and how the week was checked
+// folds under "How I checked".
 
 const ADVANCE_LIMIT = 60;
 const BUSY_WAIT_MS = 3_000;
@@ -39,19 +42,19 @@ const NOT_DRAFTED: Readonly<Record<string, string>> = {
   mismatch: "The drafted amount did not match the figure from your pay rules, so it was set aside.",
   blocked_live: "Not drafted: a card waiting for approval already covers this driver.",
   audit_pending: "Waiting for the second check.",
-  over_cap: "Not drafted: the sweep's model budget for this run ran out.",
+  over_cap: "Not drafted: this check's budget ran out.",
   expired_earlier: "Not drafted: an earlier fix for this expired before anyone decided it.",
   found: "Not drafted yet.",
 };
 
 const APPROVE_NOTICE: Readonly<Record<string, string>> = {
   already_decided: "This fix was already decided.",
-  expired: "This fix expired before anyone decided it. The sweep does not draft it again; add it by hand if it is still owed.",
+  expired: "This fix expired before anyone decided it. The pay check does not draft it again; add it by hand if it is still owed.",
   role: "An admin must approve an amount this size.",
   auditor_required: "This waits for the second check before anyone can approve it.",
   override_required: "The second check did not pass this. Write why you approve it anyway, then confirm.",
   engine_override_required: "The numbers did not match your pay rules. Write why you approve it anyway, then confirm.",
-  stale: "The records changed since this was drafted, so it was not applied. Reject it if it still waits, then run the sweep again.",
+  stale: "The records changed since this was drafted, so it was not applied. Reject it if it still waits, then run the pay check again.",
   needs_confirm: "Confirm the warning on the card first.",
   not_found: "That fix is not here.",
   not_executable: "Pay corrections are switched off, so this fix was not applied. Nothing changed.",
@@ -97,22 +100,22 @@ function refusedLines(value: unknown): { proposalId: string; category: string | 
 
 const plural = (n: number, one: string, many: string) => `${n} ${n === 1 ? one : many}`;
 
-// Why the run stopped with work left, in counts only: its model budget, the first problems
+// Why the run stopped with work left, in counts only: its budget, the first problems
 // only, or its turn ceiling, which says what was done and what the next sweep takes. The ceiling
 // counts turns taken, not problems (an item taken again counts again), so it is named as turns.
 function stopNote(page: SweepPage): string {
   if (page.run.truncatedReason === "cap") {
-    return "The sweep stopped early: its model budget for this run ran out. Run it again to carry on.";
+    return "The pay check stopped early: its budget for this check ran out. Run it again to carry on.";
   }
   if (page.run.truncatedReason === "max_turns") {
     const c = page.counts;
     const taken = page.run.turnsUsed ?? 0;
     return (
       `Stopped after ${plural(taken, "turn", "turns")}: ${plural(c.fixes_drafted, "fix", "fixes")} drafted, ` +
-      `${c.needs_person} ${c.needs_person === 1 ? "needs" : "need"} a person, ${c.left} left for the next sweep. Nothing was paid.`
+      `${c.needs_person} ${c.needs_person === 1 ? "needs" : "need"} you, ${c.left} left for the next check. Nothing was paid.`
     );
   }
-  return "The sweep took the first problems only. Run it again after these are handled.";
+  return "The pay check took the first mistakes only. Run it again after these are handled.";
 }
 
 function notDrafted(item: SweepItemView): string {
@@ -129,31 +132,27 @@ async function errorOf(res: Response): Promise<{ error: string; body: Record<str
   }
 }
 
+// The page's top line: the run's outcome (src/lib/sweep/words.ts), from the counts as they are now.
 function banner(page: SweepPage): string {
-  const week = page.run.periodStart;
-  const { found, fixes_drafted: drafted } = page.counts;
-  let when = week;
-  try {
-    when = formatPeriod(page.run.periodStart, page.run.periodEnd);
-  } catch {
-    // shown as stored
-  }
-  if (page.run.status === "running") return `Checking the week of ${when}. Found ${found} so far.`;
-  if (page.run.status === "failed") return `The sweep of ${when} stopped before it finished.`;
-  const fixes = `${drafted} ${drafted === 1 ? "fix" : "fixes"}`;
-  const problems = `${found} ${found === 1 ? "problem" : "problems"}`;
-  return page.run.trigger === "schedule"
-    ? `Before anyone logged in, LedgerLine found ${problems} in the week of ${when} and drafted ${fixes}.`
-    : `LedgerLine checked the week of ${when}, found ${problems} and drafted ${fixes}.`;
+  return sweepOutcome({ ...page.run, counts: page.counts }, "page");
+}
+
+// A driver by name first, the code after; the code alone when the name is not on file.
+function driverWords(item: SweepItemView): string {
+  if (item.driverName && item.driverCode) return `${item.driverName} (${item.driverCode})`;
+  return item.driverName ?? item.driverCode ?? "a driver";
 }
 
 export function SweepRun({
   initial,
   auditorOn,
   timezone,
+  simple = false,
 }: {
   initial: SweepPage;
   auditorOn: boolean;
+  // flags.simpleShape, as the page read it.
+  simple?: boolean;
   // The carrier's time zone, for times shown on a card (an override's time).
   timezone?: string;
 }) {
@@ -370,7 +369,7 @@ export function SweepRun({
       return (
         <Card key={item.id} className="px-4 py-3 sm:px-5">
           <p className="text-body text-foreground">
-            {codeToWords(item.check)} for {item.driverCode ?? "a driver"}
+            {codeToWords(item.check)} for {driverWords(item)}
             {item.expectedCents !== null ? `, ${formatCents(item.expectedCents)}` : ""}
           </p>
           <p className="text-small text-foreground-2">{notDrafted(item)}</p>
@@ -387,7 +386,7 @@ export function SweepRun({
         />
         {item.explanation ? (
           <p className="px-1 text-small text-foreground-2">
-            <span className="font-semibold">Muse Spark:</span> {item.explanation}
+            <span className="font-semibold">Why:</span> {item.explanation}
           </p>
         ) : null}
         {item.status !== "drafted" && p.status === "proposed" ? (
@@ -408,24 +407,35 @@ export function SweepRun({
   return (
     <div className="mx-auto grid w-full max-w-[880px] gap-6 px-4 py-6 md:px-6 md:py-8">
       <PageHeader
-        title="Pay sweep"
+        title="Pay check"
         description={banner(page)}
         actions={<StatusBadge status={page.run.status === "running" ? "executing" : page.run.status} label={codeToWords(page.run.status)} />}
       />
-      {page.run.checklist ? <Checklist list={page.run.checklist} /> : null}
-      <section aria-label="Counts" className="grid grid-cols-2 gap-3 sm:grid-cols-4">
-        <StatCard label="Found" value={page.counts.found} />
-        <StatCard label="Fixes drafted" value={page.counts.fixes_drafted} />
-        <StatCard label="Clean" value={page.counts.clean} />
-        <StatCard label="Need a person" value={page.counts.needs_person} />
-      </section>
+      {page.run.checklist && (!simple || running) ? <Checklist list={page.run.checklist} /> : null}
+      {simple ? null : (
+        <section aria-label="Counts" className="grid grid-cols-2 gap-3 sm:grid-cols-4">
+          <StatCard label="Found" value={page.counts.found} />
+          <StatCard label="Fixes drafted" value={page.counts.fixes_drafted} />
+          <StatCard label="Clean" value={page.counts.clean} />
+          <StatCard label="Need you" value={page.counts.needs_person} />
+        </section>
+      )}
       {page.run.truncatedReason ? (
         <p role="note" className="rounded-md border border-warning bg-warning-soft px-3 py-2 text-small text-foreground">
           {stopNote(page)}
         </p>
       ) : null}
-      {page.fanout ? <WeekChecks tree={page.fanout} runId={runId} running={running} /> : null}
-      {readFailed ? <ErrorState category="unreadable" title="Could not read the sweep" /> : null}
+      {page.fanout && simple ? (
+        <details className="rounded-lg border border-border bg-card px-4 py-3">
+          <summary className="cursor-pointer text-body font-semibold text-foreground">How I checked</summary>
+          <div className="mt-3">
+            <WeekChecks tree={page.fanout} runId={runId} running={running} />
+          </div>
+        </details>
+      ) : page.fanout ? (
+        <WeekChecks tree={page.fanout} runId={runId} running={running} />
+      ) : null}
+      {readFailed ? <ErrorState category="unreadable" title="Could not read the pay check" /> : null}
       {running && judge ? <StaffOnlyLine /> : null}
       {stalled ? (
         <p role="status" className="text-small text-foreground-2">
@@ -483,10 +493,10 @@ export function SweepRun({
 
       <section aria-labelledby="needs-person" className="grid gap-3">
         <h3 id="needs-person" className="text-h3 text-foreground">
-          Needs a person
+          Needs you
         </h3>
         {people.length === 0 ? (
-          <p className="text-body text-foreground-2">Nothing waiting on a person.</p>
+          <p className="text-body text-foreground-2">Nothing here needs you.</p>
         ) : (
           <ul className="grid gap-2">
             {people.map((i) => (
@@ -521,18 +531,18 @@ export function SweepRun({
             Expired undecided ({expired.length})
           </summary>
           <p className="mt-2 text-small text-foreground-2">
-            Each of these expired before anyone decided it. The sweep does not draft them again; add one
-            by hand if it is still owed.
+            Each of these expired before anyone decided it. The pay check does not draft them again; add
+            one by hand if it is still owed.
           </p>
           <div className="mt-3 grid gap-3">{expired.map(card)}</div>
         </details>
       ) : null}
 
       {page.items.length === 0 && !running ? (
-        <EmptyState title="Nothing to fix this week" body="The sweep found no problems in this week's pay." />
+        <EmptyState title="Nothing to fix this week" body="The pay check found no mistakes in this week's pay." />
       ) : null}
       <Link href="/sweep" className="w-fit text-small text-link underline-offset-4 hover:underline">
-        All sweeps
+        Past checks
       </Link>
     </div>
   );

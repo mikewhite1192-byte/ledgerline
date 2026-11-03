@@ -1000,6 +1000,11 @@ export type Flags = {
   // coworker finished today, at most three things that need a person, and an ask box. It reuses the
   // reads Home already makes and changes no number. Off, Home renders as before.
   simpleShape: { enabled: boolean };
+  // The plain trace (src/components/trace/plain-mode.tsx): under an answer or a card, "How I
+  // checked" lists the steps and the records they read, with one line for the second check, and no
+  // model names, cents or seconds; a card shows one trust line and folds its reasons under Details.
+  // Presentation only; /models keeps every figure. Off, the trace and the card render as before.
+  plainTrace: { enabled: boolean };
 };
 
 // One kind's ceiling over the owner's autopilot limits: one item, and the carrier's local day.
@@ -1314,6 +1319,8 @@ export const flags: Flags = {
   driverPaperwork: { enabled: true, startDate: "2026-11-03", perDay: 30 },
   // Released by the owner (D-103, 2026-11-03). Presentation only.
   simpleShape: { enabled: true },
+  // Off until the owner turns it on in its own PR. Presentation only.
+  plainTrace: { enabled: false },
 };
 
 applyLocalOverrides(flags);

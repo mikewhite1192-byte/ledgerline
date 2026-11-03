@@ -11,6 +11,7 @@ import {
   type ProposalStatus,
 } from "./proposal-card";
 import { ViewerRoleProvider } from "./viewer-role";
+import { PlainModeProvider } from "@/components/trace/plain-mode";
 
 afterEach(cleanup);
 
@@ -720,5 +721,57 @@ describe("ProposalCard with the verification label", () => {
       />,
     );
     expect(screen.getByText("Overridden by a staff member on Oct 28, 2026, 3:00 PM UTC: The rate sheet was updated today")).toBeTruthy();
+  });
+});
+
+// The plain card (flags.plainTrace): the first reason as its one sentence, the rest under Details,
+// and one trust line in place of two.
+describe("ProposalCard in plain words", () => {
+  const verified = { state: "verified" as const, line: "Your pay rules recomputed it and a second check agreed.", held: false };
+  const held = { state: "mismatch" as const, line: "Numbers did not match your pay rules; held for a person.", held: true };
+  const plainCard = (props: Partial<ProposalCardProps>) =>
+    render(
+      <PlainModeProvider plain>
+        <ProposalCard {...card} {...props} />
+      </PlainModeProvider>,
+    );
+
+  it("says Checked twice once when both checks agree, with no pill and no badge", () => {
+    plainCard({ audit: { state: "pass" }, verification: verified });
+    expect(screen.getByText("Checked twice")).toBeTruthy();
+    expect(screen.getByText("Your pay rules and a second check agree.")).toBeTruthy();
+    expect(screen.queryByText("Verified")).toBeNull();
+    expect(screen.queryByText("Second check passed")).toBeNull();
+    expect(button("Approve $200.00")).toBeTruthy();
+  });
+
+  it("shows only the check that did not pass", () => {
+    const { unmount } = plainCard({ audit: { state: "concerns", text: "A source record is missing." }, verification: verified });
+    expect(screen.queryByText("Checked twice")).toBeNull();
+    expect(screen.queryByText("Verified")).toBeNull();
+    expect(screen.getByText("Second check has concerns")).toBeTruthy();
+    unmount();
+    plainCard({ audit: { state: "pass" }, verification: held });
+    expect(screen.queryByText("Checked twice")).toBeNull();
+    expect(screen.getByText(held.line)).toBeTruthy();
+    expect(screen.queryByText("Second check passed")).toBeNull();
+  });
+
+  it("leads with the first reason and folds the rest under Details", () => {
+    plainCard({ audit: { state: "pass" }, verification: verified });
+    const sentence = screen.getAllByText("Earned and unpaid this week: $2,400.00");
+    expect(sentence[0].closest("details")).toBeNull();
+    const summary = screen.getByText("Details", { selector: "summary" });
+    expect(summary.closest("details")?.textContent).toContain("Also read");
+    // The lead sentence is not repeated under Details.
+    expect(summary.closest("details")?.textContent).not.toContain("Earned and unpaid this week: $2,400.00");
+  });
+
+  it("keeps both lines and the open list with the switch off", () => {
+    render(<ProposalCard {...card} audit={{ state: "pass" }} verification={verified} />);
+    expect(screen.getByText("Verified")).toBeTruthy();
+    expect(screen.getByText("Second check passed")).toBeTruthy();
+    expect(screen.queryByText("Checked twice")).toBeNull();
+    expect(screen.queryByText("Details", { selector: "summary" })).toBeNull();
   });
 });

@@ -55,7 +55,7 @@ export default async function ActivityPage({
     <SignedInPage tenant={view.shell} current="/activity" title="Live feed">
       <PageHeader
         title="Live feed"
-        description="Every step the agent, the desk, the autopilot and people take with money, newest first. Read only."
+        description="Everything done with money, newest first. Read only."
         actions={feed && first ? <LiveRefresh pollSeconds={flags.activityFeed.pollSeconds} /> : undefined}
       />
       {!feed ? (
@@ -66,8 +66,8 @@ export default async function ActivityPage({
         <>
           <p className="text-small text-foreground-2">
             {feed.header.deskCheckedAt
-              ? `The desk last checked in ${formatInstant(feed.header.deskCheckedAt, view.shell.timezone)}.`
-              : "The desk has not checked in yet."}
+              ? `Last checked the books at ${formatInstant(feed.header.deskCheckedAt, view.shell.timezone)}.`
+              : "Has not checked the books yet."}
             {feed.header.paused ? " The autopilot is paused." : ""}
           </p>
           <Card className="px-4 sm:px-5">

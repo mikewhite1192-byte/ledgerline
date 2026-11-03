@@ -11,6 +11,8 @@ import type { TurnTrace } from "@/lib/trace/types";
 import { cn } from "@/lib/cn";
 import { recordNamer } from "@/lib/format/labels";
 import { recordHref, type HrefFor } from "@/lib/records/href";
+import { PLAIN_ANSWERED, plainLines } from "./plain-lines";
+import { usePlainMode } from "./plain-mode";
 import { StepView, TraceRow } from "./step-view";
 
 // "How this was worked out": under an answer (the whole turn) or a proposal card (that card's
@@ -23,6 +25,11 @@ import { StepView, TraceRow } from "./step-view";
 // by the page), the whole answer's panel also offers "Step through": the steps one model call at
 // a time (step-view.tsx). Off, the trace route leaves out the turn's summary and the model's notes
 // (store/trace.ts), so neither reaches the browser.
+//
+// The plain trace (flags.plainTrace, read by the shell through PlainModeProvider): the link reads
+// "How I checked" and the panel lists only the steps and the records they read, with one line for
+// the second check (plain-lines.ts). No model names, cents or seconds, no Models used, no totals,
+// no Details and no Step through; /models keeps every figure.
 
 export type TraceLoad = { trace: TurnTrace } | { missing: true } | { error: string };
 export type TraceLoader = (turnId: string) => Promise<TraceLoad>;
@@ -82,6 +89,7 @@ export function HowWorkedOut({
   className?: string;
 }) {
   const anchor = traceAnchor(turnId, proposalId);
+  const plain = usePlainMode();
   const panelId = useId();
   const [open, setOpen] = useState(false);
   const [stepping, setStepping] = useState(false);
@@ -143,7 +151,7 @@ export function HowWorkedOut({
         onClick={toggle}
       >
         <ChevronRight aria-hidden className={cn("transition-transform motion-reduce:transition-none", open && "rotate-90")} />
-        How this was worked out{" "}
+        {plain ? "How I checked" : "How this was worked out"}{" "}
         {/* A thread holds one under each answer and each card; the hidden words tell them apart. */}
         <VisuallyHidden>{proposalId ? "for this card" : "for this answer"}</VisuallyHidden>
       </Button>
@@ -154,7 +162,8 @@ export function HowWorkedOut({
             proposalId={proposalId}
             hrefFor={hrefFor}
             onRetry={() => void read()}
-            stepping={stepThrough && !proposalId ? { on: stepping, set: setStepping } : null}
+            plain={plain}
+            stepping={stepThrough && !proposalId && !plain ? { on: stepping, set: setStepping } : null}
           />
         ) : null}
       </div>
@@ -167,12 +176,14 @@ function Body({
   proposalId,
   hrefFor,
   onRetry,
+  plain,
   stepping,
 }: {
   state: State;
   proposalId?: string;
   hrefFor: HrefFor;
   onRetry: () => void;
+  plain: boolean;
   // Set when this panel offers "Step through": whether it is on, and the switch.
   stepping: { on: boolean; set: (on: boolean) => void } | null;
 }) {
@@ -201,11 +212,12 @@ function Body({
       <EmptyState
         icon={<ListTree aria-hidden />}
         title="Nothing on file for this yet"
-        body="No model calls or safety checks were recorded for it."
+        body={plain ? "No steps were recorded for it." : "No model calls or safety checks were recorded for it."}
         className="py-4"
       />
     );
   }
+  if (plain) return <PlainSteps trace={state.trace} proposalId={proposalId} hrefFor={hrefFor} />;
   const totals = traceTotals(state.trace, proposalId);
   const models = traceModels(state.trace, proposalId);
   const details = lines.flatMap((line, i) => (line.effort || line.cache ? [{ line, step: i + 1 }] : []));
@@ -256,6 +268,20 @@ function Body({
         </details>
       ) : null}
     </div>
+  );
+}
+
+// The plain trace's panel: the steps and the records they read, and the second check's line.
+function PlainSteps({ trace, proposalId, hrefFor }: { trace: TurnTrace; proposalId?: string; hrefFor: HrefFor }) {
+  const rows = plainLines(trace, proposalId);
+  const name = recordNamer(rows.flatMap((l) => l.refs));
+  if (rows.length === 0) return <p className="text-body text-foreground-2">{PLAIN_ANSWERED}</p>;
+  return (
+    <ol className="grid gap-3" aria-label="Steps, in order">
+      {rows.map((line, i) => (
+        <TraceRow key={line.key} line={line} step={i + 1} hrefFor={hrefFor} name={name} />
+      ))}
+    </ol>
   );
 }
 

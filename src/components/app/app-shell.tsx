@@ -9,6 +9,7 @@ import { defaultSuggestions } from "@/components/agent/suggestions";
 import { greetingLine } from "@/components/agent/words";
 import { Wordmark } from "@/components/brand/wordmark";
 import { flags, stepThroughShown } from "@/config/flags";
+import { PlainModeProvider } from "@/components/trace/plain-mode";
 import { cn } from "@/lib/cn";
 import { NEEDS_YOU_ANCHOR } from "./anchors";
 import { AreaTabs, type AreaTab } from "./area-tabs";
@@ -165,6 +166,8 @@ function AreaNav({ nav, agentOn, pinned }: { nav: NavItem[]; agentOn: boolean; p
 // Pinned amounts and no Needs you or Ask rows (the bell and the floating button do those jobs), and
 // the top carries one notice, not three: a demo visitor's line (VisitorNotice) in place of both the
 // test-mode line and the demo line, else the test-mode line; the top bar's test-mode chip goes.
+// The plain trace's switch (flags.plainTrace) is handed to every trace panel and card under the
+// shell, the agent's card included, through PlainModeProvider.
 export function AppShell({
   tenant,
   nav,
@@ -276,16 +279,19 @@ export function AppShell({
       </div>
     </div>
   );
-  if (!panelOn) return shell;
+  const plain = flags.plainTrace.enabled === true;
+  if (!panelOn) return <PlainModeProvider plain={plain}>{shell}</PlainModeProvider>;
   return (
-    <AgentLauncher
-      config={panelConfig(tenant)}
-      focus={flags.agentFocusEnabled === true ? focus : undefined}
-      suggestions={suggestions ?? defaultSuggestions()}
-      opening={agentOpening}
-    >
-      {shell}
-    </AgentLauncher>
+    <PlainModeProvider plain={plain}>
+      <AgentLauncher
+        config={panelConfig(tenant)}
+        focus={flags.agentFocusEnabled === true ? focus : undefined}
+        suggestions={suggestions ?? defaultSuggestions()}
+        opening={agentOpening}
+      >
+        {shell}
+      </AgentLauncher>
+    </PlainModeProvider>
   );
 }
 
