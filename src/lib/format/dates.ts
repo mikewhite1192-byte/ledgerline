@@ -43,7 +43,7 @@ const INSTANT = /^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2})(?::(\d{2})(?:\.\d{1,9}
 
 // Date.parse rolls an impossible value forward (Feb 30 becomes Mar 2, hour 24 the next day), so
 // every part is checked against its own range first.
-function isRealInstant(iso: string): boolean {
+export function isRealInstant(iso: string): boolean {
   const m = INSTANT.exec(iso);
   if (!m) return false;
   const [year, month, day, hour, minute] = [1, 2, 3, 4, 5].map((i) => Number(m[i]));

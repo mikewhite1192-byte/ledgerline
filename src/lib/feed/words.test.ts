@@ -140,6 +140,8 @@ describe("feedLine", () => {
     expect(say({ ...d, event: "desk_failed", kind: "audit", code: "threw" })).toBe("Desk could not finish an audit: threw");
     expect(say({ ...d, event: "desk_skipped", kind: "sweep", code: "switched_off" })).toBe("Desk skipped a pay sweep: switched off");
     expect(say({ ...d, event: "desk_skipped", kind: "autopilot", code: "paused" })).toBe("Autopilot held an autopilot step: paused");
+    expect(say({ ...d, event: "desk_skipped", kind: "autopilot", code: "before_start" })).toBe("Autopilot held an autopilot step: before start");
+    expect(say({ ...d, event: "desk_skipped", kind: "autopilot", code: "no_rule" })).toBe("Autopilot held an autopilot step: no rule");
     expect(say({ ...d, event: "desk_done", kind: "brand_new_source" })).toBe("Desk finished a brand new source");
     expect(say({ ...d, event: "desk_sleep", count: 3 })).toBe("Desk checked in: 3 things done");
     expect(say({ ...d, event: "desk_sleep", count: 1 })).toBe("Desk checked in: 1 thing done");
@@ -229,6 +231,11 @@ describe("feedRowOf", () => {
     expect(feedRowOf(raw({ reason: "Upstream said no" })).reason).toBeNull();
     expect(feedRowOf(raw({ record_table: "advances", record_id: "not-a-uuid" })).record).toBeNull();
     expect(feedRowOf(raw({ once: "yes" })).once).toBe(true);
+    expect(feedRowOf(raw({ until_at: "2026-11-10T18:00:00" })).until).toBeNull();
+    expect(feedRowOf(raw({ until_at: "2026-11-10T18:00:00.000Z" })).until).toBe("2026-11-10T18:00:00.000Z");
+    expect(say({ actor: "admin", key: `autopilot:${ID}`, event: "autopilot_pause", until: "2026-11-10T18:00:00" })).toBe(
+      "Admin paused the autopilot",
+    );
     for (const bad of [
       { at: "2026-11-10T15:00:00Z" },
       { key: "money:nope" },

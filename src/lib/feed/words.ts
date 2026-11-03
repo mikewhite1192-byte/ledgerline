@@ -1,6 +1,6 @@
 import { codeToWords } from "../format/labels";
 import { formatCents } from "../format/money";
-import { formatInstant } from "../format/dates";
+import { formatInstant, isRealInstant } from "../format/dates";
 import { hrefOrNull, recordHref } from "../records/href";
 import type { FeedActor, FeedRow } from "./read";
 
@@ -56,7 +56,7 @@ function deskThing(source: string | null): string {
 }
 
 // The autopilot rulings that hold a step (nothing decided, nothing written) rather than skip it.
-const HELD = new Set(["switched_off", "unarmed", "paused", "not_waiting", "kind_unarmed"]);
+const HELD = new Set(["switched_off", "unarmed", "paused", "not_waiting", "kind_unarmed", "before_start", "no_rule"]);
 
 // Why the autopilot asked a person, in the owner's words.
 const REASON_WORDS: Readonly<Record<string, string>> = {
@@ -215,7 +215,7 @@ function deskWords(r: FeedRow): string | null {
 function changeWords(r: FeedRow, actor: string, timeZone: string): string | null {
   switch (r.event) {
     case "autopilot_pause":
-      return `${actor} paused the autopilot${r.until !== null ? ` until ${formatInstant(r.until, timeZone)}` : ""}`;
+      return `${actor} paused the autopilot${r.until !== null && isRealInstant(r.until) ? ` until ${formatInstant(r.until, timeZone)}` : ""}`;
     case "autopilot_resume":
       return `${actor} resumed the autopilot`;
     case "autopilot_rule": {

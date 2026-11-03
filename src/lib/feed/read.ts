@@ -1,6 +1,7 @@
 import { readPause } from "../autopilot/read";
 import { isPaused } from "../autopilot/facts";
 import { DbError, type Queryable } from "../db";
+import { isRealInstant } from "../format/dates";
 
 // The live feed's one read: every step the agent, the desk, the autopilot and people took with
 // money, newest first, from the tables that already record them (desk_log, proposals,
@@ -316,7 +317,7 @@ export function feedRowOf(r: Partial<Raw>): FeedRow {
     count: wholeOrNull(r.n),
     limitCents: wholeOrNull(r.limit_cents),
     dayLimitCents: wholeOrNull(r.day_cents),
-    until: until !== null && !Number.isNaN(Date.parse(until)) ? until : null,
+    until: until !== null && isRealInstant(until) ? until : null,
     channel: codeOrNull(r.channel),
     system: codeOrNull(r.system),
     once: r.once === "yes",

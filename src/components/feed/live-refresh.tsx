@@ -6,18 +6,29 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 
 // Keeps an open feed page current: every pollSeconds, while the tab is visible and the person has
-// not paused it, the page reads itself again (a server render; nothing here writes). Pause stops
-// that until Resume.
+// not paused it, the page reads itself again (a server render; nothing here writes). The timer
+// stops while the tab is hidden and starts again when it shows. Pause stops it until Resume.
 export function LiveRefresh({ pollSeconds }: { pollSeconds: number }) {
   const router = useRouter();
   const [live, setLive] = useState(true);
 
   useEffect(() => {
     if (!live || !Number.isSafeInteger(pollSeconds) || pollSeconds < 1) return;
-    const timer = setInterval(() => {
-      if (document.visibilityState === "visible") router.refresh();
-    }, pollSeconds * 1000);
-    return () => clearInterval(timer);
+    let timer: ReturnType<typeof setInterval> | null = null;
+    const stop = () => {
+      if (timer !== null) clearInterval(timer);
+      timer = null;
+    };
+    const sync = () => {
+      if (document.visibilityState !== "visible") return stop();
+      if (timer === null) timer = setInterval(() => router.refresh(), pollSeconds * 1000);
+    };
+    sync();
+    document.addEventListener("visibilitychange", sync);
+    return () => {
+      document.removeEventListener("visibilitychange", sync);
+      stop();
+    };
   }, [live, pollSeconds, router]);
 
   return (

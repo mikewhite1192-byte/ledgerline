@@ -297,4 +297,12 @@ describe("the live feed's read", () => {
     const none = await app.withTenant(B.tenantId, (q) => readFeedHeader(q, T0));
     expect(none).toEqual({ deskCheckedAt: null, paused: false });
   });
+
+  it("names who decided only from the carrier's own members, so another carrier's login reads Someone", async () => {
+    const id = await proposal(B, "Advance decided by another carrier's login", 32, null);
+    await decide(B, id, "rejected", A.session.sub, 33, null);
+    const decided = (await read(B, 50)).rows.filter((r) => r.key.includes(id) && r.event === "proposal_decided");
+    expect(decided.map((r) => r.actor)).toEqual(["someone"]);
+    expect(words(decided)).toEqual(["Someone rejected Advance decided by another carrier's login"]);
+  });
 });
