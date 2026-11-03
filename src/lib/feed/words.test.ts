@@ -141,9 +141,9 @@ describe("feedLine", () => {
     expect(say({ ...d, event: "desk_done", kind: "inbound_message", code: "drafted" })).toBe("Finished a message: drafted");
     expect(say({ ...d, event: "desk_failed", kind: "audit", code: "threw" })).toBe("Could not finish an audit: threw");
     expect(say({ ...d, event: "desk_skipped", kind: "sweep", code: "switched_off" })).toBe("Skipped a pay check: switched off");
-    expect(say({ ...d, event: "desk_skipped", kind: "autopilot", code: "paused" })).toBe("Autopilot held an autopilot step: paused");
-    expect(say({ ...d, event: "desk_skipped", kind: "autopilot", code: "before_start" })).toBe("Autopilot held an autopilot step: before start");
-    expect(say({ ...d, event: "desk_skipped", kind: "autopilot", code: "no_rule" })).toBe("Autopilot held an autopilot step: no rule");
+    expect(say({ ...d, event: "desk_skipped", kind: "autopilot", code: "paused" })).toBe("Autopilot (your rules) held an autopilot step: paused");
+    expect(say({ ...d, event: "desk_skipped", kind: "autopilot", code: "before_start" })).toBe("Autopilot (your rules) held an autopilot step: before start");
+    expect(say({ ...d, event: "desk_skipped", kind: "autopilot", code: "no_rule" })).toBe("Autopilot (your rules) held an autopilot step: no rule");
     expect(say({ ...d, event: "desk_done", kind: "brand_new_source" })).toBe("Finished a brand new source");
     expect(say({ ...d, event: "desk_sleep", count: 3 })).toBe("Checked the books: 3 things done");
     expect(say({ ...d, event: "desk_sleep", count: 1 })).toBe("Checked the books: 1 thing done");

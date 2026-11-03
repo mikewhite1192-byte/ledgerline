@@ -433,42 +433,47 @@ export function ProposalCard({
         </div>
       </div>
   );
+  const reasonList = (list: typeof reasons, className: string) => (
+    <ul className={className}>
+      {list.map((r, i) => {
+        const href = r.source ? hrefOrNull(hrefFor, r.source) : null;
+        return (
+          <li key={i} className="flex flex-wrap items-baseline justify-between gap-x-4 gap-y-0.5 text-body">
+            <span className="text-foreground">{r.text}</span>
+            {r.source && href ? (
+              <Link href={href} className="ml-auto text-small text-link underline-offset-4 hover:underline">
+                {r.label ?? sourceName(r.source)}
+              </Link>
+            ) : r.source ? (
+              // A record the link rules do not know shows as its name, without a link.
+              <span className="ml-auto text-small text-foreground-2">{r.label ?? sourceName(r.source)}</span>
+            ) : null}
+          </li>
+        );
+      })}
+    </ul>
+  );
+  const alsoRead =
+    sources.length > 0 ? (
+      <p className="mt-3 flex flex-wrap gap-x-3 gap-y-1 text-small text-muted-foreground">
+        <span>Also read:</span>
+        {sources.map((s) => {
+          const href = hrefOrNull(hrefFor, s);
+          return href ? (
+            <Link key={`${s.table}:${s.id}`} href={href} className="text-link underline-offset-4 hover:underline">
+              {s.label ?? sourceName(s)}
+            </Link>
+          ) : (
+            <span key={`${s.table}:${s.id}`}>{s.label ?? sourceName(s)}</span>
+          );
+        })}
+      </p>
+    ) : null;
   const why = (
     <>
       <p className="text-small font-semibold text-foreground-2">Why</p>
-      <ul className="mt-1.5 grid gap-1.5">
-        {reasons.map((r, i) => {
-          const href = r.source ? hrefOrNull(hrefFor, r.source) : null;
-          return (
-            <li key={i} className="flex flex-wrap items-baseline justify-between gap-x-4 gap-y-0.5 text-body">
-              <span className="text-foreground">{r.text}</span>
-              {r.source && href ? (
-                <Link href={href} className="ml-auto text-small text-link underline-offset-4 hover:underline">
-                  {r.label ?? sourceName(r.source)}
-                </Link>
-              ) : r.source ? (
-                // A record the link rules do not know shows as its name, without a link.
-                <span className="ml-auto text-small text-foreground-2">{r.label ?? sourceName(r.source)}</span>
-              ) : null}
-            </li>
-          );
-        })}
-      </ul>
-      {sources.length > 0 ? (
-        <p className="mt-3 flex flex-wrap gap-x-3 gap-y-1 text-small text-muted-foreground">
-          <span>Also read:</span>
-          {sources.map((s) => {
-            const href = hrefOrNull(hrefFor, s);
-            return href ? (
-              <Link key={`${s.table}:${s.id}`} href={href} className="text-link underline-offset-4 hover:underline">
-                {s.label ?? sourceName(s)}
-              </Link>
-            ) : (
-              <span key={`${s.table}:${s.id}`}>{s.label ?? sourceName(s)}</span>
-            );
-          })}
-        </p>
-      ) : null}
+      {reasonList(reasons, "mt-1.5 grid gap-1.5")}
+      {alsoRead}
     </>
   );
   const parkedNow = parked !== undefined && (status === "approved" || status === "executing");
@@ -508,13 +513,16 @@ export function ProposalCard({
           // The plain card (flags.plainTrace): the first reason as its one sentence, the rest behind
           // Details.
           <>
-            {reasons[0] ? <p className="text-body text-foreground">{reasons[0].text}</p> : null}
-            {reasons.length > 0 || sources.length > 0 ? (
+            {reasons.length > 0 ? reasonList(reasons.slice(0, 1), "grid") : null}
+            {reasons.length > 1 || sources.length > 0 ? (
               <details className="mt-2">
                 <summary className="w-fit cursor-pointer rounded-sm text-small text-link underline-offset-4 hover:underline">
                   Details
                 </summary>
-                <div className="mt-2">{why}</div>
+                <div className="mt-2 grid gap-3">
+                  {reasons.length > 1 ? reasonList(reasons.slice(1), "grid gap-1.5") : null}
+                  {alsoRead}
+                </div>
               </details>
             ) : null}
           </>

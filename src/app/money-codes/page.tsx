@@ -67,7 +67,7 @@ export default async function MoneyCodesPage() {
   return (
     <CodesFrame shell={page.shell} title="Driver codes">
       <PageHeader
-        title={<CodesTitle>Money codes</CodesTitle>}
+        title={<CodesTitle>Driver codes</CodesTitle>}
         description={CODES_HELP}
         actions={
           <Link href="/money-codes/new" className={buttonVariants({ variant: "primary" })}>

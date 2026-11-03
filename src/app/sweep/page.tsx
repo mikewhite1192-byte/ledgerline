@@ -58,6 +58,12 @@ export default async function SweepPage() {
   const running = home?.runs.some((r) => r.status === "running") ?? false;
   const simple = flags.simpleShape.enabled === true;
 
+  type Run = NonNullable<typeof home>["runs"][number];
+  const counterColumns = [
+    { key: "found", header: "Found", align: "right" as const, cell: (r: Run) => r.counts.found ?? "" },
+    { key: "drafted", header: "Drafted", align: "right" as const, cell: (r: Run) => r.counts.fixes_drafted ?? "" },
+    { key: "clean", header: "Clean", align: "right" as const, cell: (r: Run) => r.counts.clean ?? "" },
+  ];
   const pastChecks = (
     <DataTable
       caption="Past checks"
@@ -80,9 +86,8 @@ export default async function SweepPage() {
         { key: "week", header: "Week", cell: (r) => week(r) },
         { key: "trigger", header: "Started by", cell: (r) => (r.trigger === "schedule" ? "Nightly" : "Button") },
         { key: "status", header: "Status", cell: (r) => <StatusBadge status={r.status === "running" ? "executing" : r.status} label={codeToWords(r.status)} /> },
-        { key: "found", header: "Found", align: "right", cell: (r) => r.counts.found ?? "" },
-        { key: "drafted", header: "Drafted", align: "right", cell: (r) => r.counts.fixes_drafted ?? "" },
-        { key: "clean", header: "Clean", align: "right", cell: (r) => r.counts.clean ?? "" },
+        // The simple shape leaves the counters out; each run's own page has its outcome.
+        ...(simple ? [] : counterColumns),
       ]}
     />
   );
@@ -129,7 +134,7 @@ export default async function SweepPage() {
                 <StartSweep hasOpenWeek={home.openPeriod !== null} running={running} />
               </div>
             </Card>
-            {last && last.status !== "running" ? (
+            {!simple && last && last.status !== "running" ? (
               <section aria-label="Last check" className="grid grid-cols-2 gap-3 sm:grid-cols-4">
                 <StatCard label="Found" value={last.counts.found ?? 0} />
                 <StatCard label="Fixes drafted" value={last.counts.fixes_drafted ?? 0} />

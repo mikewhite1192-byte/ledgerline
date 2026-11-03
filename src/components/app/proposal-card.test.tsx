@@ -763,6 +763,8 @@ describe("ProposalCard in plain words", () => {
     expect(sentence[0].closest("details")).toBeNull();
     const summary = screen.getByText("Details", { selector: "summary" });
     expect(summary.closest("details")?.textContent).toContain("Also read");
+    // The lead sentence is not repeated under Details.
+    expect(summary.closest("details")?.textContent).not.toContain("Earned and unpaid this week: $2,400.00");
   });
 
   it("keeps both lines and the open list with the switch off", () => {

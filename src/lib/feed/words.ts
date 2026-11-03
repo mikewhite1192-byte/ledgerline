@@ -207,7 +207,7 @@ function deskWords(r: FeedRow): string | null {
       return `Could not finish ${thing}${cat}`;
     case "desk_skipped":
       return r.kind === "autopilot" && r.code !== null && HELD.has(r.code)
-        ? `Autopilot held ${thing}${cat}`
+        ? `${ACTOR_LABELS.autopilot} held ${thing}${cat}`
         : `Skipped ${thing}${cat}`;
     case "desk_sleep":
       return r.count === null || r.count === 0 ? null : `Checked the books: ${plural(r.count, "thing", "things")} done`;
