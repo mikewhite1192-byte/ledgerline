@@ -224,7 +224,7 @@ export async function openPeriod(q: Queryable, periodId: string | null) {
 
 function defaults(db: TenantDb, clock: () => Date, deps: SweepDeps): Ctx["deps"] {
   return {
-    callTool: deps.callTool ?? ((ctx, call) => gatewayCallTool(ctx, call, { db })),
+    callTool: deps.callTool ?? ((ctx, call) => gatewayCallTool(ctx, call, { db, clock: () => clock().getTime() })),
     openTurn: deps.openTurn ?? ((s, input) => openAgentTurn(s, input, { db, clock })),
     openTurnIn: deps.openTurnIn ?? openAgentTurnIn,
     store: deps.store ?? ((s) => dbTurnStore(s, { db, clock })),
