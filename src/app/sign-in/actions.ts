@@ -40,7 +40,8 @@ export async function signInAction(formData: FormData): Promise<void> {
   }
 
   (await cookies()).set(SESSION_COOKIE, result.idToken, sessionCookieOptions());
-  redirect("/");
+  // While the walkthrough is on, every sign-in lands on it; off, on Home as before.
+  redirect(flags.signInTour.enabled === true ? "/?welcome=1" : "/");
 }
 
 // The login's one role in the token's tenant, read in the same scoped, membership-checked

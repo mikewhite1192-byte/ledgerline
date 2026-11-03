@@ -131,3 +131,23 @@ describe("signInAction with judge access on", () => {
     expect(mocks.cookieSet).toHaveBeenCalledWith(SESSION_COOKIE, TOKEN, expect.objectContaining({ httpOnly: true }));
   });
 });
+
+describe("signInAction and the sign-in walkthrough", () => {
+  it("lands on the walkthrough only while its switch is on, and on Home as before while it is off", async () => {
+    const savedTour = flags.signInTour.enabled;
+    flags.judgeAccess.enabled = true;
+    try {
+      flags.signInTour.enabled = false;
+      expect(await submit()).toBe("/");
+      flags.signInTour.enabled = true;
+      expect(await submit()).toBe("/?welcome=1");
+      expect(mocks.cookieSet).toHaveBeenCalledTimes(2);
+      // A refused sign-in still goes back to the sign-in page, with no cookie.
+      mocks.signIn.mockResolvedValueOnce({ ok: false, reason: "invalid_credentials" });
+      expect(await submit()).toBe("/sign-in?error=invalid");
+      expect(mocks.cookieSet).toHaveBeenCalledTimes(2);
+    } finally {
+      flags.signInTour.enabled = savedTour;
+    }
+  });
+});

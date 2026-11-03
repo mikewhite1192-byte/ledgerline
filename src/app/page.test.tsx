@@ -36,6 +36,7 @@ const mocks = vi.hoisted(() => ({
   readCashHome: vi.fn(),
   readPaystubAsk: vi.fn(),
   readFeed: vi.fn(),
+  readTourFacts: vi.fn(),
 }));
 
 vi.mock("@/lib/tenant/context", async (importOriginal) => ({
@@ -80,6 +81,10 @@ vi.mock("@/components/agent/agent-launcher", () => ({
 vi.mock("@/lib/feed/read", async (importOriginal) => ({
   ...(await importOriginal<typeof import("@/lib/feed/read")>()),
   readFeed: mocks.readFeed,
+}));
+vi.mock("@/lib/tour/facts", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("@/lib/tour/facts")>()),
+  readTourFacts: mocks.readTourFacts,
 }));
 vi.mock("./ai-proof-form", () => ({ AiProofForm: () => null }));
 // Home's own reads have their own database tests; here only what the page does with what they return.
@@ -133,6 +138,7 @@ const WEEKS = [
 ];
 const savedVerification = flags.verification;
 const savedFeed = flags.activityFeed.enabled;
+const savedTour = flags.signInTour.enabled;
 
 beforeEach(() => {
   // Tuesday Nov 10, 2026, after the week of Nov 9 has begun.
@@ -163,6 +169,7 @@ afterEach(() => {
   for (const k of [...SWITCHES, ...OFF]) flags[k] = saved[k];
   flags.verification = savedVerification;
   flags.activityFeed.enabled = savedFeed;
+  flags.signInTour.enabled = savedTour;
   vi.clearAllMocks();
 });
 
@@ -423,5 +430,76 @@ describe("home's order and cards", () => {
     render(await Home({ searchParams: Promise.resolve({}) }));
     expect(within(region("Live feed")).getByText("Could not read the feed. Nothing changed.")).toBeTruthy();
     expect(region("Today")).toBeTruthy();
+  });
+});
+
+// The walkthrough's own reads are faked here; their words have their own tests (src/lib/tour).
+const TOUR_FACTS = {
+  digest: { ok: true, value: "Good morning. Nothing is late this week." },
+  desk: { ok: true, value: { checkedAt: "2026-11-10T14:00:00.000Z", doneToday: 2 } },
+  autopilot: null,
+  board: null,
+};
+const walkthrough = () => screen.queryByRole("region", { name: "Walkthrough" });
+const shortcutLabels = () =>
+  within(screen.getByRole("list", { name: "Shortcuts" }))
+    .queryAllByRole("link")
+    .map((l) => l.textContent);
+
+describe("home, the sign-in walkthrough", () => {
+  it("opens on top of Home after a sign-in (?welcome=1) while its switch is on", async () => {
+    flags.signInTour.enabled = true;
+    mocks.readTourFacts.mockResolvedValue(TOUR_FACTS);
+    render(await Home({ searchParams: Promise.resolve({ welcome: "1" }) }));
+    const panel = walkthrough();
+    expect(panel).toBeTruthy();
+    expect(within(panel!).getByRole("heading").textContent).toBe("Your AI accountant is already working");
+    expect(panel!.textContent).toContain("Good morning. Nothing is late this week.");
+    expect(panel!.textContent).toContain("The desk last checked in Nov 10, 2026, 9:00 AM EST and finished 2 things today.");
+    expect(before(panel!, screen.getByText(/^Good morning, Blue Ridge$/))).toBe(true);
+    expect(mocks.readTourFacts).toHaveBeenCalledWith(
+      expect.objectContaining({ today: "2026-11-10", timezone: "America/New_York" }),
+    );
+    // The rest of Home is all there under it, the agent's button among it.
+    expect(region("Today")).toBeTruthy();
+    expect(region("Needs you")).toBeTruthy();
+    expect(screen.getByRole("button", { name: "Ask the agent" })).toBeTruthy();
+    const show = within(screen.getByRole("list", { name: "Shortcuts" })).getByRole("link", { name: "Show me around" });
+    expect(show.getAttribute("href")).toBe("/?welcome=1");
+  });
+
+  it("stays closed on a plain visit to Home, with the shortcut to open it", async () => {
+    flags.signInTour.enabled = true;
+    render(await Home({ searchParams: Promise.resolve({}) }));
+    expect(walkthrough()).toBeNull();
+    expect(mocks.readTourFacts).not.toHaveBeenCalled();
+    expect(shortcutLabels()).toContain("Show me around");
+  });
+
+  it("shows nothing and reads nothing while its switch is off, even with ?welcome=1", async () => {
+    flags.signInTour.enabled = false;
+    render(await Home({ searchParams: Promise.resolve({ welcome: "1" }) }));
+    expect(walkthrough()).toBeNull();
+    expect(mocks.readTourFacts).not.toHaveBeenCalled();
+    expect(shortcutLabels()).not.toContain("Show me around");
+    expect(region("Today")).toBeTruthy();
+  });
+
+  it("says which figure it could not read and keeps the rest of the panel and of Home", async () => {
+    flags.signInTour.enabled = true;
+    mocks.readTourFacts.mockResolvedValue({ ...TOUR_FACTS, digest: { ok: false }, desk: { ok: false } });
+    mocks.readNeedsYou.mockRejectedValue(new DbError("timeout"));
+    const log = vi.spyOn(console, "error").mockImplementation(() => {});
+    try {
+      render(await Home({ searchParams: Promise.resolve({ welcome: "1" }) }));
+      const panel = walkthrough()!;
+      expect(within(panel).getAllByRole("status").map((s) => s.textContent)).toEqual([
+        "Could not read the agent's latest morning line.",
+        "Could not read when the desk last checked in.",
+      ]);
+      expect(region("Today")).toBeTruthy();
+    } finally {
+      log.mockRestore();
+    }
   });
 });

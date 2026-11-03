@@ -1,5 +1,5 @@
 import Link from "next/link";
-import { NEEDS_YOU_ANCHOR } from "@/components/app/anchors";
+import { NEEDS_YOU_ANCHOR, TODAY_ANCHOR } from "@/components/app/anchors";
 import { Mark } from "@/components/brand/mark";
 import { Card } from "@/components/ui/card";
 import { formatLocalDate } from "@/lib/format/dates";
@@ -66,7 +66,7 @@ export function TodayCard({ intake, shown, sweep, needs, today, timezone }: Toda
   const waiting = needs.rows.reduce((s, r) => s + r.count, 0);
   const atLeast = needs.rows.some((r) => r.atLeast);
   return (
-    <section aria-labelledby="today-title" className="min-w-0">
+    <section id={TODAY_ANCHOR} aria-labelledby="today-title" className="min-w-0 scroll-mt-28">
       <Card className="h-full border-l-4 border-l-primary">
         <div className="flex items-center gap-2.5 px-4 pt-4 sm:px-5">
           <Mark size={24} />

@@ -560,6 +560,10 @@ vi.mock("@/lib/feed/read", async (importOriginal) => ({
   readFeed: async () => get("feed"),
   readFeedHeader: async () => get("feedHeader"),
 }));
+vi.mock("@/lib/tour/facts", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("@/lib/tour/facts")>()),
+  readTourFacts: async () => get("tourFacts"),
+}));
 
 function defaults(): Record<string, unknown> {
   return {
@@ -745,6 +749,17 @@ async function feedPage(search: Record<string, string> = {}): Promise<ReactNode>
     return await (await import("@/app/activity/page")).default({ searchParams: Promise.resolve(search) });
   } finally {
     flags.activityFeed = savedFeed;
+  }
+}
+
+// Home after a sign-in with the walkthrough's switch on: its first step, then each one in turn.
+async function tourHome(): Promise<ReactNode> {
+  const savedTour = { ...flags.signInTour };
+  flags.signInTour = { enabled: true };
+  try {
+    return await (await import("@/app/page")).default(sp({ welcome: "1" }));
+  } finally {
+    flags.signInTour = savedTour;
   }
 }
 
@@ -1104,6 +1119,19 @@ const PAGES: PageCase[] = [
           "Customer payments in",
           "On 3 open invoices",
         ],
+      },
+      {
+        name: "home, the walkthrough",
+        setup: () => {
+          state.fx.tourFacts = {
+            digest: { ok: true, value: "Good morning. Three paystubs wait for a look." },
+            desk: { ok: true, value: { checkedAt: "2026-11-02T15:00:00.000Z", doneToday: 4 } },
+            autopilot: { ok: true, value: { on: true, paused: false, pausedAt: null, auto: [{ kind: "invoice_post", maxCents: 200_000 }] } },
+            board: { ok: false },
+          };
+        },
+        load: tourHome,
+        shows: ["Your AI accountant is already working", "Good morning. Three paystubs wait for a look.", "Show me around"],
       },
       {
         name: "home, nothing waiting",

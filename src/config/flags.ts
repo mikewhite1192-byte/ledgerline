@@ -980,6 +980,12 @@ export type Flags = {
   // pollSeconds: how often an open page reads itself again while its tab is visible. pageSize: the
   // lines on one page.
   activityFeed: { enabled: boolean; pollSeconds: number; pageSize: number };
+  // The walkthrough on Home after a sign-in (src/lib/tour): both sign-in actions land on
+  // /?welcome=1, and Home opens a short panel of steps, each with the carrier's own number read
+  // from what Home already reads, the morning digest's stored line first. Reads only: no model call
+  // of its own, nothing written. Off, sign-in lands on / as before, and there is no panel and no
+  // "Show me around" shortcut.
+  signInTour: { enabled: boolean };
 };
 
 // One kind's ceiling over the owner's autopilot limits: one item, and the carrier's local day.
@@ -1287,6 +1293,8 @@ export const flags: Flags = {
   morningDigest: { enabled: true, startDate: "2026-11-02", maxCostCents: 4, maxOutputTokens: 400 },
   // On by the owner's call (D-071, D-097, 2026-11-03). Read only; it moves no money.
   activityFeed: { enabled: true, pollSeconds: 15, pageSize: 50 },
+  // Off until the owner turns it on in its own PR. Read only.
+  signInTour: { enabled: false },
 };
 
 applyLocalOverrides(flags);
