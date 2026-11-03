@@ -1119,7 +1119,8 @@ export const flags: Flags = {
     planCents: 30,
     reconcileCents: 40,
     childTimeoutMs: 19_000,
-    tenantDayCents: 1_000,
+    // Raised by the owner (D-102, 2026-11-03): three full runs (runCapCents each) fit in a day.
+    tenantDayCents: 1_500,
     runsPerTenantDay: 3,
     runCapCents: 500,
   },
