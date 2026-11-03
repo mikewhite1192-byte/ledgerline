@@ -1260,8 +1260,9 @@ export const flags: Flags = {
   // On by the owner's call (D-071, 2026-10-31). Parking moves no money; a release pays through the
   // usual ledger and payout switches.
   advanceParking: { enabled: true, startDate: "2026-11-02" },
-  // Off until its own one-line enable PR. A pull is an outside write, in test mode only.
-  cardPullback: { enabled: false, startDate: "2026-11-02" },
+  // On by the owner's call (D-071, 2026-11-01). A pull is an outside write, in test mode only, and
+  // always a named person's approval.
+  cardPullback: { enabled: true, startDate: "2026-11-02" },
   // On by the owner's call (D-071, 2026-11-01). A typed line changes what an approval pays.
   namedLines: { enabled: true },
   // On by the owner's call (D-071, 2026-11-01). A mark records a person's send; nothing is sent.
