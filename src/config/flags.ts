@@ -1319,8 +1319,8 @@ export const flags: Flags = {
   driverPaperwork: { enabled: true, startDate: "2026-11-03", perDay: 30 },
   // Released by the owner (D-103, 2026-11-03). Presentation only.
   simpleShape: { enabled: true },
-  // Off until the owner turns it on in its own PR. Presentation only.
-  plainTrace: { enabled: false },
+  // Released by the owner (D-103, 2026-11-03). Presentation only.
+  plainTrace: { enabled: true },
 };
 
 applyLocalOverrides(flags);
