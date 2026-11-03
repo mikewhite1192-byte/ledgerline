@@ -152,14 +152,14 @@ const CASES: { route: string; load: () => Promise<ReactNode>; off: string; title
   {
     route: "/sweep",
     load: async () => (await import("./sweep/page")).default(),
-    off: "Pay sweep is off for this carrier",
-    title: "Pay sweep",
+    off: "Pay check is off for this carrier",
+    title: "Pay check",
   },
   {
     route: "/sweep/[id]",
     load: async () => (await import("./sweep/[id]/page")).default({ params: params() }),
-    off: "Pay sweep is off for this carrier",
-    title: "Pay sweep",
+    off: "Pay check is off for this carrier",
+    title: "Pay check",
   },
   {
     route: "/driver-notes",
@@ -195,8 +195,8 @@ const CASES: { route: string; load: () => Promise<ReactNode>; off: string; title
   {
     route: "/clips",
     load: async () => (await import("./clips/page")).default(),
-    off: "Dock clips are off for this carrier",
-    title: "Dock clips",
+    off: "Dock videos are off for this carrier",
+    title: "Dock videos",
   },
   {
     route: "/invoices",
@@ -213,14 +213,14 @@ const CASES: { route: string; load: () => Promise<ReactNode>; off: string; title
   {
     route: "/cards",
     load: async () => (await import("./cards/page")).default(),
-    off: "Card check is off for this carrier",
-    title: "Card check",
+    off: "Card charges are off for this carrier",
+    title: "Card charges",
   },
   {
     route: "/cards/[breakId]",
     load: async () => (await import("./cards/[breakId]/page")).default({ params: Promise.resolve({ breakId: ID }) }),
-    off: "Card check is off for this carrier",
-    title: "Card check",
+    off: "Card charges are off for this carrier",
+    title: "Card charges",
   },
   {
     route: "/collections",

@@ -9,6 +9,7 @@ import { Card } from "@/components/ui/card";
 import { Label } from "@/components/ui/label";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Textarea } from "@/components/ui/textarea";
+import { usePlainMode } from "@/components/trace/plain-mode";
 import { OVERRIDE_REASON, overrideReasonOf } from "@/lib/agent/auditor/words";
 import { VERIFY_PILL, type VerificationState } from "@/lib/agent/verify";
 import { STAFF_ONLY_BODY, STAFF_ONLY_NOTE, STAFF_ONLY_TITLE } from "./staff-only";
@@ -255,6 +256,35 @@ function AuditLine({
   );
 }
 
+// The plain trace's one trust line (flags.plainTrace) when both checks agree, in place of the
+// Verified pill and the second check's badge.
+function CheckedTwice() {
+  return (
+    <div className="mx-4 mb-3 flex flex-wrap items-center gap-2 sm:mx-5">
+      <Badge tone="success">Checked twice</Badge>
+      <span className="text-small text-foreground-2">Your pay rules and a second check agree.</span>
+    </div>
+  );
+}
+
+// Which trust lines a card shows. Off, both, as before. Plain: one "Checked twice" line when both
+// passed with no override; else only the one that did not pass (both when neither did), so a card
+// never shows two lines that say the same thing.
+function trustLines(
+  plain: boolean,
+  verification: ProposalVerification | undefined,
+  audit: ProposalAudit | undefined,
+): { twice: boolean; verify: boolean; audit: boolean } {
+  const both = { twice: false, verify: verification !== undefined, audit: audit !== undefined };
+  if (!plain || verification === undefined || audit === undefined) return both;
+  const verifyOk = verification.state === "verified" && verification.override === undefined;
+  const auditOk = audit.state === "pass" && audit.override === undefined;
+  if (verifyOk && auditOk) return { twice: true, verify: false, audit: false };
+  if (verifyOk) return { twice: false, verify: false, audit: true };
+  if (auditOk) return { twice: false, verify: true, audit: false };
+  return both;
+}
+
 // A demo visitor's buttons: the same ones in the same place, but each opens the staff-only line
 // instead of a confirm, and none calls the server (which would refuse a judge anyway).
 function StaffOnlyActions({ lead, actions }: { lead?: string; actions: { label: string; outline?: boolean }[] }) {
@@ -317,6 +347,8 @@ export function ProposalCard({
   className,
 }: ProposalCardProps) {
   const judge = useViewerRole() === "judge";
+  const plain = usePlainMode();
+  const trust = trustLines(plain, verification, audit);
   const [confirming, setConfirming] = useState(initialConfirming && !judge);
   const [rejecting, setRejecting] = useState(false);
   const [reason, setReason] = useState("");
@@ -401,6 +433,49 @@ export function ProposalCard({
         </div>
       </div>
   );
+  const reasonList = (list: typeof reasons, className: string) => (
+    <ul className={className}>
+      {list.map((r, i) => {
+        const href = r.source ? hrefOrNull(hrefFor, r.source) : null;
+        return (
+          <li key={i} className="flex flex-wrap items-baseline justify-between gap-x-4 gap-y-0.5 text-body">
+            <span className="text-foreground">{r.text}</span>
+            {r.source && href ? (
+              <Link href={href} className="ml-auto text-small text-link underline-offset-4 hover:underline">
+                {r.label ?? sourceName(r.source)}
+              </Link>
+            ) : r.source ? (
+              // A record the link rules do not know shows as its name, without a link.
+              <span className="ml-auto text-small text-foreground-2">{r.label ?? sourceName(r.source)}</span>
+            ) : null}
+          </li>
+        );
+      })}
+    </ul>
+  );
+  const alsoRead =
+    sources.length > 0 ? (
+      <p className="mt-3 flex flex-wrap gap-x-3 gap-y-1 text-small text-muted-foreground">
+        <span>Also read:</span>
+        {sources.map((s) => {
+          const href = hrefOrNull(hrefFor, s);
+          return href ? (
+            <Link key={`${s.table}:${s.id}`} href={href} className="text-link underline-offset-4 hover:underline">
+              {s.label ?? sourceName(s)}
+            </Link>
+          ) : (
+            <span key={`${s.table}:${s.id}`}>{s.label ?? sourceName(s)}</span>
+          );
+        })}
+      </p>
+    ) : null;
+  const why = (
+    <>
+      <p className="text-small font-semibold text-foreground-2">Why</p>
+      {reasonList(reasons, "mt-1.5 grid gap-1.5")}
+      {alsoRead}
+    </>
+  );
   const parkedNow = parked !== undefined && (status === "approved" || status === "executing");
 
   return (
@@ -434,45 +509,33 @@ export function ProposalCard({
       </div>
 
       <div className="px-4 pt-3 pb-4 sm:px-5">
-        <p className="text-small font-semibold text-foreground-2">Why</p>
-        <ul className="mt-1.5 grid gap-1.5">
-          {reasons.map((r, i) => {
-            const href = r.source ? hrefOrNull(hrefFor, r.source) : null;
-            return (
-              <li key={i} className="flex flex-wrap items-baseline justify-between gap-x-4 gap-y-0.5 text-body">
-                <span className="text-foreground">{r.text}</span>
-                {r.source && href ? (
-                  <Link href={href} className="ml-auto text-small text-link underline-offset-4 hover:underline">
-                    {r.label ?? sourceName(r.source)}
-                  </Link>
-                ) : r.source ? (
-                  // A record the link rules do not know shows as its name, without a link.
-                  <span className="ml-auto text-small text-foreground-2">{r.label ?? sourceName(r.source)}</span>
-                ) : null}
-              </li>
-            );
-          })}
-        </ul>
-        {sources.length > 0 ? (
-          <p className="mt-3 flex flex-wrap gap-x-3 gap-y-1 text-small text-muted-foreground">
-            <span>Also read:</span>
-            {sources.map((s) => {
-              const href = hrefOrNull(hrefFor, s);
-              return href ? (
-                <Link key={`${s.table}:${s.id}`} href={href} className="text-link underline-offset-4 hover:underline">
-                  {s.label ?? sourceName(s)}
-                </Link>
-              ) : (
-                <span key={`${s.table}:${s.id}`}>{s.label ?? sourceName(s)}</span>
-              );
-            })}
-          </p>
-        ) : null}
+        {plain ? (
+          // The plain card (flags.plainTrace): the first reason as its one sentence, the rest behind
+          // Details.
+          <>
+            {reasons.length > 0 ? reasonList(reasons.slice(0, 1), "grid") : null}
+            {reasons.length > 1 || sources.length > 0 ? (
+              <details className="mt-2">
+                <summary className="w-fit cursor-pointer rounded-sm text-small text-link underline-offset-4 hover:underline">
+                  Details
+                </summary>
+                <div className="mt-2 grid gap-3">
+                  {reasons.length > 1 ? reasonList(reasons.slice(1), "grid gap-1.5") : null}
+                  {alsoRead}
+                </div>
+              </details>
+            ) : null}
+          </>
+        ) : (
+          why
+        )}
       </div>
 
-      {verification ? <VerifyLine verification={verification} /> : null}
+      {trust.twice ? <CheckedTwice /> : null}
 
-      {audit ? <AuditLine audit={audit} words={auditWords} /> : null}
+      {verification && trust.verify ? <VerifyLine verification={verification} /> : null}
+
+      {audit && trust.audit ? <AuditLine audit={audit} words={auditWords} /> : null}
 
       {flagNote ? (
         <p role="note" className="mx-4 mb-3 rounded-md border border-warning bg-warning-soft px-3 py-2 text-small text-foreground sm:mx-5">

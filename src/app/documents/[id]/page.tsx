@@ -30,7 +30,7 @@ import { formatInstant } from "@/lib/format/dates";
 import { isUuid } from "@/lib/uuid";
 import { NoCarrier, problemOf, readCarrier, SignOut } from "../carrier";
 
-// One document: the file on the left (on a phone, first), and on the right what Muse Spark read
+// One document: the file on the left (on a phone, first), and on the right what was read
 // next to what the records say. Every value from the document is a claim; nothing here writes.
 export const dynamic = "force-dynamic";
 
@@ -327,7 +327,7 @@ export default async function DocumentPage({ params }: { params: Promise<{ id: s
       <div className="mx-auto grid w-full max-w-[1080px] gap-6">
         <PageHeader
           title={view ? kindLabel(view.kind) : "Document"}
-          description="What the document model read, next to what your records say. Values from the document are claims."
+          description="What I read on the document, next to what your records say. Values from the document are claims."
           actions={back}
         />
         {body}

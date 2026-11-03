@@ -147,6 +147,15 @@ const RELEASED_ON = [
   // Released by the owner (D-071, D-097, 2026-11-03): the live feed of every money step. It reads
   // only and moves no money.
   "activityFeed.enabled",
+  // Released by the owner (D-103, 2026-11-03): the simple Home and the five-word menu. Presentation
+  // only; it changes no number and moves no money.
+  "simpleShape.enabled",
+  // Released by the owner (D-098, D-103, 2026-11-03): the driver's phone on the sample board. One
+  // model read per tap, and it moves a load on the sample board only, never money.
+  "driverPaperwork.enabled",
+  // Released by the owner (D-103, 2026-11-03): the plain trace and the plain fix card. Presentation
+  // only; it changes no number and moves no money.
+  "plainTrace.enabled",
 ] as const;
 
 // What stays off, each waiting on a missing piece or an outside send the owner has not released.
@@ -165,10 +174,6 @@ const KEPT_OFF = [
   // Read only, but it changes where sign-in lands and adds a panel on Home: the owner turns it on in
   // its own PR.
   "signInTour.enabled",
-  // One model read per tap and a load moved on the sample board: the owner turns it on in its own PR.
-  "driverPaperwork.enabled",
-  // Presentation only, but it changes what Home shows: the owner turns it on in its own PR.
-  "simpleShape.enabled",
   // Each visit's own copy of the demo carrier: the owner turns it on in its own PR.
   "visitCopies.enabled",
 ] as const;
@@ -426,16 +431,16 @@ describe("flags", () => {
     expect(LOCAL_OFF_ONLY as readonly string[]).toContain("signInTour.enabled");
   });
 
-  it("ships the driver's phone off, with a start date and a daily cap, off for the local demo run", () => {
-    expect(flags.driverPaperwork).toEqual({ enabled: false, startDate: "2026-11-03", perDay: 30 });
+  it("ships the driver's phone on, with a start date and a daily cap, off for the local demo run", () => {
+    expect(flags.driverPaperwork).toEqual({ enabled: true, startDate: "2026-11-03", perDay: 30 });
     expect(isLocalDate(flags.driverPaperwork.startDate)).toBe(true);
     expect(Number.isSafeInteger(flags.driverPaperwork.perDay) && flags.driverPaperwork.perDay > 0).toBe(true);
     // Listed ahead of its release, so the demo-path run keeps it off once it ships on.
     expect(LOCAL_OFF_ONLY as readonly string[]).toContain("driverPaperwork.enabled");
   });
 
-  it("ships the simple shape off, off for the local demo run", () => {
-    expect(flags.simpleShape).toEqual({ enabled: false });
+  it("ships the simple shape on, off for the local demo run", () => {
+    expect(flags.simpleShape).toEqual({ enabled: true });
     // Listed ahead of its release, so the demo-path run keeps it off once it ships on.
     expect(LOCAL_OFF_ONLY as readonly string[]).toContain("simpleShape.enabled");
   });
@@ -454,6 +459,12 @@ describe("flags", () => {
     // A copy's desk day cap is never above the desk's own.
     expect(flags.visitCopies.deskDayCents).toBeLessThanOrEqual(flags.deskLoop.limits.dayCents);
     expect(LOCAL_OFF_ONLY as readonly string[]).toContain("visitCopies.enabled");
+  });
+
+  it("ships the plain trace on, off for the local demo run", () => {
+    expect(flags.plainTrace).toEqual({ enabled: true });
+    // Listed ahead of its release, so the demo-path run keeps it off once it ships on.
+    expect(LOCAL_OFF_ONLY as readonly string[]).toContain("plainTrace.enabled");
   });
 
   it("releases deficit recovery, with a start date, off for the local demo run", () => {
@@ -597,6 +608,7 @@ describe("flags", () => {
       "driverPaperwork.enabled",
       "simpleShape.enabled",
       "visitCopies.enabled",
+      "plainTrace.enabled",
     ];
     const offOnly = LOCAL_OFF_ONLY as readonly string[];
     expect(KEPT_OFF.filter((k) => offOnly.includes(k))).toEqual(KEPT_OFF.filter((k) => armedAhead.includes(k)));
@@ -779,7 +791,7 @@ describe("flags", () => {
       maxBytes: 700_000,
       maxPdfPages: 3,
       readMaxCostCents: 8,
-      perTenantPerDay: 20,
+      perTenantPerDay: 60,
     });
     for (const v of Object.values(flags.documentLimits)) {
       expect(Number.isSafeInteger(v) && v > 0).toBe(true);
@@ -947,7 +959,7 @@ describe("flags", () => {
       planCents: 30,
       reconcileCents: 40,
       childTimeoutMs: 19_000,
-      tenantDayCents: 1_000,
+      tenantDayCents: 1_500,
       runsPerTenantDay: 3,
       runCapCents: 500,
     });

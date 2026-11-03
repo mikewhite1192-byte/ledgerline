@@ -45,6 +45,9 @@ describe("DemoBanner", () => {
 
   it("tells a visit's own copy it is its own, in plain words with no amounts, and hides Demo settings", () => {
     const saved = flags.visitCopies.enabled;
+    const savedSimple = flags.simpleShape;
+    // The full shell's banner; the simple shape's one notice has its own short line.
+    flags.simpleShape = { enabled: false };
     const nav = [
       ...NAV,
       { group: "Settings", href: "/settings/demo", label: "Demo", icon: null, current: false },
@@ -85,6 +88,7 @@ describe("DemoBanner", () => {
       );
       expect(screen.queryByRole("region", { name: "Demo visit" })).toBeNull();
     } finally {
+      flags.simpleShape = savedSimple;
       flags.visitCopies.enabled = saved;
     }
   });

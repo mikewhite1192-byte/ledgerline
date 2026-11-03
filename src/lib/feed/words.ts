@@ -7,16 +7,18 @@ import type { FeedActor, FeedRow } from "./read";
 
 // The live feed's words: one plain sentence per row, from its code words, cents, counts and the
 // proposal's title only. Who did it reads as a role word; a login id or an email never reaches a
-// line, and neither does a note, an outside id or error text (the row does not carry them).
+// line, and neither does a note, an outside id or error text (the row does not carry them). The
+// coworker's own parts (the desk, the agent and the pay rules) all read as LedgerLine, and a desk
+// line has no actor word at all: it is the coworker talking.
 
 export const ACTOR_LABELS: Readonly<Record<FeedActor, string>> = {
   admin: "Admin",
   staff: "Staff",
   judge: "Demo visitor",
-  autopilot: "Autopilot",
-  agent: "Agent",
-  engine: "Rules engine",
-  desk: "Desk",
+  autopilot: "Autopilot (your rules)",
+  agent: "LedgerLine",
+  engine: "LedgerLine",
+  desk: "LedgerLine",
   someone: "Someone",
 };
 
@@ -40,7 +42,7 @@ const DESK_SOURCE_WORDS: Readonly<Record<string, string>> = {
   voice_note: "voice note",
   customer_payment: "customer payment",
   audit: "audit",
-  sweep: "pay sweep",
+  sweep: "pay check",
   collections: "collections check",
   cash_check: "cash check",
   autopilot: "autopilot step",
@@ -166,7 +168,7 @@ function proposalWords(r: FeedRow, actor: string): { words: string; tag: string 
       if (r.code === "rejected") return { words: `${actor} rejected ${title}`, tag: null };
       const cents = moving ? r.cents : null;
       if (r.actor === "autopilot" && r.limitCents !== null) {
-        return { words: `${withAmount(`Autopilot approved ${title}`, cents)}, within its limit of ${formatCents(r.limitCents)}`, tag: null };
+        return { words: `${withAmount(`${ACTOR_LABELS.autopilot} approved ${title}`, cents)}, within its limit of ${formatCents(r.limitCents)}`, tag: null };
       }
       return { words: withAmount(`${actor} approved ${title}`, cents), tag: null };
     }
@@ -181,7 +183,7 @@ function moneyWords(r: FeedRow): string | null {
   const what = sum === null ? thing : `${thing}, ${sum}`;
   const accounting = r.channel === "accounting";
   if (r.event === "money_sent") {
-    if (r.code === "unknown") return `Not confirmed yet: ${what}; the desk will read it back`;
+    if (r.code === "unknown") return `Not confirmed yet: ${what}; it will be checked again`;
     if (accounting) return withAmount(`${thing} posted to the QuickBooks sandbox`, r.cents);
     return withAmount(`${thing} sent`, r.cents);
   }
@@ -198,17 +200,17 @@ function deskWords(r: FeedRow): string | null {
   const cat = r.code === null ? "" : `: ${words(r.code)}`;
   switch (r.event) {
     case "desk_claimed":
-      return `Desk picked up ${thing}`;
+      return `Picked up ${thing}`;
     case "desk_done":
-      return `Desk finished ${thing}${cat}`;
+      return `Finished ${thing}${cat}`;
     case "desk_failed":
-      return `Desk could not finish ${thing}${cat}`;
+      return `Could not finish ${thing}${cat}`;
     case "desk_skipped":
       return r.kind === "autopilot" && r.code !== null && HELD.has(r.code)
-        ? `Autopilot held ${thing}${cat}`
-        : `Desk skipped ${thing}${cat}`;
+        ? `${ACTOR_LABELS.autopilot} held ${thing}${cat}`
+        : `Skipped ${thing}${cat}`;
     case "desk_sleep":
-      return r.count === null || r.count === 0 ? null : `Desk checked in: ${plural(r.count, "thing", "things")} done`;
+      return r.count === null || r.count === 0 ? null : `Checked the books: ${plural(r.count, "thing", "things")} done`;
     default:
       return null;
   }

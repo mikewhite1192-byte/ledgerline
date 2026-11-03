@@ -30,7 +30,7 @@ import { readShell, type ShellTenant } from "@/lib/tenant/shell";
 
 export const dynamic = "force-dynamic";
 
-const TITLE = "Card check";
+const TITLE = "Card charges";
 const DESCRIPTION = "Compares your payment records with the card provider, the bank and QuickBooks.";
 
 function openLink(b: BreakView, children: ReactNode) {
@@ -115,7 +115,7 @@ export default async function CardsPage() {
     return (
       <SignedInPage tenant={read.shell} current="/cards" title={TITLE}>
         {header}
-        <FeatureOff name={TITLE} />
+        <FeatureOff name={TITLE} plural />
       </SignedInPage>
     );
   }

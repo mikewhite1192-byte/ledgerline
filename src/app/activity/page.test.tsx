@@ -142,12 +142,12 @@ describe("/activity", () => {
     const items = within(screen.getByRole("list", { name: "Live feed lines" })).getAllByRole("listitem");
     expect(items.map((li) => li.querySelector("span")?.textContent)).toEqual([
       "Paid and confirmed: Fuel card load, $125.00",
-      "Autopilot approved Advance for Driver 7, $125.00, within its limit of $500.00",
-      "Agent proposed Advance for Driver 7, $125.00 out",
+      "Autopilot (your rules) approved Advance for Driver 7, $125.00, within its limit of $500.00",
+      "LedgerLine proposed Advance for Driver 7, $125.00 out",
     ]);
     expect(items[0].querySelector("time")?.textContent).toBe("Nov 10, 2026, 8:59 AM CST");
     expect(within(items[0]).getByRole("link", { name: "Open the record" }).getAttribute("href")).toBe(`/records/advances/${ID}`);
-    expect(screen.getByText(/The desk last checked in Nov 10, 2026, 8:55 AM CST\. The autopilot is paused\./)).toBeTruthy();
+    expect(screen.getByText(/Last checked the books at Nov 10, 2026, 8:55 AM CST\. The autopilot is paused\./)).toBeTruthy();
     expect(screen.getByRole("button", { name: "Pause" })).toBeTruthy();
     expect(screen.queryByRole("link", { name: "Older" })).toBeNull();
     const feed = screen.getByRole("list", { name: "Live feed lines" }).textContent ?? "";

@@ -130,11 +130,11 @@ export function writeDismissed(key: string | undefined, ids: ReadonlySet<string>
 }
 
 // "About load BR-1042: " when the question names a load (the code wrote the words, so the load
-// number is the record's own), else "About an advance: ".
+// number is the record's own), else "About an advance: ", and "This morning: " for the digest.
 const LOAD = /\b[Ll]oad ([A-Z0-9][A-Za-z0-9-]{0,38}[A-Za-z0-9])\b/;
 
 export function askDraft(ask: Pick<LiveAsk, "text" | "proposalKind">): string {
   const load = LOAD.exec(ask.text)?.[1];
   if (load) return `About load ${load}: `;
-  return ask.proposalKind === null ? "About the morning digest: " : `About ${kindInWords(ask.proposalKind)}: `;
+  return ask.proposalKind === null ? "This morning: " : `About ${kindInWords(ask.proposalKind)}: `;
 }

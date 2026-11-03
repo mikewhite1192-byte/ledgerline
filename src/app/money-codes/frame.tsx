@@ -58,7 +58,7 @@ export async function CodesOffPage({ title }: { title: string }) {
   return (
     <CodesFrame shell={shell} title={title}>
       <PageHeader title={title} />
-      <FeatureOff name="Money codes" plural />
+      <FeatureOff name="Driver codes" plural />
     </CodesFrame>
   );
 }

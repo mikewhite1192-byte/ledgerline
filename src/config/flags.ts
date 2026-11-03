@@ -1007,6 +1007,11 @@ export type Flags = {
   // the purge script). deskDayCents caps the desk loop's model spend in one copy each day, under
   // deskLoop.limits.dayCents. Off, a visit shares the demo carrier as before.
   visitCopies: { enabled: boolean; sliceMs: number; graceMinutes: number; purgePerCall: number; deskDayCents: number };
+  // The plain trace (src/components/trace/plain-mode.tsx): under an answer or a card, "How I
+  // checked" lists the steps and the records they read, with one line for the second check, and no
+  // model names, cents or seconds; a card shows one trust line and folds its reasons under Details.
+  // Presentation only; /models keeps every figure. Off, the trace and the card render as before.
+  plainTrace: { enabled: boolean };
 };
 
 // One kind's ceiling over the owner's autopilot limits: one item, and the carrier's local day.
@@ -1059,7 +1064,7 @@ export const flags: Flags = {
   approverRole: { adminAboveCents: 200_000 },
   documentsEnabled: true,
   documentCrop: true,
-  documentLimits: { maxBytes: 700_000, maxPdfPages: 3, readMaxCostCents: 8, perTenantPerDay: 20 },
+  documentLimits: { maxBytes: 700_000, maxPdfPages: 3, readMaxCostCents: 8, perTenantPerDay: 60 },
   documentMarkupEnabled: true,
   markupLimits: { editMaxCostCents: 2, checkMaxCostCents: 4, perTenantPerDay: 10, maxBytes: 700_000 },
   advancesEnabled: true,
@@ -1126,7 +1131,8 @@ export const flags: Flags = {
     planCents: 30,
     reconcileCents: 40,
     childTimeoutMs: 19_000,
-    tenantDayCents: 1_000,
+    // Raised by the owner (D-102, 2026-11-03): three full runs (runCapCents each) fit in a day.
+    tenantDayCents: 1_500,
     runsPerTenantDay: 3,
     runCapCents: 500,
   },
@@ -1316,10 +1322,12 @@ export const flags: Flags = {
   activityFeed: { enabled: true, pollSeconds: 15, pageSize: 50 },
   // Off until the owner turns it on in its own PR. Read only.
   signInTour: { enabled: false },
-  // Off until the owner turns it on in its own PR (D-098). One model read per tap; moves no money.
-  driverPaperwork: { enabled: false, startDate: "2026-11-03", perDay: 30 },
-  // Off until the owner turns it on in its own PR. Presentation only.
-  simpleShape: { enabled: false },
+  // Released by the owner (D-098, D-103, 2026-11-03). One model read per tap; moves no money.
+  driverPaperwork: { enabled: true, startDate: "2026-11-03", perDay: 30 },
+  // Released by the owner (D-103, 2026-11-03). Presentation only.
+  simpleShape: { enabled: true },
+  // Released by the owner (D-103, 2026-11-03). Presentation only.
+  plainTrace: { enabled: true },
   // Off until the owner turns it on in its own PR.
   visitCopies: { enabled: false, sliceMs: 12_000, graceMinutes: 60, purgePerCall: 2, deskDayCents: 100 },
 };

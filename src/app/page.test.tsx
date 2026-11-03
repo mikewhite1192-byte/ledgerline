@@ -149,6 +149,8 @@ beforeEach(() => {
   flags.verification = { ...savedVerification, enabled: false };
   // The live feed card has its own test below, which turns it on.
   flags.activityFeed.enabled = false;
+  // Written for the full Home; the simple Home's describe below turns its switch on.
+  flags.simpleShape.enabled = false;
   mocks.withRequestTenant.mockImplementation((fn: (q: Queryable, s: Session) => unknown) => fn(q, SESSION));
   mocks.readNextWeekStart.mockImplementation(async (_q: Queryable, now: Date) =>
     nextWeekStart(now, "America/New_York", 1),
@@ -169,6 +171,7 @@ afterEach(() => {
   for (const k of [...SWITCHES, ...OFF]) flags[k] = saved[k];
   flags.verification = savedVerification;
   flags.activityFeed.enabled = savedFeed;
+  flags.simpleShape.enabled = savedSimple;
   flags.signInTour.enabled = savedTour;
   vi.clearAllMocks();
 });
@@ -421,7 +424,7 @@ describe("home's order and cards", () => {
     render(await Home({ searchParams: Promise.resolve({}) }));
     expect(mocks.readFeed).toHaveBeenCalledWith(expect.anything(), { limit: 3 });
     const feed = region("Live feed");
-    expect(within(feed).getByText("Desk picked up a card transaction")).toBeTruthy();
+    expect(within(feed).getByText("Picked up a card transaction")).toBeTruthy();
     expect(within(feed).getByText("Nov 10, 2026, 9:00 AM EST")).toBeTruthy();
     expect(within(feed).getByRole("link", { name: "Open the live feed" }).getAttribute("href")).toBe("/activity");
     cleanup();

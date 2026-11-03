@@ -103,17 +103,17 @@ export default async function ClipsPage() {
     <AppShell
       tenant={{ name: carrier.name, email: carrier.email, timezone: carrier.timezone, role: carrier.role }}
       nav={appNav("/clips")}
-      title="Dock clips"
+      title="Dock videos"
       signOut={signOut}
     >
       <div className="mx-auto grid w-full max-w-[1080px] gap-6">
         <PageHeader
-          title="Dock clips"
+          title="Dock videos"
           description="A short clip of a pickup or delivery. Faces and plates are blurred in your browser before the clip is saved, and the camera clock is checked against the stored stop times."
         />
         {!flags.clipsEnabled ? (
           <Card>
-            <FeatureOff name="Dock clips" plural />
+            <FeatureOff name="Dock videos" plural />
           </Card>
         ) : clips ? (
           <ClipsPanel clips={clips} loads={carrier.loads} />
