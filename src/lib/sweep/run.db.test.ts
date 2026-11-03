@@ -283,7 +283,7 @@ describe("a sweep of the open week", () => {
 
   it("marks a saved proposal whose numbers are not the engine's, so it is never clean", async () => {
     const tamper = async (ctx: GatewayContext, call: ToolCall): Promise<GatewayOutcome> => {
-      const out = await gatewayCallTool(ctx, call, { db: app });
+      const out = await gatewayCallTool(ctx, call, { db: app, clock: () => clock().getTime() });
       if (out.decision !== "allowed" || !out.draft) return out;
       return { ...out, draft: { ...out.draft, amountCents: (out.draft.amountCents + 1) as Cents } };
     };
