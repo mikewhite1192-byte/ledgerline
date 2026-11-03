@@ -278,6 +278,14 @@ describe("runChildCheck", () => {
     expect(out.costNanocents).toBe(10 * NANOCENTS_PER_CENT);
   });
 
+  it("caps one check call with room for about 55 KB of request beside its 3,000 output tokens, inside the driver's cents", () => {
+    // The wrapper's reserve for a Muse Spark call (src/lib/ai/prices.ts estimateReserve); 3,000 is
+    // check.ts's MAX_OUTPUT_TOKENS.
+    const price = priceFor("spark", "meta", "muse-spark-1.3") as TokenPrice;
+    expect(estimateReserve(price, 55_000, 3_000)).toBeLessThanOrEqual(LIMITS.callCents * NANOCENTS_PER_CENT);
+    expect(LIMITS.callCents).toBeLessThanOrEqual(LIMITS.driverCents);
+  });
+
   it("stops at the check's own clock and never asks for longer than is left", async () => {
     const h = harness([() => result({ toolCalls: [toolCall("get_loads")] })], { stepMs: 8_000 });
     const out = await runChildCheck(input(), h.deps);

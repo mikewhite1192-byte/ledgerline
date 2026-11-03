@@ -372,8 +372,10 @@ export async function wakeDesk(
         counts.skipped += 1;
         continue;
       }
-      // Only the wake's first piece of work may need more than what is left of the slice.
-      if (started > 0 && deadlineMs - now < handler.needsMs) {
+      // Only the wake's first piece of work may need more than what is left of the slice, and not
+      // one whose handler holds its first piece to needsMs too. Stopping here writes no line for the
+      // piece, so it spends no carry (carries count carried lines) and no try.
+      if ((started > 0 || handler.firstNeedsMs === true) && deadlineMs - now < handler.needsMs) {
         reason = "deadline";
         break;
       }

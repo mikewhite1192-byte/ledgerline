@@ -1100,7 +1100,7 @@ export const flags: Flags = {
     parallel: 6,
     maxCallsPerDriver: 3,
     maxToolSteps: 4,
-    callCents: 3,
+    callCents: 5,
     driverCents: 9,
     planCents: 30,
     reconcileCents: 40,

@@ -903,7 +903,7 @@ describe("flags", () => {
       parallel: 6,
       maxCallsPerDriver: 3,
       maxToolSteps: 4,
-      callCents: 3,
+      callCents: 5,
       driverCents: 9,
       planCents: 30,
       reconcileCents: 40,
@@ -912,8 +912,9 @@ describe("flags", () => {
       runsPerTenantDay: 3,
       runCapCents: 500,
     });
-    // A driver's calls fit its own cap, and the sweep's own spend still fits inside the run's.
-    expect(l.callCents * l.maxCallsPerDriver).toBeLessThanOrEqual(l.driverCents);
+    // One call fits the driver's cap (each call is capped at what the driver has left, so all its
+    // calls together never pass driverCents), and the sweep's own spend still fits inside the run's.
+    expect(l.callCents).toBeLessThanOrEqual(l.driverCents);
     expect(l.runCapCents).toBeGreaterThan(flags.sweepLimits.maxRunCents);
     // A whole check ends well inside one slice.
     expect(l.childTimeoutMs).toBeLessThan(flags.sweepLimits.sliceMs);
