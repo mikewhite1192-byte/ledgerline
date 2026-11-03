@@ -156,6 +156,9 @@ const RELEASED_ON = [
   // Released by the owner (D-103, 2026-11-03): the plain trace and the plain fix card. Presentation
   // only; it changes no number and moves no money.
   "plainTrace.enabled",
+  // Released by the owner (D-100, D-103, 2026-11-03): each demo visit builds its own copy of the
+  // demo carrier. Visits are capped at 12 an hour and 60 a day (D3), since each one builds a copy.
+  "visitCopies.enabled",
 ] as const;
 
 // What stays off, each waiting on a missing piece or an outside send the owner has not released.
@@ -174,8 +177,6 @@ const KEPT_OFF = [
   // Read only, but it changes where sign-in lands and adds a panel on Home: the owner turns it on in
   // its own PR.
   "signInTour.enabled",
-  // Each visit's own copy of the demo carrier: the owner turns it on in its own PR.
-  "visitCopies.enabled",
   // Sandbox posts with no button (D-104): the owner turns it on in its own PR.
   "books.enabled",
 ] as const;
@@ -268,8 +269,8 @@ describe("flags", () => {
       turnsPerSession: 25,
       dayCapCents: 800,
       sessionsPerIpPerHour: 5,
-      sessionsPerHour: 40,
-      sessionsPerDay: 150,
+      sessionsPerHour: 12,
+      sessionsPerDay: 60,
       cookieHours: 2,
     });
     // Five judging days at the day cap fit the $40.00 reserve with nothing else drawing on it.
@@ -447,9 +448,9 @@ describe("flags", () => {
     expect(LOCAL_OFF_ONLY as readonly string[]).toContain("simpleShape.enabled");
   });
 
-  it("ships visit copies off, with whole-number limits, off for the local demo run", () => {
+  it("ships visit copies on, with whole-number limits, off for the local demo run", () => {
     expect(flags.visitCopies).toEqual({
-      enabled: false,
+      enabled: true,
       sliceMs: 12_000,
       graceMinutes: 60,
       purgePerCall: 2,

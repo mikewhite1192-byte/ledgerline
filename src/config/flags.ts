@@ -1220,8 +1220,8 @@ export const flags: Flags = {
     turnsPerSession: 25,
     dayCapCents: 800,
     sessionsPerIpPerHour: 5,
-    sessionsPerHour: 40,
-    sessionsPerDay: 150,
+    sessionsPerHour: 12,
+    sessionsPerDay: 60,
     cookieHours: 2,
   },
   moneyCodes: { enabled: true, armed: true, capCents: 50_000, perDriverPerDay: 2, startDate: "2026-10-28" },
@@ -1354,8 +1354,8 @@ export const flags: Flags = {
   simpleShape: { enabled: true },
   // Released by the owner (D-103, 2026-11-03). Presentation only.
   plainTrace: { enabled: true },
-  // Off until the owner turns it on in its own PR.
-  visitCopies: { enabled: false, sliceMs: 12_000, graceMinutes: 60, purgePerCall: 2, deskDayCents: 100 },
+  // Released by the owner (D-100, D-103, 2026-11-03). Each visit builds its own copy.
+  visitCopies: { enabled: true, sliceMs: 12_000, graceMinutes: 60, purgePerCall: 2, deskDayCents: 100 },
   // Off until the owner turns it on in its own PR (D-104). Sandbox posts only, each through the
   // ledger; the kinds stay off until their own PRs.
   books: {
