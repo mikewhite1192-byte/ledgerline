@@ -47,11 +47,13 @@ export function pickPeriod(
   return stubbed ?? periods.find((p) => p.status === "open") ?? periods[0] ?? null;
 }
 
-// The pay weeks that have at least one paystub, by id in lower case.
-async function readPeriodsWithStubs(q: Queryable): Promise<Set<string>> {
+// Which of the listed pay weeks have at least one paystub, by id in lower case. Only the listed ids
+// are read, so the work stays bounded by the list, not the carrier's whole history.
+async function readPeriodsWithStubs(q: Queryable, ids: readonly string[]): Promise<Set<string>> {
   const rows = await q.query<{ period_id: string }>(
     `SELECT DISTINCT CAST(period_id AS text) AS period_id FROM settlements
-      WHERE tenant_id = current_tenant_id()`,
+      WHERE tenant_id = current_tenant_id() AND period_id = ANY(CAST($1 AS uuid[]))`,
+    [`{${ids.join(",")}}`],
   );
   return new Set(rows.map((r) => String(r.period_id).toLowerCase()));
 }
@@ -67,7 +69,7 @@ export async function readSettlementsView(
   const want = asked && isUuid(asked) ? asked.toLowerCase() : null;
   const listed = want !== null && periods.some((p) => p.id.toLowerCase() === want);
   const withStubs =
-    opts.newestWithStubs === true && !listed && periods.length > 0 ? await readPeriodsWithStubs(q) : null;
+    opts.newestWithStubs === true && !listed && periods.length > 0 ? await readPeriodsWithStubs(q, periods.map((p) => p.id)) : null;
   const period = pickPeriod(periods, want, withStubs);
   const exempt = await q.query<{ id: string; code: string; first_name: string; last_name: string }>(
     `SELECT id, code, first_name, last_name FROM drivers

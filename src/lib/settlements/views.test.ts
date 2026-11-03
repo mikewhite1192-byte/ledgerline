@@ -39,6 +39,7 @@ describe("readSettlementsView", () => {
   // Answers each read by its SQL; the paystub rows and the clean set are empty.
   function fakeQ(withStubs: string[]) {
     const seen: string[] = [];
+    const stubIds: string[] = [];
     const q = {
       async query<T>(sql: string, params?: unknown[]): Promise<T[]> {
         if (/FROM settlement_periods/.test(sql) && !/JOIN/.test(sql)) {
@@ -47,6 +48,7 @@ describe("readSettlementsView", () => {
         }
         if (/SELECT DISTINCT CAST\(period_id AS text\)/.test(sql)) {
           seen.push("stubs");
+          stubIds.push(...String(params?.[0] ?? "").replace(/[{}]/g, "").split(",").filter(Boolean));
           return withStubs.map((period_id) => ({ period_id })) as T[];
         }
         if (/own_insurance/.test(sql)) return [];
@@ -60,14 +62,15 @@ describe("readSettlementsView", () => {
         throw new Error("the view writes nothing");
       },
     } as Queryable;
-    return { q, seen };
+    return { q, seen, stubIds };
   }
 
   it("on the Settlements page with no week asked, reads which weeks have paystubs and opens the newest of them", async () => {
-    const { q, seen } = fakeQ([PAID_WEEK, THIS_WEEK]);
+    const { q, seen, stubIds } = fakeQ([PAID_WEEK, THIS_WEEK]);
     const view = await readSettlementsView(q, null, { newestWithStubs: true });
     expect(view.period?.id).toBe(THIS_WEEK);
     expect(seen).toContain("stubs");
+    expect([...stubIds].sort()).toEqual(PERIODS.map((p) => p.id).sort());
     expect(seen.filter((s) => s.startsWith("rows")).every((s) => s === `rows ${THIS_WEEK}`)).toBe(true);
   });
 
