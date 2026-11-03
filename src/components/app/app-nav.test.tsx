@@ -38,11 +38,13 @@ const saved = Object.fromEntries(SWITCHES.map((s) => [s, flags[s]])) as Record<S
 const savedCardRecon = flags.cardRecon.enabled;
 const savedFactoring = flags.factoring.enabled;
 const savedMoneyCodes = flags.moneyCodes.enabled;
+const savedActivityFeed = flags.activityFeed.enabled;
 afterEach(() => {
   for (const s of SWITCHES) flags[s] = saved[s];
   flags.cardRecon.enabled = savedCardRecon;
   flags.factoring.enabled = savedFactoring;
   flags.moneyCodes.enabled = savedMoneyCodes;
+  flags.activityFeed.enabled = savedActivityFeed;
   cleanup();
 });
 
@@ -51,6 +53,7 @@ function setAll(on: boolean) {
   flags.cardRecon.enabled = on;
   flags.factoring.enabled = on;
   flags.moneyCodes.enabled = on;
+  flags.activityFeed.enabled = on;
 }
 
 const shape = (current: NavKey) => appNav(current).map((i) => [i.group, i.href, i.label, i.current ?? false]);
@@ -60,6 +63,7 @@ describe("appNav", () => {
     setAll(true);
     expect(shape("/invoices")).toEqual([
       ["Today", "/", "Home", false],
+      ["Today", "/activity", "Live feed", false],
       ["Today", "/profit", "Profit brief", false],
       ["Today", "/quarter", "Quarter review", false],
       ["Pay", "/sweep", "Pay sweep", false],
@@ -192,6 +196,7 @@ describe("the menu registry", () => {
         "Dock clips",
         "Driver notes",
         "Drivers",
+        "Live feed",
         "Money codes",
         "Pay sweep",
         "Settlements",

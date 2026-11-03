@@ -974,6 +974,12 @@ export type Flags = {
   // is digested. maxCostCents and maxOutputTokens cap the one model call per carrier per day. The
   // desk's handler and the writer each ask enabled themselves.
   morningDigest: { enabled: boolean; startDate: string; maxCostCents: number; maxOutputTokens: number };
+  // The live feed (src/lib/feed): one line per step the agent, the desk, the autopilot and people
+  // take with money, newest first, on its own page (with its menu item) and a small Home card.
+  // Read only: nothing on it writes, and it shows category words, never ids, notes or error text.
+  // pollSeconds: how often an open page reads itself again while its tab is visible. pageSize: the
+  // lines on one page.
+  activityFeed: { enabled: boolean; pollSeconds: number; pageSize: number };
 };
 
 // One kind's ceiling over the owner's autopilot limits: one item, and the carrier's local day.
@@ -1279,6 +1285,8 @@ export const flags: Flags = {
   cancelledTrip: { enabled: true, startDate: "2026-11-02" },
   // On by the owner's call (D-071, 2026-11-01). One model call per carrier per day; sends nothing.
   morningDigest: { enabled: true, startDate: "2026-11-02", maxCostCents: 4, maxOutputTokens: 400 },
+  // Off until the owner turns it on in its own PR. Read only.
+  activityFeed: { enabled: false, pollSeconds: 15, pageSize: 50 },
 };
 
 applyLocalOverrides(flags);

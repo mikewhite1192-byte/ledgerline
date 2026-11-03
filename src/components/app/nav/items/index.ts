@@ -2,6 +2,7 @@
 // this folder plus one line here. Where an item shows comes from its own group and order, never
 // from its line in this list (app-nav.test.tsx checks both).
 export { accounting } from "./accounting";
+export { activity } from "./activity";
 export { advances } from "./advances";
 export { cards } from "./cards";
 export { cash } from "./cash";
