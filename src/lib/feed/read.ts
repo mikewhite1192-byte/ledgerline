@@ -36,7 +36,7 @@ export type FeedEvent = (typeof FEED_EVENTS)[number];
 // Who took the step: a person by their role in the carrier, the autopilot's login, the agent (a
 // proposal is the agent's or the desk's draft), the desk loop, or "someone" when the login has no
 // membership row here.
-export const FEED_ACTORS = ["admin", "staff", "judge", "autopilot", "agent", "desk", "someone"] as const;
+export const FEED_ACTORS = ["admin", "staff", "judge", "autopilot", "agent", "engine", "desk", "someone"] as const;
 export type FeedActor = (typeof FEED_ACTORS)[number];
 
 export type FeedRow = {
@@ -153,7 +153,7 @@ const ARMS = [
     at: "p.created_at",
     key: `'proposal:' || ${text("p.id")} || ':proposed'`,
     event: "'proposal_proposed'",
-    actor: "'agent'",
+    actor: "CASE WHEN p.origin = 'engine' THEN 'engine' ELSE 'agent' END",
     cents: text("p.amount_cents"),
     direction: "p.direction",
     title: "p.title",
@@ -297,7 +297,7 @@ const isActor = (v: unknown): v is FeedActor => typeof v === "string" && (FEED_A
 // One stored row as a feed row, taking only the fixed fields, each only in its own shape. A row
 // whose time, key, event or actor does not read fails the read (unknown is not empty).
 export function feedRowOf(r: Partial<Raw>): FeedRow {
-  if (typeof r.at !== "string" || !AT.test(r.at) || Number.isNaN(Date.parse(r.at))) throw new DbError("unknown");
+  if (typeof r.at !== "string" || !AT.test(r.at) || !isRealInstant(r.at)) throw new DbError("unknown");
   if (typeof r.key !== "string" || !KEY.test(r.key)) throw new DbError("unknown");
   if (!isEvent(r.event) || !isActor(r.actor)) throw new DbError("unknown");
   const table = codeOrNull(r.record_table);
@@ -330,7 +330,7 @@ export function parseCursor(raw: unknown): FeedCursor | null {
   if (typeof raw !== "string" || raw.length > 120) return null;
   const at = raw.slice(0, raw.indexOf("|"));
   const key = raw.slice(raw.indexOf("|") + 1);
-  if (!raw.includes("|") || !AT.test(at) || Number.isNaN(Date.parse(at)) || !KEY.test(key)) return null;
+  if (!raw.includes("|") || !AT.test(at) || !isRealInstant(at) || !KEY.test(key)) return null;
   return { at, key };
 }
 

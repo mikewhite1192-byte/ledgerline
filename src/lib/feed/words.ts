@@ -14,6 +14,7 @@ export const ACTOR_LABELS: Readonly<Record<FeedActor, string>> = {
   judge: "Demo visitor",
   autopilot: "Autopilot",
   agent: "Agent",
+  engine: "Rules engine",
   desk: "Desk",
   someone: "Someone",
 };
@@ -156,7 +157,7 @@ function proposalWords(r: FeedRow, actor: string): { words: string; tag: string 
           : r.code === "off"
             ? "Autopilot: off for this kind"
             : null;
-      return { words: `Agent proposed ${title}${sum}`, tag };
+      return { words: `${actor} proposed ${title}${sum}`, tag };
     }
     case "proposal_audited":
       return { words: `${r.code !== null && Object.hasOwn(AUDIT_WORDS, r.code) ? AUDIT_WORDS[r.code] : "Audited"}: ${title}`, tag: null };

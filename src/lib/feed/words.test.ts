@@ -71,6 +71,7 @@ describe("feedLine", () => {
       judge: "Demo visitor",
       autopilot: "Autopilot",
       agent: "Agent",
+      engine: "Rules engine",
       desk: "Desk",
       someone: "Someone",
     });
@@ -86,6 +87,7 @@ describe("feedLine", () => {
     expect(say({ ...p })).toBe("Agent proposed Advance for Driver 7, $125.00 out");
     expect(say({ ...p, direction: "in" })).toBe("Agent proposed Advance for Driver 7, $125.00 in");
     expect(say({ ...p, direction: "none", cents: 0 })).toBe("Agent proposed Advance for Driver 7");
+    expect(say({ ...p, actor: "engine" })).toBe("Rules engine proposed Advance for Driver 7, $125.00 out");
     expect(say({ ...p, direction: "none", cents: 500 })).toBe("Agent proposed Advance for Driver 7");
     expect(feedLine(row({ ...p, code: "ask", reason: "over_item_limit" }), ZONE)?.tag).toBe(
       "Autopilot: asks a person (over its limit each time)",
@@ -254,7 +256,7 @@ describe("parseCursor", () => {
   it("reads back the cursor the Older link writes and refuses anything else", () => {
     const c = { at: AT, key: `proposal:${ID}:decided` };
     expect(parseCursor(cursorParam(c))).toEqual(c);
-    for (const bad of [undefined, null, 7, ["a"], "", "nonsense", `${AT}`, `${AT}|`, `|${c.key}`, `2026-11-10T15:00:00Z|${c.key}`, `${AT}|DROP TABLE`]) {
+    for (const bad of [undefined, null, 7, ["a"], "", "nonsense", `${AT}`, `${AT}|`, `|${c.key}`, `2026-11-10T15:00:00Z|${c.key}`, `${AT}|DROP TABLE`, `2026-02-30T12:00:00.000000Z|${c.key}`]) {
       expect(parseCursor(bad), String(bad)).toBeNull();
     }
   });
