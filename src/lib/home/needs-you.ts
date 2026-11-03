@@ -179,6 +179,17 @@ export type BooksStuckRow = {
 // How many stuck records the read returns at most.
 export const BOOKS_LIMIT = 50;
 
+// The kinds booksHref links. The read keeps only these before its limit, so kinds Home cannot show
+// never use up the 50.
+export const BOOKS_LINKED_KINDS = [
+  "settlement_bill",
+  "settlement_bill_payment",
+  "advance_expense",
+  "invoice",
+  "customer_payment",
+  "money_code_expense",
+] as const satisfies readonly MoneyActionKind[];
+
 // Where a stuck record is shown, by its ledger kind. No page shows an escrow release or its post
 // yet, so one is not linked or counted here (its kind stays off, books.kinds.escrow).
 export function booksHref(r: Pick<BooksStuckRow, "kind" | "subjectId">): string | null {
@@ -241,6 +252,7 @@ async function readBooks(q: Queryable, maxAttempts: number): Promise<NeedsYouRow
               check_count, amount_cents, created_at
          FROM money_actions
         WHERE tenant_id = current_tenant_id() AND channel = 'accounting'
+          AND kind = ANY(CAST($4 AS text[]))
         ORDER BY kind, subject_id, attempt DESC, created_at DESC
      )
      SELECT kind, subject_id, state, attempt, failure_category, check_count, amount_cents
@@ -249,7 +261,7 @@ async function readBooks(q: Queryable, maxAttempts: number): Promise<NeedsYouRow
          OR (state = 'unknown' AND check_count >= $2)
       ORDER BY created_at, subject_id
       LIMIT $3`,
-    [maxAttempts, MAX_CHECKS, BOOKS_LIMIT],
+    [maxAttempts, MAX_CHECKS, BOOKS_LIMIT, `{${BOOKS_LINKED_KINDS.join(",")}}`],
   );
   return booksRow(
     rows.map((r) => ({

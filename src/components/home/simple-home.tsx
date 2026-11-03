@@ -194,9 +194,12 @@ function rowWords(r: NeedsYouRow): string {
   return `${n} ${r.count === 1 ? one : many}`;
 }
 
-// Where the cut rows live, from their links: Pay, Billing, or the chat.
-const PLACES = ["on Pay", "on Billing", "in your chat"] as const;
-function placeOf(href: string): (typeof PLACES)[number] {
+// Where the cut rows live, from their links: Pay, Billing, or the chat. A record QuickBooks did not
+// take links to its record page, so it is placed by its key, never by its link.
+const PLACES = ["on Pay", "on Billing", "in your chat", "for QuickBooks"] as const;
+function placeOf(r: NeedsYouRow): (typeof PLACES)[number] {
+  if (r.key === "books") return "for QuickBooks";
+  const href = r.href;
   if (href.startsWith("/settlements") || href.startsWith("/advances")) return "on Pay";
   if (href.startsWith("/invoices")) return "on Billing";
   return "in your chat";
@@ -208,7 +211,7 @@ function moreLine(cut: readonly NeedsYouRow[]): string {
   // A count that is only a floor reads "at least".
   const count = (rows: readonly NeedsYouRow[]) =>
     `${rows.some((r) => r.atLeast) ? "at least " : ""}${rows.reduce((s, r) => s + r.count, 0).toLocaleString("en-US")}`;
-  const places = PLACES.map((place) => ({ place, rows: cut.filter((r) => placeOf(r.href) === place) })).filter(
+  const places = PLACES.map((place) => ({ place, rows: cut.filter((r) => placeOf(r) === place) })).filter(
     (p) => p.rows.length > 0,
   );
   if (places.length === 1) return `and ${count(cut)} more ${places[0].place}`;

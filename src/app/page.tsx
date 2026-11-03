@@ -472,7 +472,8 @@ async function readNeedsRows(carrier: Carrier, now: Date): Promise<NeedsYouRow[]
         settlements: flags.settlementsEnabled,
         advances: flags.advancesEnabled,
         invoices: flags.invoicesEnabled,
-        ...(flags.accountingEnabled || flags.books.enabled ? { books: { maxAttempts: flags.books.maxAttempts } } : {}),
+        // Only while the books step is on, so a switched-off step leaves Home as it was.
+        ...(flags.books.enabled === true ? { books: { maxAttempts: flags.books.maxAttempts } } : {}),
         ...(flags.verification.enabled && flags.agentEnabled
           ? {
               escalations: {

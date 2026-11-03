@@ -444,6 +444,21 @@ describe("NeedsYouShort", () => {
     expect(screen.getByRole("link", { name: "and 4 more on Billing" })).toBeTruthy();
   });
 
+  it("places a cut record QuickBooks did not take by its key, never in the chat", () => {
+    const books: NeedsYouRow = {
+      ...ROW,
+      key: "books",
+      count: 2,
+      amounts: [{ cents: 50_000, label: "not in QuickBooks" }],
+      href: "/records/settlements/s-1",
+    };
+    render(<NeedsYouShort view={{ rows: [ROW, NEEDS[2], NEEDS[4], NEEDS[0], books], unread: false }} />);
+    expect(screen.getByRole("link", { name: "and 3 more: 1 in your chat, 2 for QuickBooks" })).toBeTruthy();
+    cleanup();
+    render(<NeedsYouShort view={{ rows: [ROW, NEEDS[2], NEEDS[4], books], unread: false }} />);
+    expect(screen.getByRole("link", { name: "and 2 more for QuickBooks" })).toBeTruthy();
+  });
+
   it("shows each amount a row carries, saying which is which when there are two", () => {
     const cards: NeedsYouRow = {
       ...ROW,

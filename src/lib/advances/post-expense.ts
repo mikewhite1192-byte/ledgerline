@@ -152,7 +152,15 @@ export async function postPaidAdvanceExpense(
       traceId: null,
       subjectStatuses: ["paid"],
     },
-    { onReserved: onPaidReserved, send: sendHook(db, session.tenantId, accountingOf(money), advance, vendor) },
+    {
+      onReserved: onPaidReserved,
+      // The books switch is asked again at the send itself: a replayed reserve skips onReserved,
+      // and sendHook is shared with the person's own post, which has no books switch.
+      send: (action: MoneyAction, ctx: SendContext): Promise<SendOutcome> =>
+        flags.books.enabled === true
+          ? sendHook(db, session.tenantId, accountingOf(money), advance, vendor)(action, ctx)
+          : Promise.resolve({ kind: "failed", category: "disabled" }),
+    },
     money,
   );
 }

@@ -3,11 +3,13 @@ import type { AdvanceListRow } from "@/lib/advances/read";
 import type { ProposalView, TurnView } from "@/lib/agent/view";
 import type { Queryable } from "@/lib/db";
 import type { InvoiceListRow } from "@/lib/invoices/views";
+import { MONEY_ACTION_KINDS } from "@/lib/money/types";
 import type { SettlementListRow } from "@/lib/settlements/views";
 import { carrierToday } from "@/lib/tenant/shell";
 import * as fx from "@/test/page-fixtures";
 import {
   advancesRow,
+  BOOKS_LINKED_KINDS,
   booksHref,
   booksRow,
   cardsRow,
@@ -274,6 +276,9 @@ describe("Home's books row (D-104)", () => {
     // No page shows an escrow release's post, so Home links none.
     expect(at("escrow_release_expense")).toBeNull();
     expect(at("advance_payout")).toBeNull();
+    // The read's kind list is exactly the kinds linked here.
+    const linked = MONEY_ACTION_KINDS.filter((k) => at(k) !== null);
+    expect([...BOOKS_LINKED_KINDS].sort()).toEqual([...linked].sort());
   });
 
   it("is read only when Home asks, as the latest accounting row of each record", async () => {
@@ -300,8 +305,15 @@ describe("Home's books row (D-104)", () => {
     const rows = await readNeedsYou(q, { ...base, books: { maxAttempts: 3 } });
     expect(rows.map((r) => [r.key, r.count, r.href])).toEqual([["books", 1, `/records/settlements/${SUB}`]]);
     expect(asked).toHaveLength(1);
-    expect(asked[0].params).toEqual([3, 50, 50]);
+    // Only the kinds Home links are read, before the limit, so an unlinked kind never uses it up.
+    expect(asked[0].params).toEqual([
+      3,
+      50,
+      50,
+      "{settlement_bill,settlement_bill_payment,advance_expense,invoice,customer_payment,money_code_expense}",
+    ]);
     expect(asked[0].sql).toContain("channel = 'accounting'");
+    expect(asked[0].sql).toContain("kind = ANY(CAST($4 AS text[]))");
     expect(asked[0].sql).toContain("DISTINCT ON (kind, subject_id)");
   });
 });
