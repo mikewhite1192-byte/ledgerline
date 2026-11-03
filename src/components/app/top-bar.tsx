@@ -83,12 +83,15 @@ function NeedsYouBell({ count }: { count?: number }) {
 export function TopBar({
   menu,
   agentOn,
+  askBox = true,
   testMode,
   needsYouCount,
   offset,
 }: {
   menu: ReactNode;
   agentOn: boolean;
+  // false on a page with its own ask box (the simple Home).
+  askBox?: boolean;
   testMode: boolean;
   needsYouCount?: number;
   offset: boolean;
@@ -101,7 +104,7 @@ export function TopBar({
       )}
     >
       {menu}
-      {agentOn ? <AskBox /> : <span className="flex-1" />}
+      {agentOn && askBox ? <AskBox /> : <span className="flex-1" />}
       <div className="ml-auto flex shrink-0 items-center gap-1 md:gap-2">
         {testMode ? <TestModeChip /> : null}
         <HideAmounts />

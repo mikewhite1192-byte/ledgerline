@@ -167,6 +167,8 @@ const KEPT_OFF = [
   "signInTour.enabled",
   // One model read per tap and a load moved on the sample board: the owner turns it on in its own PR.
   "driverPaperwork.enabled",
+  // Presentation only, but it changes what Home shows: the owner turns it on in its own PR.
+  "simpleShape.enabled",
 ] as const;
 
 // The on/off switches in flags.ts, by path: every top-level boolean and every boolean inside a
@@ -430,6 +432,12 @@ describe("flags", () => {
     expect(LOCAL_OFF_ONLY as readonly string[]).toContain("driverPaperwork.enabled");
   });
 
+  it("ships the simple shape off, off for the local demo run", () => {
+    expect(flags.simpleShape).toEqual({ enabled: false });
+    // Listed ahead of its release, so the demo-path run keeps it off once it ships on.
+    expect(LOCAL_OFF_ONLY as readonly string[]).toContain("simpleShape.enabled");
+  });
+
   it("releases deficit recovery, with a start date, off for the local demo run", () => {
     expect(flags.deficitRecovery).toEqual({ enabled: true, startDate: "2026-11-02" });
     expect(isLocalDate(flags.deficitRecovery.startDate)).toBe(true);
@@ -569,6 +577,7 @@ describe("flags", () => {
       "activityFeed.enabled",
       "signInTour.enabled",
       "driverPaperwork.enabled",
+      "simpleShape.enabled",
     ];
     const offOnly = LOCAL_OFF_ONLY as readonly string[];
     expect(KEPT_OFF.filter((k) => offOnly.includes(k))).toEqual(KEPT_OFF.filter((k) => armedAhead.includes(k)));

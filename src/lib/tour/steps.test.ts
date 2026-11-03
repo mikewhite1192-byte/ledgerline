@@ -5,7 +5,7 @@ import type { Role } from "@/lib/auth/role";
 import type { Payday } from "@/lib/home/cards";
 import type { NeedsYouView } from "@/lib/home/needs-you";
 import type { TourFacts } from "./facts";
-import { TOUR_ASKS, TOUR_FOOTER, TOUR_FOOTER_NO_DIGEST, tourFooter, tourSteps, type TourInput, type TourStep } from "./steps";
+import { TOUR_ASKS, TOUR_FOOTER, tourSteps, type TourInput, type TourStep } from "./steps";
 
 // The walkthrough's steps from fixed facts in a fixed zone. Nothing reads the clock or a database:
 // every instant is written out, and every figure comes from the input.
@@ -68,7 +68,7 @@ function input(over: Partial<TourInput> = {}): TourInput {
     needs: NEEDS,
     payday: { ok: true, value: PAYDAY },
     firstQuestion: "Who has a problem on this week's paystub?",
-    on: { activityFeed: false, adminAboveCents: 200_000, judgeTurns: 25, judgeCapCents: 100 },
+    on: { activityFeed: false, adminAboveCents: 200_000, judgeTurns: 25 },
     ...over,
   };
 }
@@ -99,7 +99,8 @@ describe("tourSteps", () => {
     );
     expect(step(steps, "board").lines[0].text).toBe("12 loads on the board. Move one and watch the desk pick it up.");
     expect(step(steps, "ask").ask).toBe("Who has a problem on this week's paystub?");
-    expect(tourFooter(FACTS)).toBe(TOUR_FOOTER);
+    // The footer never names a model.
+    expect(TOUR_FOOTER).toBe("Written from today's numbers.");
   });
 
   it("never tells a demo visitor to approve, and tells them what the visit allows", () => {
@@ -109,7 +110,8 @@ describe("tourSteps", () => {
     expect(step(steps, "waiting").lines.map((l) => l.text)).toEqual([
       "Open a card and read why the agent proposed it. In this demo you can ask and propose; the carrier's staff make the call.",
     ]);
-    expect(step(steps, "ask").lines[1].text).toBe("This visit has 25 questions and $1.00 of model time.");
+    expect(step(steps, "ask").lines[1].text).toBe("This visit has 25 questions.");
+    for (const s of steps) expect(textOf(s), s.id).not.toMatch(/model time|Muse/i);
     expect(step(steps, "autopilot").lines[1].text).toBe("Read the rules; only the carrier's admin can change them.");
   });
 
@@ -160,7 +162,6 @@ describe("tourSteps", () => {
     ]);
     for (const s of steps) expect(textOf(s), s.id).not.toMatch(/\b0\b/);
     expect(step(steps, "waiting").title).toBe("Waiting for a person");
-    expect(tourFooter({ ...FACTS, digest: { ok: false } })).toBe(TOUR_FOOTER_NO_DIGEST);
   });
 
   it("shows the desk's line alone when there is no digest line, and says when nothing is waiting", () => {
@@ -169,7 +170,6 @@ describe("tourSteps", () => {
     );
     expect(step(steps, "working").lines.map((l) => l.text)).toEqual(["The desk has not checked in yet."]);
     expect(step(steps, "waiting").title).toBe("Waiting for a person: nothing right now");
-    expect(tourFooter({ ...FACTS, digest: { ok: true, value: null } })).toBe(TOUR_FOOTER_NO_DIGEST);
   });
 
   it("words the autopilot off, paused and with nothing on Auto", () => {
@@ -198,5 +198,35 @@ describe("tourSteps", () => {
     }
     expect(NAV_HREFS).toContain("/settlements");
     expect(NAV_HREFS).toContain("/activity");
+  });
+});
+
+describe("tourSteps under the simple Home", () => {
+  const simple = (over: Partial<TourInput> = {}) =>
+    tourSteps(input({ today: "2026-11-10", ...over, on: { ...input().on, simpleShape: true, ...over.on } }));
+
+  it("has one step per block on Home, and the first says when the books were last checked", () => {
+    const steps = simple();
+    expect(steps.map((s) => s.id)).toEqual(["working", "waiting", "ask"]);
+    // No digest line: the desk's line alone, the time of day alone for a check-in today.
+    expect(step(steps, "working").lines.map((l) => l.text)).toEqual(["Last checked the books at 9:00 AM and finished 4 things today."]);
+    expect(step(simple({ today: "2026-11-11" }), "working").lines[0].text).toBe(
+      "Last checked the books on Nov 10, 2026, 9:00 AM CST and finished 4 things today.",
+    );
+    // The pay week, autopilot, board and feed steps describe pages no longer on Home.
+    expect(simple({ on: { ...input().on, activityFeed: true } }).map((s) => s.id)).toEqual(["working", "waiting", "ask"]);
+  });
+
+  it("says the books were not checked, or could not be read, never 0", () => {
+    const none = simple({ facts: { ...FACTS, desk: { ok: true, value: { checkedAt: null, doneToday: 0 } } } });
+    expect(step(none, "working").lines).toEqual([{ text: "Not checked yet today." }]);
+    const failed = simple({ facts: { ...FACTS, desk: { ok: false } } });
+    expect(step(failed, "working").lines).toEqual([{ text: "Could not read when I last checked the books.", unread: true }]);
+  });
+
+  it("never names a model or its cost, for any role", () => {
+    for (const role of ["admin", "staff", "judge"] as const) {
+      for (const s of simple({ role })) expect(textOf(s), `${role} ${s.id}`).not.toMatch(/model time|cents|Muse|digest/i);
+    }
   });
 });

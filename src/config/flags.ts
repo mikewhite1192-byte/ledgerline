@@ -996,6 +996,10 @@ export type Flags = {
   // per carrier per local day. A demo visitor's tap spends one of the visit's turns and the read
   // spends the visit's model budget.
   driverPaperwork: { enabled: boolean; startDate: string; perDay: number };
+  // The simple shape of Home (src/components/home/simple-home.tsx): three blocks only, what the
+  // coworker finished today, at most three things that need a person, and an ask box. It reuses the
+  // reads Home already makes and changes no number. Off, Home renders as before.
+  simpleShape: { enabled: boolean };
 };
 
 // One kind's ceiling over the owner's autopilot limits: one item, and the carrier's local day.
@@ -1307,6 +1311,8 @@ export const flags: Flags = {
   signInTour: { enabled: false },
   // Off until the owner turns it on in its own PR (D-098). One model read per tap; moves no money.
   driverPaperwork: { enabled: false, startDate: "2026-11-03", perDay: 30 },
+  // Off until the owner turns it on in its own PR. Presentation only.
+  simpleShape: { enabled: false },
 };
 
 applyLocalOverrides(flags);

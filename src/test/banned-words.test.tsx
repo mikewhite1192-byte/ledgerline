@@ -763,6 +763,29 @@ async function tourHome(): Promise<ReactNode> {
   }
 }
 
+// Home with the simple shape's switch on: what was done today, what needs you, and the ask box.
+// welcome: with the walkthrough's switch on too, after a sign-in.
+async function simpleHome(welcome = false): Promise<ReactNode> {
+  const savedSimple = { ...flags.simpleShape };
+  const savedTour = { ...flags.signInTour };
+  flags.simpleShape = { enabled: true };
+  if (welcome) flags.signInTour = { enabled: true };
+  try {
+    return await (await import("@/app/page")).default(sp(welcome ? { welcome: "1" } : {}));
+  } finally {
+    flags.simpleShape = savedSimple;
+    flags.signInTour = savedTour;
+  }
+}
+
+// The simple Home's day: Nov 2 in New York, with a pay check that started that morning and the
+// feed's rows from late that morning.
+function simpleDay() {
+  onDay("2026-11-02T18:00:00.000Z");
+  state.fx.sweepHome = { ...fx.SWEEP_HOME, runs: [{ ...fx.SWEEP_HOME.runs[0], startedAt: "2026-11-02T12:00:00.000Z" }] };
+  state.fx.feed = { rows: FEED_ROWS, next: null };
+}
+
 // Every switch on, so each page shows its working state, not the off page. Money codes is a switch
 // with settings, so only its own enabled is turned on.
 const SWITCHES = Object.keys(flags).filter((k) => typeof (flags as Record<string, unknown>)[k] === "boolean");
@@ -1191,6 +1214,71 @@ const PAGES: PageCase[] = [
         setup: () => (state.fx.advances = { then: (_ok: unknown, fail: (e: unknown) => void) => fail(new DbError("unknown")) }),
         load: async () => (await import("@/app/page")).default(sp()),
         shows: ["Could not check everything that is waiting right now. Reload the page to try again."],
+      },
+      {
+        name: "home, the simple shape",
+        setup: simpleDay,
+        load: () => simpleHome(),
+        shows: [
+          "What I did today",
+          "Checked every driver's pay for the week of Oct 26 to Nov 1.",
+          "Read 3 documents, 1 voice note and 2 messages from drivers.",
+          "Read a message from a driver.",
+          "Drafted for you to approve: Advance for Dana Reyes, $125.00.",
+          "Approved within your limit: Advance for Dana Reyes, $125.00.",
+          "See everything",
+          "Needs you",
+          "Review",
+          "Ask me anything",
+          "Ask about pay, invoices, drivers",
+        ],
+      },
+      {
+        name: "home, the simple shape, a quiet start",
+        setup: () => {
+          simpleDay();
+          state.fx.todayIntake = { documents: 0, voiceNotes: 0, messages: 0 };
+          state.fx.feed = { rows: [], next: null };
+          state.fx.sweepHome = { openPeriod: null, runs: [] };
+          state.fx.turns = [];
+          state.fx.advances = [];
+          state.fx.invoices = [];
+          state.fx.invoiceProposals = [];
+          state.fx.settlementsView = { ...fx.SETTLEMENTS_VIEW, rows: [] };
+        },
+        load: () => simpleHome(),
+        shows: ["Nothing finished yet today. I check the books all day, and each thing I finish shows here.", "Nothing needs you right now."],
+      },
+      {
+        name: "home, the simple shape, not read",
+        // Thenables that reject only when the page awaits them, as failed reads do.
+        setup: () => {
+          simpleDay();
+          const failed = { then: (_ok: unknown, fail: (e: unknown) => void) => fail(new DbError("unknown")) };
+          state.fx.todayIntake = failed;
+          state.fx.feed = failed;
+          state.fx.sweepHome = failed;
+          state.fx.advances = failed;
+        },
+        load: () => simpleHome(),
+        shows: [
+          "Could not read today's work. Nothing changed.",
+          "Could not check everything that is waiting right now. Reload the page to try again.",
+        ],
+      },
+      {
+        name: "home, the simple shape, the walkthrough",
+        setup: () => {
+          simpleDay();
+          state.fx.tourFacts = {
+            digest: { ok: true, value: "Good morning. Three paystubs wait for a look." },
+            desk: { ok: true, value: { checkedAt: "2026-11-02T15:00:00.000Z", doneToday: 4 } },
+            autopilot: { ok: true, value: { on: true, paused: false, pausedAt: null, auto: [] } },
+            board: { ok: false },
+          };
+        },
+        load: () => simpleHome(true),
+        shows: ["Your AI accountant is already working", "Last checked the books at 10:00 AM and finished 4 things today."],
       },
       {
         name: "asked about a paystub",
@@ -3446,7 +3534,7 @@ describe("no internal word in a shared state", () => {
         <FeatureOff name="Advances" plural />
         <FeatureOff name="Pay sweep" />
         <PageNotFound />
-        <DemoBanner carrier="Blue Ridge Freight" visitCapCents={flags.judgeAccess.sessionCapCents} />
+        <DemoBanner carrier="Blue Ridge Freight" />
         <TestModeBanner />
         <TopBar menu={null} agentOn testMode needsYouCount={2} offset />
       </>,

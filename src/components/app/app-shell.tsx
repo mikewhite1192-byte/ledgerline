@@ -157,7 +157,8 @@ function AreaNav({ nav, agentOn, pinned }: { nav: NavItem[]; agentOn: boolean; p
 // floating card. `focus` is the one record the page is about, for the card's chip, sent only while
 // the page focus switch is on. `suggestions` are the card's questions (each page gets the default
 // ones unless it passes its own, as Home does), and `agentOpening` asks the card to open as the
-// page loads (Home's links). The public /design specimen passes agentPanel={false}.
+// page loads (Home's links). The public /design specimen passes agentPanel={false}. `askBox`
+// false leaves the top bar's box out on a page that has its own (the simple Home).
 export function AppShell({
   tenant,
   nav,
@@ -171,6 +172,7 @@ export function AppShell({
   agentPanel = true,
   suggestions,
   agentOpening,
+  askBox = true,
   children,
 }: {
   tenant: TenantInfo;
@@ -186,6 +188,7 @@ export function AppShell({
   agentPanel?: boolean;
   suggestions?: Suggestion[];
   agentOpening?: AgentOpening;
+  askBox?: boolean;
   children: ReactNode;
 }) {
   const testMode = testModeOnly();
@@ -226,12 +229,11 @@ export function AppShell({
           </div>
         </aside>
         <div className="min-w-0 flex-1">
-          {tenant.role === "judge" ? (
-            <DemoBanner carrier={tenant.name} visitCapCents={flags.judgeAccess.sessionCapCents} />
-          ) : null}
+          {tenant.role === "judge" ? <DemoBanner carrier={tenant.name} /> : null}
           <TopBar
             offset={testMode}
             agentOn={agentOn}
+            askBox={askBox}
             testMode={testMode}
             needsYouCount={needsYouCount}
             menu={
