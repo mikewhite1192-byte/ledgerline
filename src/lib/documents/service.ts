@@ -236,7 +236,8 @@ function tx<T>(db: TenantDb, session: Session, fn: (q: Queryable) => Promise<T>)
   });
 }
 
-const sha256 = (bytes: Uint8Array) => createHash("sha256").update(bytes).digest("hex");
+// The row's content_hash; the driver paperwork tap (src/lib/mock-tms/paperwork.ts) finds its own row by it.
+export const sha256 = (bytes: Uint8Array) => createHash("sha256").update(bytes).digest("hex");
 const base64Of = (bytes: Uint8Array) => Buffer.from(bytes.buffer, bytes.byteOffset, bytes.byteLength).toString("base64");
 const bytesOf = (base64: string) => new Uint8Array(Buffer.from(base64.replace(/\s+/g, ""), "base64"));
 

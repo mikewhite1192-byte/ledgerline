@@ -193,6 +193,27 @@ const documentsOf = (f: Fixture) =>
     ),
   );
 
+// A live visit for this judge with this many turns used, and its turns now.
+async function visitOf(f: Fixture, judge: Session, turns: number): Promise<string> {
+  const id = randomUUID();
+  await admin.withTenant(f.tenantId, (q) =>
+    q.execute(
+      `INSERT INTO demo_sessions (id, tenant_id, cognito_sub, created_at, last_seen_at, expires_at, turns)
+       VALUES (CAST($1 AS uuid), current_tenant_id(), $2, CAST($3 AS timestamptz), CAST($3 AS timestamptz), CAST($4 AS timestamptz), $5)`,
+      [id, judge.sub, new Date(T0 - HOUR).toISOString(), new Date(T0 + 23 * HOUR).toISOString(), turns],
+    ),
+  );
+  return id;
+}
+
+const visitTurns = (f: Fixture, id: string) =>
+  admin.withTenant(f.tenantId, async (q) => {
+    const [r] = await q.query<{ turns: number }>("SELECT turns FROM demo_sessions WHERE id = CAST($1 AS uuid)", [id]);
+    return Number(r.turns);
+  });
+
+const MINUTE = 60_000;
+
 beforeAll(() => {
   admin = createPgDb({ connectionString: adminUrl() });
   app = createPgDb({ connectionString: appUrl(), max: 2 });
@@ -386,6 +407,113 @@ describe("driver sends paperwork", () => {
     const out = await tap({ ...judge, demoSessionId: live }, l.reference, "pickup", reader(reading(l.reference, "pickup", PICKUP_STOP)));
     expect(out).toMatchObject({ kind: "moved", to: "in_transit", board: "moved" });
     expect(await turnsOf(live)).toBe(1);
+  });
+
+  it("reads a stalled paper again on a later tap, and a tap while its read may still run costs no turn", async () => {
+    const f = await carrier();
+    const l = await load(f);
+    const judge = await addJudge(admin, f);
+    const visit = await visitOf(f, judge, 0);
+    const me = { ...judge, demoSessionId: visit };
+    const lost = vi.fn<ReadComplete>(async () => {
+      throw new AiError("timeout");
+    });
+    expect(await tap(me, l.reference, "pickup", lost)).toEqual({ kind: "refused", category: "not_read" });
+    expect(await visitTurns(f, visit)).toBe(1);
+    const [doc] = await documentsOf(f);
+    expect(doc.read_status).toBe("pending");
+
+    // Thirty seconds on, the first read may still be running: no second read and no turn.
+    const early = reader(reading(l.reference, "pickup", PICKUP_STOP));
+    expect(await tap(me, l.reference, "pickup", early, T0 + 30_000)).toEqual({ kind: "refused", category: "not_read" });
+    expect(early).not.toHaveBeenCalled();
+    expect(await visitTurns(f, visit)).toBe(1);
+
+    // Past the stalled time, the same paper is read again under Read again's claim and moves.
+    const late = reader(reading(l.reference, "pickup", PICKUP_STOP));
+    expect(await tap(me, l.reference, "pickup", late, T0 + 3 * MINUTE)).toMatchObject({ kind: "moved", to: "in_transit", board: "moved" });
+    expect(late).toHaveBeenCalledTimes(1);
+    expect(await visitTurns(f, visit)).toBe(2);
+    expect(await documentsOf(f)).toEqual([{ id: doc.id, filename: doc.filename, read_status: "read" }]);
+    expect(await eventsOf(f, l.ourId)).toEqual([{ to_status: "in_transit", evidence_table: "documents", evidence_id: doc.id }]);
+  });
+
+  it("leaves a stalled paper with no reads left unread, at no turn", async () => {
+    const f = await carrier();
+    const l = await load(f);
+    const lost = vi.fn<ReadComplete>(async () => {
+      throw new AiError("timeout");
+    });
+    expect(await tap(f.session, l.reference, "pickup", lost)).toEqual({ kind: "refused", category: "not_read" });
+    expect(await tap(f.session, l.reference, "pickup", lost, T0 + 3 * MINUTE)).toEqual({ kind: "refused", category: "not_read" });
+    expect(await tap(f.session, l.reference, "pickup", lost, T0 + 6 * MINUTE)).toEqual({ kind: "refused", category: "not_read" });
+    expect(lost).toHaveBeenCalledTimes(3);
+    const judge = await addJudge(admin, f);
+    const visit = await visitOf(f, judge, 0);
+    const last = reader(reading(l.reference, "pickup", PICKUP_STOP));
+    expect(await tap({ ...judge, demoSessionId: visit }, l.reference, "pickup", last, T0 + 9 * MINUTE)).toEqual({
+      kind: "refused",
+      category: "not_read",
+    });
+    expect(last).not.toHaveBeenCalled();
+    expect(await visitTurns(f, visit)).toBe(0);
+    expect((await ours(f, l.ourId)).status).toBe("planned");
+  });
+
+  it("costs a concurrent double tap no second turn and no second read while the first read runs", async () => {
+    const f = await carrier();
+    const l = await load(f);
+    const judge = await addJudge(admin, f);
+    const visit = await visitOf(f, judge, 0);
+    const me = { ...judge, demoSessionId: visit };
+    let release: () => void = () => {};
+    const gate = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    let started: () => void = () => {};
+    const reading1 = new Promise<void>((resolve) => {
+      started = resolve;
+    });
+    const answer = reader(reading(l.reference, "pickup", PICKUP_STOP));
+    const slow = vi.fn<ReadComplete>(async (t, r, s) => {
+      started();
+      await gate;
+      return answer(t, r, s);
+    });
+    const first = tap(me, l.reference, "pickup", slow);
+    try {
+      await reading1;
+      const second = reader(reading(l.reference, "pickup", PICKUP_STOP));
+      expect(await tap(me, l.reference, "pickup", second, T0 + 5_000)).toEqual({ kind: "refused", category: "not_read" });
+      expect(second).not.toHaveBeenCalled();
+      expect(await visitTurns(f, visit)).toBe(1);
+    } finally {
+      release();
+    }
+    expect(await first).toMatchObject({ kind: "moved", to: "in_transit", board: "moved" });
+    expect(slow).toHaveBeenCalledTimes(1);
+    expect(await visitTurns(f, visit)).toBe(1);
+    expect(await documentsOf(f)).toHaveLength(1);
+  });
+
+  it("starts no read, stores nothing and counts no turn when too little of the request is left", async () => {
+    const f = await carrier();
+    const l = await load(f);
+    const judge = await addJudge(admin, f);
+    const visit = await visitOf(f, judge, 0);
+    const complete = reader(reading(l.reference, "pickup", PICKUP_STOP));
+    // The render took 20 of the request's 27 seconds.
+    let calls = 0;
+    const steady = () => (calls++ === 0 ? 0 : 20_000);
+    const out = await sendDriverPaperwork(
+      { ...judge, demoSessionId: visit },
+      { reference: l.reference, stage: "pickup" },
+      { db: app, now: () => new Date(T0), read: { complete }, steady },
+    );
+    expect(out).toEqual({ kind: "refused", category: "not_read" });
+    expect(complete).not.toHaveBeenCalled();
+    expect(await documentsOf(f)).toEqual([]);
+    expect(await visitTurns(f, visit)).toBe(0);
   });
 
   it("never reaches another carrier's load", async () => {

@@ -1,11 +1,22 @@
 import { flags } from "../../config/flags";
-import { complete } from "../ai";
+import { AiError, complete } from "../ai";
 import type { Session } from "../auth/claims";
 import { countVisitTurn } from "../auth/demo-visit";
 import { readRole } from "../auth/role";
 import { getDb, type Queryable, type TenantDb } from "../db";
 import { READ_TIMEOUT_MS, type ReadComplete, type ReadDeps } from "../documents/read";
-import { FINISH_RESERVE_MS, REQUEST_BUDGET_MS, uploadDocument } from "../documents/service";
+import {
+  FINISH_RESERVE_MS,
+  MIN_READ_MS,
+  readAgain,
+  REQUEST_BUDGET_MS,
+  sha256,
+  STALLED_MS,
+  uploadDocument,
+  type ServiceDeps,
+} from "../documents/service";
+import { findDocumentByHash } from "../documents/store";
+import { READ_ATTEMPTS_MAX } from "../documents/types";
 import { moveFromDocument, type MoveReason, type MoveTo } from "../loads/movement";
 import { PICKUP_WINDOW, POD_WINDOW_DAYS } from "../loads/paperwork";
 import { isJudge } from "../roles";
@@ -30,7 +41,9 @@ import { applyMockAction, type MockRefusal } from "./store";
 // Fail closed: a read that did not finish, a paper that is not this load's, or a move the rules
 // could not make moves nothing on the board. The paper's bytes depend only on the load, the stage
 // and the paper's times, so a repeat tap sends the same file, which the pipeline keeps once
-// (documents content_hash) and never reads twice.
+// (documents content_hash). A repeat tap never starts a second read while one runs; once that row
+// has sat pending past the documents' stalled time (STALLED_MS), the tap takes it again with Read
+// again's own claim, READ_ATTEMPTS_MAX reads in all. A tap that cannot start a read costs no turn.
 
 export type PaperStage = "pickup" | "delivery";
 
@@ -293,10 +306,10 @@ function tx<T>(db: TenantDb, session: Session, fn: (q: Queryable) => Promise<T>)
   });
 }
 
-type Ready = { ok: true; load: PaperLoad; times: PaperTimes } | { ok: false; result: PaperworkResult };
+type Ready = { ok: true; load: PaperLoad; times: PaperTimes; judge: boolean } | { ok: false; result: PaperworkResult };
 
-// The checks before anything is sent, cheapest first, in one transaction. The visit's turn is
-// counted last, so a refused tap spends nothing.
+// The checks before the paper is rendered, cheapest first, in one transaction. Nothing is counted
+// here: the visit's turn waits for charge, after the render.
 async function ready(q: Queryable, session: Session, reference: string, stage: PaperStage, now: Date): Promise<Ready> {
   const no = (category: PaperworkRefusal): Ready => ({ ok: false, result: refused(category) });
   const role = await readRole(q, session);
@@ -317,7 +330,38 @@ async function ready(q: Queryable, session: Session, reference: string, stage: P
   const n = Number(sent[0]?.n);
   // Unknown is not zero.
   if (!Number.isSafeInteger(n) || n >= flags.driverPaperwork.perDay) return no("cap");
-  if (isJudge(role)) {
+  const judge = isJudge(role);
+  if (judge && (session.demoSessionId == null || !flags.judgeAccess.enabled)) return no("visit_ended");
+  return { ok: true, load, times: dates.times, judge };
+}
+
+type Charge = { ok: true } | { ok: false; result: PaperworkResult };
+
+// After the render, in its own transaction: whether this tap can start a read, and only then the
+// visit's turn, so a refused tap spends nothing. A row already held for these bytes and still
+// pending is another tap's read still running (not stalled yet), one with no reads left, or a
+// stalled one this tap reads again; one that ended unread can never be read again. With too little
+// of the request left for a read (MIN_READ_MS), none starts. A paper already read starts no read
+// and goes on to its move, which costs the turn.
+async function charge(
+  q: Queryable,
+  session: Session,
+  judge: boolean,
+  contentHash: string,
+  now: Date,
+  readLeftMs: number,
+): Promise<Charge> {
+  const no = (category: PaperworkRefusal): Charge => ({ ok: false, result: refused(category) });
+  const held = await findDocumentByHash(q, contentHash);
+  const pending = held !== null && held.read_status === "pending";
+  if (held !== null && !pending && held.read_status !== "read") return no("not_read");
+  if (pending) {
+    const stalled = new Date(held.updated_at).getTime() < now.getTime() - STALLED_MS;
+    if (!stalled || !(Number(held.read_attempts) < READ_ATTEMPTS_MAX) || !held.filename.startsWith("driver-")) return no("not_read");
+  }
+  // Unknown is not zero: a clock that gave no number starts no read.
+  if ((held === null || pending) && !(readLeftMs >= MIN_READ_MS)) return no("not_read");
+  if (judge) {
     const visitId = session.demoSessionId ?? null;
     if (visitId === null || !flags.judgeAccess.enabled) return no("visit_ended");
     const gate = await countVisitTurn(q, {
@@ -328,7 +372,7 @@ async function ready(q: Queryable, session: Session, reference: string, stage: P
     });
     if (gate !== "ok") return no(gate);
   }
-  return { ok: true, load, times: dates.times };
+  return { ok: true };
 }
 
 // One tap. Throws a database error as it came (the action names it as a category, and an unknown
@@ -349,22 +393,38 @@ export async function sendDriverPaperwork(
   const { load, times } = first;
 
   const bytes = await renderPaper(load, input.stage, times);
-  // The read's timeout also leaves room for the move after it.
+  // What the request has left for a read, keeping room for the finish and the move after it.
+  const readLeft = () => REQUEST_BUDGET_MS - FINISH_RESERVE_MS - MOVE_RESERVE_MS - Math.max(0, steady() - started);
+  const second = await tx(db, session, (q) => charge(q, session, first.judge, sha256(bytes), clock(), readLeft()));
+  if (!second.ok) return second.result;
+
   const call: ReadComplete = deps.read?.complete ?? ((t, r, s) => complete(t, r, s, deps.read?.ai ?? {}));
   const read: ReadDeps = {
-    complete: (t, r, s) => {
-      const left = REQUEST_BUDGET_MS - FINISH_RESERVE_MS - MOVE_RESERVE_MS - Math.max(0, steady() - started);
-      const timeoutMs = Math.max(1, Math.floor(Math.min(r.timeoutMs ?? READ_TIMEOUT_MS, left)));
+    complete: async (t, r, s) => {
+      const left = readLeft();
+      // Too little left: no model call and no spend, the outcome a timeout would have. The row
+      // stays pending for a later tap.
+      if (!(left >= MIN_READ_MS)) throw new AiError("timeout");
+      const timeoutMs = Math.floor(Math.min(r.timeoutMs ?? READ_TIMEOUT_MS, left));
       return call(t, { ...r, timeoutMs }, s);
     },
   };
+  const service: ServiceDeps = { db, now: clock, read, steady };
   const upload = await uploadDocument(
     session,
     { name: paperFilename(load.loadNumber, input.stage), type: "application/pdf", bytes },
-    { db, now: clock, read, steady },
+    service,
   );
   if (!upload.ok) return refused(upload.error === "disabled" ? "disabled" : upload.error === "limit" ? "limit" : "not_read");
-  const view = upload.view;
+  let view = upload.view;
+  if (upload.duplicate && view.readStatus === "pending") {
+    // This code's own paper, stalled (charge checked both; checked again on the row as it is now).
+    // Read again's claim lets one of two taps start the read; the other ends not_read.
+    if (!view.stalled || !view.filename.startsWith("driver-")) return refused("not_read");
+    const again = await readAgain(session, view.id, service);
+    if (!again.ok) return refused("not_read");
+    view = again.view;
+  }
   if (view.readStatus !== "read") return refused("not_read");
   if (view.kind !== "bill_of_lading" || view.match === null || view.match.found !== true || view.match.loadId !== load.id) {
     return refused("not_matched");

@@ -1,7 +1,7 @@
 "use server";
 
 import { revalidatePath } from "next/cache";
-import { redirect } from "next/navigation";
+import { redirect, unstable_rethrow } from "next/navigation";
 import { flags } from "@/config/flags";
 import { readRole } from "@/lib/auth/role";
 import { requireSession } from "@/lib/auth/session";
@@ -22,15 +22,18 @@ import { ForbiddenError, withRequestTenant } from "@/lib/tenant/context";
 // switch is re-checked first; a carrier that is not a demo carrier, or not on the sample system, is
 // refused. Categories only, never a database message.
 //
-// "New load" (createLoadAction, flags.mockTms.newLoad) is the one exception to "never our loads": it
-// writes the sample system's load and our planned load with the same number in one transaction
-// (src/lib/mock-tms/new-load.ts), still no card and no money, on a demo carrier only, capped.
+// Two buttons are exceptions, and say what they write. "New load" (createLoadAction,
+// flags.mockTms.newLoad) writes the sample system's load and our planned load with the same number
+// in one transaction (src/lib/mock-tms/new-load.ts), still no card and no money, on a demo carrier
+// only, capped.
 //
 // "Driver sends paperwork" (sendPaperworkAction, flags.driverPaperwork) renders the driver's paper
 // for one of our loads and sends it through the document pipeline (src/lib/mock-tms/paperwork.ts):
 // the model reads it, code moves our load by the paperwork rules and, only then, completes the same
-// stop on the sample board. No money, no webhook call, a demo carrier only, capped per day; a
-// demo visitor's tap counts one turn of the visit.
+// stop on the sample board. A paper the rules cannot count leaves a zero-amount move card for a
+// person instead. No money, no webhook call, a demo carrier only, capped per day; a demo visitor's
+// tap counts one turn of the visit. Any fault it did not name (a PDF library that failed to load,
+// say) answers "failed", never the server's own words.
 
 export type MockActionCategory = MockRefusal | "disabled" | "forbidden" | "not_demo" | "bad_request" | "unreadable" | "unknown" | "failed";
 
@@ -180,9 +183,12 @@ export async function sendPaperworkAction(_prev: PaperworkState, form: FormData)
     const session = await requireSession();
     return await sendDriverPaperwork(session, { reference, stage });
   } catch (err) {
+    // The sign-in redirect and the framework's own signals go on as they came.
+    unstable_rethrow(err);
     const category = failureOf(err, "driver paperwork");
-    if (category === null) throw err;
-    return { kind: "refused", category };
+    if (category !== null) return { kind: "refused", category };
+    console.error(`mock tms driver paperwork: failed error=${err instanceof Error ? err.name : "unknown"}`);
+    return { kind: "refused", category: "failed" };
   } finally {
     revalidatePath("/tms-demo", "layout");
   }

@@ -9,7 +9,8 @@
 // one planned load of ours with no money (capped, cleared by the reset), and tap "Driver sends
 // paperwork" there, which renders the driver's sample paper for one of our loads, has the model read
 // it (a visit turn and the visit's spend pay for it, capped per day) and lets code move that load
-// by the paperwork rules and complete the stop on the sample board. It never approves, rejects,
+// by the paperwork rules and complete the stop on the sample board (a paper the rules cannot count
+// leaves a zero-amount move card for a person instead). It never approves, rejects,
 // pays, posts, sends, drafts to a driver, arms a driver, connects a ledger, resets the demo, clears
 // a spend alert, uploads a file of its own (a voice note, a document or a dock clip) or runs a step
 // that follows its own upload. The money paths refuse a judge again on their own (approvalFrom and
@@ -36,7 +37,7 @@ export const JUDGE_ALLOWED: Readonly<Record<string, string>> = {
   "src/app/tms-demo/actions.ts#createLoadAction":
     "writes the sample system's rows and one planned load with no money on a demo carrier, capped",
   "src/app/tms-demo/actions.ts#sendPaperworkAction":
-    "renders the driver's sample paperwork for one demo-carrier load and reads it; a judge's visit pays the read; code moves the load and writes only the sample board",
+    "renders the driver's sample paperwork for one demo-carrier load and reads it; a judge's visit pays the read; code moves the load and completes the sample board's stop, or leaves a zero-amount move card for a person; never money",
 };
 
 // Write handlers no carrier login reaches: each takes its own credential, never pc_session.
