@@ -437,13 +437,22 @@ export async function wakeDesk(
     // try did not come back is not counted.
     counts.left = Math.max(0, open.length - (counts.done + counts.skipped + counts.failed + unanswered));
     // The agent's questions: stale ones close; reason lines only while armed and under the caps.
+    // A wake that read no spend (no open work) reads it here, so the day cap holds for reasons too.
     if (store.asks) {
       try {
-        await store.asks({
-          nowIso: clock().toISOString(),
-          deadlineMs,
-          reasons: armed && reason !== "wake_cents" && reason !== "day_cents",
-        });
+        let reasons = armed && reason !== "wake_cents" && reason !== "day_cents";
+        if (reasons) {
+          try {
+            const spent = await store.spend({ wakeStartIso, nowIso: clock().toISOString() });
+            reasons =
+              spent.wakeNanocents < limits.wakeCents * NANOCENTS_PER_CENT &&
+              spent.dayNanocents < dayCents * NANOCENTS_PER_CENT;
+          } catch {
+            // Spend not known: no reason lines this wake; stale questions still close.
+            reasons = false;
+          }
+        }
+        await store.asks({ nowIso: clock().toISOString(), deadlineMs, reasons });
       } catch (err) {
         log(`desk asks tenant=${session.tenantId} wake=${wakeId} failed=${errorName(err)}`);
       }

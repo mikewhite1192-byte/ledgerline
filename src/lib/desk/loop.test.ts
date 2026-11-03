@@ -664,6 +664,35 @@ describe("wakeDesk", () => {
     expect(calls.at(-1)?.reasons).toBe(false);
   });
 
+  it("writes no reason lines once a cap is spent, even on a wake with no open work, and none when spend does not read", async () => {
+    const calls: boolean[] = [];
+    store.asks = async (input) => {
+      calls.push(input.reasons);
+    };
+    store.spent = { wakeNanocents: 0, dayNanocents: flags.deskLoop.limits.dayCents * NANOCENTS_PER_CENT };
+    const capped = await wake(handlersWith(vi.fn(async () => done())));
+    expect(capped).toMatchObject({ ok: true, reason: "no_work" });
+    expect(calls).toEqual([false]);
+
+    // A visit's copy, at its own smaller cap with no open work.
+    store.copy = true;
+    store.lease = null;
+    store.spent = { wakeNanocents: 0, dayNanocents: flags.visitCopies.deskDayCents * NANOCENTS_PER_CENT };
+    await wake(handlersWith(vi.fn(async () => done())), uuid(902));
+    expect(calls.at(-1)).toBe(false);
+
+    // Spend not known: still closes stale questions, with no reasons.
+    store.copy = false;
+    store.lease = null;
+    store.spend = async () => {
+      throw new Error("connection reset by 10.0.0.7");
+    };
+    const unread = await wake(handlersWith(vi.fn(async () => done())), uuid(903));
+    expect(unread).toMatchObject({ ok: true, reason: "no_work" });
+    expect(calls).toHaveLength(3);
+    expect(calls.at(-1)).toBe(false);
+  });
+
   it("logs a questions pass that throws, by name only, and still sleeps and gives the lease back", async () => {
     store.asks = async () => {
       throw new Error("connection reset by 10.0.0.9");

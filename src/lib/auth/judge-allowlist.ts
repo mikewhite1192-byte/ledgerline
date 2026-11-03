@@ -39,7 +39,7 @@ export const JUDGE_ALLOWED: Readonly<Record<string, string>> = {
   "src/app/tms-demo/actions.ts#sendPaperworkAction":
     "renders the driver's sample paperwork for one demo-carrier load and reads it; a judge's visit pays the read; code moves the load and completes the sample board's stop, or leaves a zero-amount move card for a person; never money",
   "src/app/preparing/actions.ts#buildCopyAction":
-    "builds the visit's own copy of the demo carrier from its seed plan, under the copy's own carrier; no card or money",
+    "builds the visit's own copy of the demo carrier from its seed plan, under the copy's own carrier; its first slice also purges expired copies of the demo carrier's own visit tickets (the copy carriers, their tickets' copy columns and the purged spend counters); no card or money",
 };
 
 // Write handlers no carrier login reaches: each takes its own credential, never pc_session.

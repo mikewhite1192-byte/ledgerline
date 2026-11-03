@@ -1,7 +1,7 @@
 "use client";
 
 import { useRouter } from "next/navigation";
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useState } from "react";
 import { Button } from "@/components/ui/button";
 import { InlineAlert } from "@/components/ui/inline-alert";
 import { buildCopyAction } from "./actions";
@@ -15,11 +15,8 @@ export function Preparing({ landing }: { landing: string }) {
   const router = useRouter();
   const [progress, setProgress] = useState(0);
   const [failed, setFailed] = useState(false);
-  const started = useRef(false);
 
   useEffect(() => {
-    if (started.current) return;
-    started.current = true;
     let stopped = false;
     void (async () => {
       let misses = 0;
@@ -30,6 +27,9 @@ export function Preparing({ landing }: { landing: string }) {
         } catch {
           state = { state: "failed" };
         }
+        // A run its effect has cleaned up (a re-run in development) leaves the page alone; the
+        // build is safe to call twice.
+        if (stopped) return;
         if (state.state === "ready") {
           setProgress(100);
           router.replace(landing);
