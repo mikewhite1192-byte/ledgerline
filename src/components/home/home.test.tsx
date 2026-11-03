@@ -429,11 +429,34 @@ describe("NeedsYouShort", () => {
     const links = within(screen.getByRole("list", { name: "Waiting on you" })).getAllByRole("link");
     expect(links.map((a) => a.getAttribute("href"))).toEqual(["/settlements", "/advances?status=requested", "#card-1"]);
     expect(document.body.textContent).not.toMatch(/Approve\b/);
-    // The cut rows: past due on Billing, the escalated ask in the chat.
-    const more = screen.getByRole("link", { name: "and 5 more on Billing" });
+    // The cut rows: past due on Billing, the escalated ask in the chat, each counted where it is.
+    const more = screen.getByRole("link", { name: "and 5 more: 4 on Billing, 1 in your chat" });
     expect(more.getAttribute("href")).toBe("/invoices?tab=invoices");
     // Its amounts never hide under the eye.
     expect(screen.getByRole("list", { name: "Waiting on you" }).getAttribute("data-amounts")).toBe("shown");
+  });
+
+  it("says at least for a cut place whose count is a floor, and one place without the split", () => {
+    render(<NeedsYouShort view={{ rows: [ROW, NEEDS[2], NEEDS[4], { ...NEEDS[1], atLeast: true }, NEEDS[0]], unread: false }} />);
+    expect(screen.getByRole("link", { name: "and at least 5 more: at least 4 on Billing, 1 in your chat" })).toBeTruthy();
+    cleanup();
+    render(<NeedsYouShort view={{ rows: [ROW, NEEDS[2], NEEDS[4], NEEDS[1]], unread: false }} />);
+    expect(screen.getByRole("link", { name: "and 4 more on Billing" })).toBeTruthy();
+  });
+
+  it("shows each amount a row carries, saying which is which when there are two", () => {
+    const cards: NeedsYouRow = {
+      ...ROW,
+      key: "cards",
+      count: 2,
+      amounts: [
+        { cents: 30_000, label: "to pay out" },
+        { cents: 90_000, label: "coming in" },
+      ],
+      href: "#card-1",
+    };
+    render(<NeedsYouShort view={{ rows: [cards], unread: false }} />);
+    expect(rowsOf()).toEqual(["2 cards in your chat to approve$300.00 to pay out$900.00 coming inReview"]);
   });
 
   it("shows every row with no more line when three or fewer wait, and says or more for a cut count", () => {

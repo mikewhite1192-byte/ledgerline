@@ -49,7 +49,8 @@ import { cardsRow, readNeedsYou, type NeedsYouRow, type NeedsYouView } from "@/l
 import { readTodayIntake, type TodayIntake } from "@/lib/home/today";
 import { readInvoiceList } from "@/lib/invoices/views";
 import { readFeed } from "@/lib/feed/read";
-import { doneLines, feedLines, type DoneLine, type FeedLine } from "@/lib/feed/words";
+import { readDoneToday } from "@/lib/feed/done-today";
+import { feedLines, type DoneLine, type FeedLine } from "@/lib/feed/words";
 import { readNextWeekStart } from "@/lib/pay-rules/read";
 import { codeToWords, modelCallStatusLabel } from "@/lib/format/labels";
 import { readPaystubAsk } from "@/lib/settlements/list";
@@ -419,8 +420,6 @@ type Cards = {
 
 // The live feed card's newest lines.
 const FEED_CARD_LINES = 3;
-// The simple Home reads a few more rows, since only today's finished work makes a line.
-const DONE_ROWS = 12;
 
 // null is a card whose page is switched off, so it is not shown at all. The simple Home reads only
 // what came in and the feed.
@@ -444,7 +443,7 @@ async function readCards(today: LocalDate, timezone: string, simple: boolean): P
       : null,
     flags.activityFeed.enabled && simple
       ? loaded("done today", () =>
-          withRequestTenant(async (q) => doneLines((await readFeed(q, { limit: DONE_ROWS })).rows, timezone, today)),
+          withRequestTenant((q) => readDoneToday(q, timezone, today)),
         )
       : null,
   ]);

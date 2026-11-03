@@ -589,7 +589,7 @@ describe("home, the simple shape", () => {
       "Checked a customer payment against its invoice.9:10 AM",
     ]);
     expect(within(did).getByRole("link", { name: "See everything" }).getAttribute("href")).toBe("/activity");
-    expect(mocks.readFeed).toHaveBeenCalledWith(expect.anything(), { limit: 12 });
+    expect(mocks.readFeed).toHaveBeenCalledWith(expect.anything(), { limit: 50, before: null });
     expect(screen.queryByRole("heading", { name: "This pay week" })).toBeNull();
     expect(screen.queryByRole("region", { name: "Live feed" })).toBeNull();
     expect(screen.queryByRole("region", { name: "Today" })).toBeNull();
@@ -610,6 +610,25 @@ describe("home, the simple shape", () => {
     expect(document.getElementById("ask")).toBeNull();
     // No model cost, model name or model time on an everyday screen.
     expect(document.body.textContent).not.toMatch(/cents|Muse|model time/i);
+  });
+
+  it("reads older pages of the feed when the newest rows today make no line", async () => {
+    // A full page of today's failed card payouts (no line), then an older finished check this morning.
+    const failed = Array.from({ length: 50 }, (_, i) => ({
+      ...FEED_ROW,
+      key: `money:${i}`,
+      at: `2026-11-10T14:${String(59 - i).padStart(2, "0")}:30.000000Z`,
+      event: "money_settled",
+      actor: "autopilot",
+      code: "failed",
+      kind: "advance_payout",
+    }));
+    const cursor = { at: failed[49].at, key: failed[49].key };
+    mocks.readFeed.mockResolvedValueOnce({ rows: failed, next: cursor }).mockResolvedValueOnce({ rows: [FEED_ROW], next: null });
+    render(await Home({ searchParams: Promise.resolve({}) }));
+    expect(within(region("What I did today")).getByText("Checked a customer payment against its invoice.")).toBeTruthy();
+    expect(screen.queryByText(/^Nothing finished yet today/)).toBeNull();
+    expect(mocks.readFeed).toHaveBeenNthCalledWith(2, expect.anything(), { limit: 50, before: cursor });
   });
 
   it("cuts Needs you to the three that matter most, with one line for the rest, and the bell counts all", async () => {

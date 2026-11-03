@@ -186,18 +186,24 @@ function rowWords(r: NeedsYouRow): string {
 }
 
 // Where the cut rows live, from their links: Pay, Billing, or the chat.
-function sectionOf(href: string): string {
-  if (href.startsWith("/settlements") || href.startsWith("/advances")) return "Pay";
-  if (href.startsWith("/invoices")) return "Billing";
-  return "your chat";
+const PLACES = ["on Pay", "on Billing", "in your chat"] as const;
+function placeOf(href: string): (typeof PLACES)[number] {
+  if (href.startsWith("/settlements") || href.startsWith("/advances")) return "on Pay";
+  if (href.startsWith("/invoices")) return "on Billing";
+  return "in your chat";
 }
 
+// "and 4 more on Billing" when the cut rows sit in one place; else the total, then each place's
+// own count: "and 5 more: 4 on Billing, 1 in your chat".
 function moreLine(cut: readonly NeedsYouRow[]): string {
-  const sections = [...new Set(cut.map((r) => sectionOf(r.href)))];
-  const pages = sections.filter((s) => s !== "your chat");
-  const where = pages.length > 0 ? `on ${pages.join(" and ")}` : "in your chat";
-  const n = cut.reduce((s, r) => s + r.count, 0);
-  return `and ${n.toLocaleString("en-US")}${cut.some((r) => r.atLeast) ? " or more" : ""} more ${where}`;
+  // A count that is only a floor reads "at least".
+  const count = (rows: readonly NeedsYouRow[]) =>
+    `${rows.some((r) => r.atLeast) ? "at least " : ""}${rows.reduce((s, r) => s + r.count, 0).toLocaleString("en-US")}`;
+  const places = PLACES.map((place) => ({ place, rows: cut.filter((r) => placeOf(r.href) === place) })).filter(
+    (p) => p.rows.length > 0,
+  );
+  if (places.length === 1) return `and ${count(cut)} more ${places[0].place}`;
+  return `and ${count(cut)} more: ${places.map((p) => `${count(p.rows)} ${p.place}`).join(", ")}`;
 }
 
 function RowLink({ href, className, children }: { href: string; className: string; children: ReactNode }) {
@@ -230,10 +236,13 @@ export function NeedsYouShort({ view }: { view: NeedsYouView }) {
                 className="flex flex-wrap items-center gap-x-4 gap-y-1 px-4 py-2.5 transition-colors duration-150 hover:bg-accent sm:px-5"
               >
                 <span className="min-w-0 flex-1 text-body font-medium text-foreground">{rowWords(r)}</span>
-                {r.amounts.slice(0, 1).map((a) => (
+                {/* Every amount the row carries; with more than one (a chat's cards paying out and
+                    coming in) each says which it is. */}
+                {r.amounts.map((a) => (
                   <span key={a.label} className="text-body text-foreground-2">
                     {r.atLeast ? "At least " : null}
                     <Money cents={a.cents} tone="plain" />
+                    {r.amounts.length > 1 ? ` ${a.label}` : null}
                   </span>
                 ))}
                 <span aria-hidden className={buttonVariants({ variant: i === 0 ? "primary" : "outline", size: "sm" })}>
