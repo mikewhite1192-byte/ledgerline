@@ -5,7 +5,7 @@ import { sans } from "./fonts";
 import "./globals.css";
 
 export const metadata: Metadata = {
-  title: "LedgerLine",
+  title: "LedgerLine: the AI back office for trucking carriers",
   description: "An AI operator for a trucking carrier's money desk.",
 };
 
