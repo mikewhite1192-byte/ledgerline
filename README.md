@@ -9,9 +9,9 @@ the engine executes.
 Built from scratch for the Meta Global AI Developer Hackathon (Oct 26 to Nov 4, 2026), Indie track,
 "Build for Your World" theme.
 
-Runs with no outside account: press "Try the demo carrier" on the hosted sign-in page, or run
-`npm run e2e` locally (a local Postgres only), where the models answer from a recording. See
-[Try it](#try-it).
+Live at https://ledgerline.thewolfpackco.com. Runs with no outside account: press "Try the demo
+carrier" on the sign-in page there, or run `npm run e2e` locally (a local Postgres only), where
+the models answer from a recording. See [Try it](#try-it).
 
 ## Trucking pay in one week
 
