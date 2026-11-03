@@ -161,6 +161,9 @@ const KEPT_OFF = [
   "evalRun.enabled",
   // Read only, but a new page, menu item and Home card: the owner turns it on in its own PR.
   "activityFeed.enabled",
+  // Read only, but it changes where sign-in lands and adds a panel on Home: the owner turns it on in
+  // its own PR.
+  "signInTour.enabled",
 ] as const;
 
 // The on/off switches in flags.ts, by path: every top-level boolean and every boolean inside a
@@ -410,6 +413,12 @@ describe("flags", () => {
     expect(LOCAL_OFF_ONLY as readonly string[]).toContain("activityFeed.enabled");
   });
 
+  it("ships the sign-in walkthrough off, off for the local demo run", () => {
+    expect(flags.signInTour).toEqual({ enabled: false });
+    // Listed ahead of its release, so the demo-path run keeps it off once it ships on.
+    expect(LOCAL_OFF_ONLY as readonly string[]).toContain("signInTour.enabled");
+  });
+
   it("releases deficit recovery, with a start date, off for the local demo run", () => {
     expect(flags.deficitRecovery).toEqual({ enabled: true, startDate: "2026-11-02" });
     expect(isLocalDate(flags.deficitRecovery.startDate)).toBe(true);
@@ -547,6 +556,7 @@ describe("flags", () => {
       "payWeekRoll.enabled",
       "autopilotRules.enabled",
       "activityFeed.enabled",
+      "signInTour.enabled",
     ];
     const offOnly = LOCAL_OFF_ONLY as readonly string[];
     expect(KEPT_OFF.filter((k) => offOnly.includes(k))).toEqual(KEPT_OFF.filter((k) => armedAhead.includes(k)));

@@ -87,7 +87,8 @@ async function visit(): Promise<string> {
   jar.set(SESSION_COOKIE, result.idToken, options);
   jar.set(DEMO_COOKIE, started.id, options);
   console.info(`demo sign-in: ${started.reused ? "visit kept" : "visit started"}`);
-  return "/";
+  // While the walkthrough is on, every sign-in lands on it; off, on Home as before.
+  return flags.signInTour.enabled === true ? "/?welcome=1" : "/";
 }
 
 export async function tryDemoAction(): Promise<void> {

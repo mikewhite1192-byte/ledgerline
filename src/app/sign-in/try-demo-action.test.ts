@@ -326,3 +326,20 @@ describe("tryDemoAction sign-in", () => {
     ]);
   });
 });
+
+describe("tryDemoAction and the sign-in walkthrough", () => {
+  it("lands on the walkthrough only while its switch is on, and on Home as before while it is off", async () => {
+    const savedTour = flags.signInTour.enabled;
+    try {
+      flags.signInTour.enabled = false;
+      expect(await run()).toBe("/");
+      flags.signInTour.enabled = true;
+      expect(await run()).toBe("/?welcome=1");
+      // A refusal still goes back to the sign-in page.
+      flags.judgeAccess.enabled = false;
+      expect(await run()).toBe("/sign-in?demo=unavailable");
+    } finally {
+      flags.signInTour.enabled = savedTour;
+    }
+  });
+});

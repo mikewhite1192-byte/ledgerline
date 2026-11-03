@@ -22,6 +22,7 @@ import { CashFlowCard, OwedCard } from "@/components/home/money-cards";
 import { FeedCard } from "@/components/feed/feed-card";
 import { PaydayCard } from "@/components/home/payday-card";
 import { TodayCard } from "@/components/home/today-card";
+import { Tour } from "@/components/home/tour";
 import { NewHereLine } from "@/components/help/how-pay-works";
 import { Button } from "@/components/ui/button";
 import { Card, CardBody, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
@@ -53,6 +54,8 @@ import { codeToWords, modelCallStatusLabel } from "@/lib/format/labels";
 import { readPaystubAsk } from "@/lib/settlements/list";
 import { readSettlementsView } from "@/lib/settlements/views";
 import { readLatestSweepRun } from "@/lib/sweep/view";
+import { readTourFacts } from "@/lib/tour/facts";
+import { tourFooter, tourSteps } from "@/lib/tour/steps";
 import { ForbiddenError, withRequestTenant } from "@/lib/tenant/context";
 import { carrierToday } from "@/lib/tenant/shell";
 import { localTimeOf, type LocalDate } from "@/lib/time/local-date";
@@ -85,6 +88,8 @@ type Carrier = {
 // goes first among the suggestions and fills the box. Anything else is ignored.
 // ?ask=<card>, from a Home card's "Ask about this": that card's question, one of the suggested
 // questions; only the card's name is taken from the address.
+// ?welcome=1, where both sign-in actions land while the walkthrough is on (and its "Show me around"
+// shortcut): the walkthrough panel on top. Off, the address is ignored.
 export default async function Home({
   searchParams,
 }: {
@@ -102,6 +107,7 @@ export default async function Home({
   const startOver = params.new === "1";
   const askedPaystub = params.paystub;
   const askedCard = isCardAsk(params.ask) ? params.ask : null;
+  const tourShown = flags.signInTour.enabled === true && params.welcome === "1";
   const paystubId =
     typeof askedPaystub === "string" && isUuid(askedPaystub) ? askedPaystub.toLowerCase() : null;
   let carrier: Carrier | null = null;
@@ -179,6 +185,10 @@ export default async function Home({
         // Home's cards, each in its own carrier transaction and only while its page is on, so one
         // failed read shows that card as unavailable and leaves the rest of the page alone.
         readCards(carrierToday(carrier.timezone, now), carrier.timezone),
+        // The walkthrough's own reads, only when it shows. Each says so in its step when it fails.
+        tourShown
+          ? readTourFacts({ now, today: carrierToday(carrier.timezone, now), timezone: carrier.timezone })
+          : null,
       ])
     : null;
 
@@ -198,7 +208,7 @@ export default async function Home({
     );
   }
 
-  const [turns, needsRows, lastSweep, cashHome, cards] = reads;
+  const [turns, needsRows, lastSweep, cashHome, cards, tourFacts] = reads;
   const agentTurns = turns.turns;
   // "Needs you" never reads as "nothing is waiting" when its rows or the agent's turns were not read.
   const rows = needsRows ?? [];
@@ -228,6 +238,25 @@ export default async function Home({
   // question.
   const askHref = (card: CardAsk) => (flags.agentEnabled ? `/?ask=${card}` : undefined);
   const today = carrierToday(carrier.timezone, now);
+  const tour = tourFacts
+    ? {
+        steps: tourSteps({
+          role: carrier.role,
+          timezone: carrier.timezone,
+          facts: tourFacts,
+          needs: needsYou,
+          payday: cards.payday,
+          firstQuestion: suggestions[0]?.label,
+          on: {
+            activityFeed: flags.activityFeed.enabled === true,
+            adminAboveCents: flags.approverRole.adminAboveCents,
+            judgeTurns: flags.judgeAccess.turnsPerSession,
+            judgeCapCents: flags.judgeAccess.sessionCapCents,
+          },
+        }),
+        footer: tourFooter(tourFacts),
+      }
+    : null;
 
   return (
     <AppShell
@@ -254,6 +283,7 @@ export default async function Home({
     >
       <h1 className="sr-only">Home</h1>
       <div className="grid gap-8">
+        {tour ? <Tour steps={tour.steps} footer={tour.footer} /> : null}
         <Greeting
           name={carrier.name}
           today={today}
@@ -402,7 +432,7 @@ async function readNeedsRows(carrier: Carrier, now: Date): Promise<NeedsYouRow[]
 }
 
 // The greeting's shortcuts, each only while its page is on. Running payday opens the sweep when it
-// is on, else the pay run.
+// is on, else the pay run. "Show me around" reopens the walkthrough while it is on.
 function shortcuts(): Shortcut[] {
   const payday = flags.sweepEnabled ? "/sweep" : flags.settlementsEnabled ? "/settlements" : null;
   return [
@@ -410,6 +440,8 @@ function shortcuts(): Shortcut[] {
     flags.advancesEnabled ? { label: "Advance", href: "/advances/new" } : null,
     flags.documentsEnabled ? { label: "Upload document", href: "/documents" } : null,
     flags.customerPaymentsEnabled ? { label: "Record payment", href: "/customer-payments/new" } : null,
+    // A full page load, so the walkthrough opens again even after it was closed on this address.
+    flags.signInTour.enabled === true ? { label: "Show me around", href: "/?welcome=1", reload: true } : null,
   ].filter((s) => s !== null);
 }
 

@@ -133,6 +133,11 @@ Start here, no login needed:
    and $1.00 of model spend, and the demo is capped at $8.00 a day, so a visit can end early.
 3. Ask the agent about a driver's advance, then open "How this was worked out" under the answer.
 
+With the walkthrough switched on (`signInTour`, off until released), every sign-in opens a short
+panel at the top of Home: the agent's morning line, then what waits for a person, the pay week,
+the autopilot rules, the dispatch board and the live feed, each with the carrier's own number and
+an "Ask about this" that fills the agent's box. "Show me around" opens it again.
+
 The demo has two synthetic carriers, each with its own login, and each sees only its own data.
 The logins that can approve cards and change settings are in the submission notes.
 
