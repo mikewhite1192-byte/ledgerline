@@ -24,15 +24,17 @@ import { carrierToday, readShell, type ShellTenant } from "@/lib/tenant/shell";
 
 export const dynamic = "force-dynamic";
 
+// The page opens on its first shown tab, the invoices themselves, so the list is the first thing a
+// person sees; the work queues follow.
 const TABS = [
-  { key: "review", label: "Review" },
-  { key: "to-invoice", label: "To invoice" },
-  { key: "exceptions", label: "Exceptions" },
   { key: "invoices", label: "Invoices" },
+  { key: "to-invoice", label: "To invoice" },
+  { key: "review", label: "Review" },
+  { key: "exceptions", label: "Exceptions" },
 ] as const;
 type Tab = (typeof TABS)[number]["key"];
 
-// The Review tab shows, and is the first tab, only while the review switch is on.
+// The Review tab shows only while the review switch is on.
 const reviewOn = () => flags.invoicesEnabled && flags.invoiceReviewEnabled;
 const tabsShown = () => TABS.filter((t) => t.key !== "review" || reviewOn());
 const isReviewStatus = (v: unknown): v is InvoiceReviewStatus =>

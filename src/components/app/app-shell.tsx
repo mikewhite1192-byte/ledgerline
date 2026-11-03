@@ -12,12 +12,13 @@ import { flags, stepThroughShown } from "@/config/flags";
 import { cn } from "@/lib/cn";
 import { NEEDS_YOU_ANCHOR } from "./anchors";
 import { AreaTabs, type AreaTab } from "./area-tabs";
-import { DemoBanner } from "./demo-banner";
+import { DemoBanner, VisitorNotice } from "./demo-banner";
 import { MobileNav } from "./mobile-nav";
 import { Money } from "./money";
 import { MENU_AREAS, type MenuArea } from "./nav/menu-item";
 import { NavList, navRowClass, type NavItem } from "./nav-list";
 import type { Suggestion } from "./prompt-chips";
+import { SectionNav } from "./section-nav";
 import { AccountParts, CarrierTile, TenantSwitcher, type TenantInfo } from "./tenant-switcher";
 import { TestModeBanner, testModeOnly } from "./test-mode-banner";
 import { AskLink, TopBar } from "./top-bar";
@@ -159,6 +160,11 @@ function AreaNav({ nav, agentOn, pinned }: { nav: NavItem[]; agentOn: boolean; p
 // ones unless it passes its own, as Home does), and `agentOpening` asks the card to open as the
 // page loads (Home's links). The public /design specimen passes agentPanel={false}. `askBox`
 // false leaves the top bar's box out on a page that has its own (the simple Home).
+//
+// Under the simple shape (flags.simpleShape) the menu is the five-word SectionNav, with no
+// Pinned amounts and no Needs you or Ask rows (the bell and the floating button do those jobs), and
+// the top carries one notice, not three: a demo visitor's line (VisitorNotice) in place of both the
+// test-mode line and the demo line, else the test-mode line; the top bar's test-mode chip goes.
 export function AppShell({
   tenant,
   nav,
@@ -194,11 +200,25 @@ export function AppShell({
   const testMode = testModeOnly();
   const agentOn = flags.agentEnabled === true;
   const panelOn = agentPanel && agentOn;
-  const list = nav.some((i) => i.area !== undefined) ? (
-    <AreaNav nav={nav} agentOn={agentOn} pinned={pinned} />
-  ) : (
-    <NavList items={nav} />
-  );
+  const simple = flags.simpleShape.enabled === true;
+  const visitor = tenant.role === "judge";
+  const list =
+    simple && nav.some((i) => i.section !== undefined) ? (
+      <SectionNav nav={nav} />
+    ) : nav.some((i) => i.area !== undefined) ? (
+      <AreaNav nav={nav} agentOn={agentOn} pinned={pinned} />
+    ) : (
+      <NavList items={nav} />
+    );
+  // The one slot across the top. Off, the test-mode line sits there and a visitor's line sits
+  // under it, above the top bar.
+  const notice =
+    simple && visitor ? (
+      <VisitorNotice carrier={tenant.name} testMode={testMode} />
+    ) : testMode ? (
+      <TestModeBanner />
+    ) : null;
+  const offset = notice !== null;
   const shell = (
     <div className="min-h-dvh bg-background">
       <a
@@ -207,12 +227,12 @@ export function AppShell({
       >
         Skip to content
       </a>
-      {testMode ? <TestModeBanner /> : null}
+      {notice}
       <div className="lg:flex">
         <aside
           className={cn(
             "z-30 hidden w-[250px] shrink-0 flex-col self-start border-r border-border bg-card lg:sticky lg:flex",
-            testMode ? "lg:top-9 lg:h-[calc(100dvh-2.25rem)]" : "lg:top-0 lg:h-dvh",
+            offset ? "lg:top-9 lg:h-[calc(100dvh-2.25rem)]" : "lg:top-0 lg:h-dvh",
           )}
         >
           <div className="px-3 pt-3 pb-2">
@@ -229,12 +249,12 @@ export function AppShell({
           </div>
         </aside>
         <div className="min-w-0 flex-1">
-          {tenant.role === "judge" ? <DemoBanner carrier={tenant.name} /> : null}
+          {visitor && !simple ? <DemoBanner carrier={tenant.name} /> : null}
           <TopBar
-            offset={testMode}
+            offset={offset}
             agentOn={agentOn}
             askBox={askBox}
-            testMode={testMode}
+            testMode={testMode && !simple}
             needsYouCount={needsYouCount}
             menu={
               <MobileNav

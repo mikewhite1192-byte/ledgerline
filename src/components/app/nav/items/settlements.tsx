@@ -10,4 +10,7 @@ export const settlements = {
   label: "Settlements",
   icon: <Banknote aria-hidden />,
   shown: () => flags.settlementsEnabled === true,
+  section: "pay",
+  sectionOrder: 10,
+  sectionLabel: "Paystubs",
 } as const satisfies MenuItem;

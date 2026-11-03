@@ -10,4 +10,6 @@ export const collections = {
   label: "Collections",
   icon: <BellRing aria-hidden />,
   shown: () => flags.collectionsEnabled === true,
+  section: "billing",
+  sectionOrder: 20,
 } as const satisfies MenuItem;

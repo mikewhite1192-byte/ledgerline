@@ -10,4 +10,6 @@ export const quarterReview = {
   label: "Quarter review",
   icon: <CalendarRange aria-hidden />,
   shown: () => flags.quarterReviewEnabled === true,
+  section: "billing",
+  sectionOrder: 60,
 } as const satisfies MenuItem;

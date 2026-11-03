@@ -10,4 +10,6 @@ export const memory = {
   label: "Memory",
   icon: <Brain aria-hidden />,
   shown: () => flags.carrierMemoryEnabled === true,
+  section: "settings",
+  sectionOrder: 50,
 } as const satisfies MenuItem;

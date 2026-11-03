@@ -10,4 +10,6 @@ export const moneyCodes = {
   label: "Money codes",
   icon: <Ticket aria-hidden />,
   shown: () => flags.moneyCodes.enabled === true,
+  section: "pay",
+  sectionOrder: 50,
 } as const satisfies MenuItem;

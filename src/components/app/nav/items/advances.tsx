@@ -10,4 +10,6 @@ export const advances = {
   label: "Advances",
   icon: <HandCoins aria-hidden />,
   shown: () => flags.advancesEnabled === true,
+  section: "pay",
+  sectionOrder: 30,
 } as const satisfies MenuItem;

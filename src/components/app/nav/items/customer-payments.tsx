@@ -10,4 +10,6 @@ export const customerPayments = {
   label: "Payments",
   icon: <Wallet aria-hidden />,
   shown: () => flags.customerPaymentsEnabled === true,
+  section: "billing",
+  sectionOrder: 30,
 } as const satisfies MenuItem;

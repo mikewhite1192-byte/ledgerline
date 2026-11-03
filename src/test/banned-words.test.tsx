@@ -14,7 +14,9 @@ import { reportTable, type ReportLoad } from "@/components/agent/report-table";
 import { toMessages } from "@/components/agent/turn-view";
 import { ChatThread } from "@/components/app/chat-thread";
 import { DataTable } from "@/components/app/data-table";
-import { DemoBanner } from "@/components/app/demo-banner";
+import { DemoBanner, VisitorNotice } from "@/components/app/demo-banner";
+import { SectionNav } from "@/components/app/section-nav";
+import { appNav } from "@/components/app/app-nav";
 import { TestModeBanner } from "@/components/app/test-mode-banner";
 import { TopBar } from "@/components/app/top-bar";
 import { Paystub } from "@/components/app/paystub";
@@ -778,6 +780,13 @@ async function simpleHome(welcome = false): Promise<ReactNode> {
   }
 }
 
+// Any page with the simple shape's switch on: the five-word menu and one notice across the top.
+// The shell reads the switch while it renders, after load returns, so a variant turns it on in its
+// setup and the afterEach above puts it back.
+const simpleOn = () => {
+  flags.simpleShape = { enabled: true };
+};
+
 // The simple Home's day: Nov 2 in New York, with a pay check that started that morning and the
 // feed's rows from late that morning.
 function simpleDay() {
@@ -809,9 +818,11 @@ beforeEach(() => {
   state.fx = defaults();
   state.session = null;
 });
+const savedSimpleShape = { ...flags.simpleShape };
 afterEach(() => {
   cleanup();
   vi.useRealTimers();
+  flags.simpleShape = { ...savedSimpleShape };
 });
 
 // The Cash page and Home's Friday card read the carrier's today; these variants pin it (only Date is
@@ -1582,6 +1593,12 @@ const PAGES: PageCase[] = [
     file: "invoices/page.tsx",
     variants: [
       { name: "first tab", load: async () => (await import("@/app/invoices/page")).default(sp()) },
+      {
+        name: "first tab, the simple shape",
+        setup: simpleOn,
+        load: async () => (await import("@/app/invoices/page")).default(sp()),
+        shows: ["Invoices", "Collections", "Payments", "Profit brief"],
+      },
       ...["review", "to-invoice", "exceptions", "invoices"].map((tab) => ({
         name: tab,
         load: async () => (await import("@/app/invoices/page")).default(sp({ tab })),
@@ -2059,6 +2076,15 @@ const PAGES: PageCase[] = [
         },
         shows: ["Rosa Delgado", "Add driver"],
       },
+      {
+        name: "the simple shape, a demo carrier",
+        setup: () => {
+          onDay("2026-11-02T15:00:00.000Z");
+          simpleOn();
+        },
+        load: async () => (await import("@/app/drivers/page")).default(sp()),
+        shows: ["Rosa Delgado", "Dispatch board", "Documents"],
+      },
     ],
   },
   {
@@ -2082,6 +2108,12 @@ const PAGES: PageCase[] = [
     file: "settlements/page.tsx",
     variants: [
       { name: "week", load: async () => (await import("@/app/settlements/page")).default(sp()) },
+      {
+        name: "week, the simple shape",
+        setup: simpleOn,
+        load: async () => (await import("@/app/settlements/page")).default(sp()),
+        shows: ["Paystubs", "Pay check", "Friday's cash"],
+      },
       {
         name: "nothing clean, waiting for the second check",
         setup: () => (state.fx.settlementsView = { ...fx.SETTLEMENTS_VIEW, clean: { items: [], totalCents: 0 }, awaitingAuditor: 2 }),
@@ -2147,6 +2179,22 @@ const PAGES: PageCase[] = [
         name: `note ${qbo}`,
         load: async () => (await import("@/app/settings/accounting/page")).default(sp({ qbo })),
       })),
+    ],
+  },
+  {
+    file: "settings/page.tsx",
+    variants: [
+      {
+        name: "every settings page on",
+        load: async () => (await import("@/app/settings/page")).default(),
+        shows: ["Settings", "Pay rules", "Autopilot", "QuickBooks", "For the curious", "Models and spend", "How trucking pay works"],
+      },
+      {
+        name: "the simple shape",
+        setup: simpleOn,
+        load: async () => (await import("@/app/settings/page")).default(),
+        shows: ["Pay rules", "Models and spend", "Home", "Billing"],
+      },
     ],
   },
   {
@@ -3542,6 +3590,29 @@ describe("no internal word in a shared state", () => {
     expect(container.textContent).toContain("Search or ask anything");
     expect(container.textContent).toContain("Test mode");
     expect(scan(container)).toEqual([]);
+  });
+
+  it("the simple shape's menu with every page open in turn, and the visitor's one line in both modes", () => {
+    const savedSimple = { ...flags.simpleShape };
+    flags.simpleShape = { enabled: true };
+    try {
+      const nav = appNav("none");
+      const { container } = render(
+        <>
+          {nav.map((item) => (
+            <SectionNav key={item.href} nav={appNav(item.href as Parameters<typeof appNav>[0])} />
+          ))}
+          <VisitorNotice carrier="Blue Ridge Freight" testMode />
+          <VisitorNotice carrier="Blue Ridge Freight" testMode={false} />
+        </>,
+      );
+      for (const words of ["Paystubs", "Pay check", "Friday's cash", "Settings", "Models and spend", "Nothing real moves."]) {
+        expect(container.textContent).toContain(words);
+      }
+      expect(scan(container)).toEqual([]);
+    } finally {
+      flags.simpleShape = savedSimple;
+    }
   });
 
   it("the agent launcher, and its card opened on a pay week's paystub with the chip on and the + menu open", async () => {

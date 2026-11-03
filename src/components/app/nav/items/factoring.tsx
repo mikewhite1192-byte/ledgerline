@@ -10,4 +10,6 @@ export const factoring = {
   label: "Factoring",
   icon: <FileStack aria-hidden />,
   shown: () => flags.factoring?.enabled === true,
+  section: "billing",
+  sectionOrder: 40,
 } as const satisfies MenuItem;

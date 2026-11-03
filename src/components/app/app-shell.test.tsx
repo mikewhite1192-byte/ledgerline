@@ -2,7 +2,7 @@
 import { readFileSync } from "node:fs";
 import path from "node:path";
 import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
-import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, onTestFinished, vi } from "vitest";
 import type { PageFocus } from "@/components/agent/page-focus";
 import { flags } from "@/config/flags";
 import { AppShell, type NavItem } from "./app-shell";
@@ -27,9 +27,11 @@ function memoryStorage(): Storage {
 
 const savedAgent = flags.agentEnabled;
 const savedFocus = flags.agentFocusEnabled;
+const savedSimple = flags.simpleShape.enabled;
 afterEach(() => {
   flags.agentEnabled = savedAgent;
   flags.agentFocusEnabled = savedFocus;
+  flags.simpleShape.enabled = savedSimple;
   vi.unstubAllEnvs();
   vi.unstubAllGlobals();
   delete document.documentElement.dataset.amounts;
@@ -159,6 +161,165 @@ describe("the sidebar", () => {
     );
     expect(container.querySelector('ul[aria-label="Areas"]')).toBeNull();
     expect(within(container.querySelector("aside") as HTMLElement).getByRole("link", { name: "First" })).toBeTruthy();
+  });
+});
+
+// The simple shape (flags.simpleShape): the five-word menu and one notice across the top.
+const SIMPLE_NAV: NavItem[] = [
+  { group: "Today", area: "primary", section: "home", sectionOrder: 0, href: "/", label: "Home", icon: null },
+  { group: "Today", area: "pay", section: "home", sectionOrder: 10, href: "/activity", label: "Live feed", icon: null },
+  { group: "Pay", area: "pay", section: "pay", sectionOrder: 10, sectionLabel: "Paystubs", href: "/settlements", label: "Settlements", icon: null },
+  { group: "Pay", area: "pay", section: "pay", sectionOrder: 20, sectionLabel: "Pay check", href: "/sweep", label: "Pay sweep", icon: null },
+  { group: "Pay", area: "pay", section: "pay", sectionOrder: 30, href: "/advances", label: "Advances", icon: null },
+  { group: "Money in", area: "billing", section: "billing", sectionOrder: 10, href: "/invoices", label: "Invoices", icon: null },
+  { group: "Drivers", area: "pay", section: "drivers", sectionOrder: 10, href: "/drivers", label: "Drivers", icon: null },
+  { group: "Settings", area: "books", section: "settings", sectionOrder: 0, href: "/settings", label: "Settings", icon: null },
+  { group: "Settings", area: "books", section: "settings", sectionOrder: 80, href: "/models", label: "Models and spend", icon: null },
+];
+
+function simpleShell(current: string | null, role: "admin" | "staff" | "judge" = "staff", nav = SIMPLE_NAV) {
+  flags.simpleShape.enabled = true;
+  return render(
+    <AppShell
+      tenant={{ ...TENANT, name: "Blue Ridge Freight Lines", role }}
+      nav={nav.map((i) => ({ ...i, current: i.href === current }))}
+      title="Page"
+      signOut={<button type="button">Sign out</button>}
+      pinned={{ payWeekCents: 100_00, dueCents: 200_00 }}
+    >
+      <p>Body</p>
+    </AppShell>,
+  );
+}
+
+describe("the sidebar under the simple shape", () => {
+  const aside = (c: HTMLElement) => c.querySelector("aside") as HTMLElement;
+  const rows = (c: HTMLElement) =>
+    [...aside(c).querySelectorAll('ul[aria-label="Sections"] > li > a')].map((a) => [
+      a.textContent,
+      a.getAttribute("href"),
+      a.getAttribute("aria-current"),
+    ]);
+
+  it("shows the five words, each to its own page or its first page", () => {
+    const { container } = simpleShell("/");
+    expect(rows(container)).toEqual([
+      ["Home", "/", "page"],
+      ["Pay", "/settlements", null],
+      ["Billing", "/invoices", null],
+      ["Drivers", "/drivers", null],
+      ["Settings", "/settings", null],
+    ]);
+    // Home lists nothing under it; the live feed is reached from Home's own link.
+    expect(within(aside(container)).queryByRole("link", { name: "Live feed" })).toBeNull();
+    expect(within(aside(container)).queryByRole("list", { name: "Pay" })).toBeNull();
+  });
+
+  it("opens the current page's section with its pages under it, the exact page marked, the others closed", () => {
+    const { container } = simpleShell("/advances");
+    const pay = within(aside(container)).getByRole("list", { name: "Pay" });
+    expect(within(pay).getAllByRole("link").map((l) => [l.textContent, l.getAttribute("aria-current")])).toEqual([
+      ["Paystubs", null],
+      ["Pay check", null],
+      ["Advances", "page"],
+    ]);
+    expect(within(aside(container)).queryByRole("link", { name: "Invoices" })).toBeNull();
+    expect(rows(container).find((r) => r[0] === "Pay")?.[2]).toBeNull();
+  });
+
+  it("marks the Settings row itself on the Settings page, and lists its pages under it", () => {
+    const { container } = simpleShell("/settings");
+    expect(rows(container).find((r) => r[0] === "Settings")?.[2]).toBe("page");
+    const settings = within(aside(container)).getByRole("list", { name: "Settings" });
+    expect(within(settings).getAllByRole("link").map((l) => l.textContent)).toEqual(["Models and spend"]);
+  });
+
+  it("opens no section on a page with no menu item, and leaves out a section with no page shown", () => {
+    const { container } = simpleShell(
+      null,
+      "staff",
+      SIMPLE_NAV.filter((i) => i.section !== "billing"),
+    );
+    expect(rows(container).map((r) => r[0])).toEqual(["Home", "Pay", "Drivers", "Settings"]);
+    expect(aside(container).querySelectorAll('ul[aria-label="Sections"] ul')).toHaveLength(0);
+  });
+
+  it("leaves out the area tabs, Pinned, and the Needs you and Ask rows, and keeps the bell", () => {
+    flags.agentEnabled = true;
+    const { container } = simpleShell("/advances");
+    expect(container.querySelector('ul[aria-label="Areas"]')).toBeNull();
+    expect(container.querySelector('ul[aria-label="Pinned"]')).toBeNull();
+    expect(within(aside(container)).queryByRole("link", { name: "Needs you" })).toBeNull();
+    expect(within(aside(container)).queryByRole("link", { name: "Ask" })).toBeNull();
+    const header = container.ownerDocument.querySelector("header") as HTMLElement;
+    expect(within(header).getByRole("link", { name: "Needs you" }).getAttribute("href")).toBe("/#needs-you");
+  });
+
+  it("puts the same five words in the phone sheet", () => {
+    // jsdom has no dialog methods: opening sets the attribute.
+    HTMLDialogElement.prototype.showModal = function showModal(this: HTMLDialogElement) {
+      this.setAttribute("open", "");
+    };
+    onTestFinished(() => void Reflect.deleteProperty(HTMLDialogElement.prototype, "showModal"));
+    simpleShell("/advances");
+    fireEvent.click(screen.getByRole("button", { name: "Open menu" }));
+    const sheets = screen.getAllByRole("list", { name: "Sections", hidden: true });
+    expect(sheets).toHaveLength(2);
+    expect(within(sheets[1]).getAllByRole("link", { hidden: true }).map((l) => l.textContent)).toEqual([
+      "Home",
+      "Pay",
+      "Paystubs",
+      "Pay check",
+      "Advances",
+      "Billing",
+      "Drivers",
+      "Settings",
+    ]);
+  });
+});
+
+describe("one notice across the top under the simple shape", () => {
+  const regions = () =>
+    screen.queryAllByRole("region").filter((r) => ["Test mode", "Demo visit"].includes(r.getAttribute("aria-label") ?? ""));
+
+  it("gives staff the test-mode line alone, with no chip in the top bar", () => {
+    vi.stubEnv("QBO_ENVIRONMENT", "sandbox");
+    simpleShell("/advances");
+    expect(regions().map((r) => [r.getAttribute("aria-label"), r.textContent])).toEqual([["Test mode", TEST_MODE_LINE]]);
+    expect(screen.queryByRole("link", { name: "Test mode" })).toBeNull();
+  });
+
+  it("gives a demo visitor one line in place of the test-mode line and the demo line", () => {
+    vi.stubEnv("QBO_ENVIRONMENT", "sandbox");
+    simpleShell("/advances", "judge");
+    const only = regions();
+    expect(only).toHaveLength(1);
+    expect(only[0].getAttribute("aria-label")).toBe("Demo visit");
+    expect(only[0].querySelector("p")?.textContent).toBe("Demo of Blue Ridge Freight Lines, made-up data. Nothing real moves.");
+    expect(within(only[0]).getByRole("button", { name: "Start over" })).toBeTruthy();
+    expect(within(only[0]).getByRole("button", { name: "Leave" })).toBeTruthy();
+    expect(screen.queryByRole("link", { name: "Test mode" })).toBeNull();
+  });
+
+  it("never says nothing real moves when the books point anywhere but the sandbox", () => {
+    vi.stubEnv("QBO_ENVIRONMENT", "production");
+    simpleShell("/advances", "judge");
+    expect(regions().map((r) => r.querySelector("p")?.textContent)).toEqual(["Demo of Blue Ridge Freight Lines, made-up data."]);
+    cleanup();
+    simpleShell("/advances", "staff");
+    expect(regions()).toEqual([]);
+  });
+
+  it("keeps both lines and the chip with the switch off", () => {
+    vi.stubEnv("QBO_ENVIRONMENT", "sandbox");
+    flags.simpleShape.enabled = false;
+    render(
+      <AppShell tenant={{ ...TENANT, role: "judge" }} nav={NAV} title="Page" signOut={null}>
+        <p>Body</p>
+      </AppShell>,
+    );
+    expect(regions().map((r) => r.getAttribute("aria-label"))).toEqual(["Test mode", "Demo visit"]);
+    expect(screen.getByRole("link", { name: "Test mode" })).toBeTruthy();
   });
 });
 

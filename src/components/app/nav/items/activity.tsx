@@ -10,4 +10,6 @@ export const activity = {
   label: "Live feed",
   icon: <Activity aria-hidden />,
   shown: () => flags.activityFeed.enabled === true,
+  section: "home",
+  sectionOrder: 10,
 } as const satisfies MenuItem;

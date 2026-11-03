@@ -10,4 +10,6 @@ export const portalRuns = {
   label: "Portal runs",
   icon: <Globe aria-hidden />,
   shown: () => flags.portalRunnerEnabled === true,
+  section: "settings",
+  sectionOrder: 60,
 } as const satisfies MenuItem;
