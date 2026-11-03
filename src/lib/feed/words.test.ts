@@ -69,10 +69,10 @@ describe("feedLine", () => {
       admin: "Admin",
       staff: "Staff",
       judge: "Demo visitor",
-      autopilot: "Autopilot",
-      agent: "Agent",
-      engine: "Rules engine",
-      desk: "Desk",
+      autopilot: "Autopilot (your rules)",
+      agent: "LedgerLine",
+      engine: "LedgerLine",
+      desk: "LedgerLine",
       someone: "Someone",
     });
     const decided = { event: "proposal_decided", code: "rejected", title: "Advance for Driver 7" } as const;
@@ -84,17 +84,17 @@ describe("feedLine", () => {
 
   it("reads a proposal as drafted, audited and decided", () => {
     const p = { title: "Advance for Driver 7", cents: 12500, direction: "out", kind: "advance_payout" } as const;
-    expect(say({ ...p })).toBe("Agent proposed Advance for Driver 7, $125.00 out");
-    expect(say({ ...p, direction: "in" })).toBe("Agent proposed Advance for Driver 7, $125.00 in");
-    expect(say({ ...p, direction: "none", cents: 0 })).toBe("Agent proposed Advance for Driver 7");
-    expect(say({ ...p, actor: "engine" })).toBe("Rules engine proposed Advance for Driver 7, $125.00 out");
-    expect(say({ ...p, direction: "none", cents: 500 })).toBe("Agent proposed Advance for Driver 7");
+    expect(say({ ...p })).toBe("LedgerLine proposed Advance for Driver 7, $125.00 out");
+    expect(say({ ...p, direction: "in" })).toBe("LedgerLine proposed Advance for Driver 7, $125.00 in");
+    expect(say({ ...p, direction: "none", cents: 0 })).toBe("LedgerLine proposed Advance for Driver 7");
+    expect(say({ ...p, actor: "engine" })).toBe("LedgerLine proposed Advance for Driver 7, $125.00 out");
+    expect(say({ ...p, direction: "none", cents: 500 })).toBe("LedgerLine proposed Advance for Driver 7");
     expect(feedLine(row({ ...p, code: "ask", reason: "over_item_limit" }), ZONE)?.tag).toBe(
       "Autopilot: asks a person (over its limit each time)",
     );
     expect(feedLine(row({ ...p, code: "off", reason: "mode_off" }), ZONE)?.tag).toBe("Autopilot: off for this kind");
     expect(feedLine(row({ ...p }), ZONE)?.tag).toBeNull();
-    expect(say({ ...p, title: null })).toBe("Agent proposed a proposal, $125.00 out");
+    expect(say({ ...p, title: null })).toBe("LedgerLine proposed a proposal, $125.00 out");
 
     const audit = { ...p, event: "proposal_audited" } as const;
     expect(say({ ...audit, code: "pass" })).toBe("Audit passed: Advance for Driver 7");
@@ -105,9 +105,9 @@ describe("feedLine", () => {
     const decided = { ...p, event: "proposal_decided", code: "approved" } as const;
     expect(say({ ...decided, actor: "admin" })).toBe("Admin approved Advance for Driver 7, $125.00");
     expect(say({ ...decided, actor: "autopilot", limitCents: 50000 })).toBe(
-      "Autopilot approved Advance for Driver 7, $125.00, within its limit of $500.00",
+      "Autopilot (your rules) approved Advance for Driver 7, $125.00, within its limit of $500.00",
     );
-    expect(say({ ...decided, actor: "autopilot" })).toBe("Autopilot approved Advance for Driver 7, $125.00");
+    expect(say({ ...decided, actor: "autopilot" })).toBe("Autopilot (your rules) approved Advance for Driver 7, $125.00");
     expect(say({ ...decided, actor: "staff", direction: "none" })).toBe("Staff approved Advance for Driver 7");
   });
 
@@ -116,7 +116,7 @@ describe("feedLine", () => {
     expect(say({ ...m, event: "money_sent", code: "sent" })).toBe("Fuel card load sent, $125.00");
     expect(feedLine(row({ ...m, event: "money_sent", code: "sent" }), ZONE)?.tag).toBe("Test mode");
     expect(say({ ...m, event: "money_sent", code: "unknown" })).toBe(
-      "Not confirmed yet: Fuel card load, $125.00; the desk will read it back",
+      "Not confirmed yet: Fuel card load, $125.00; it will be checked again",
     );
     expect(say({ ...m, event: "money_settled", code: "confirmed" })).toBe("Confirmed: Fuel card load, $125.00");
     expect(say({ ...m, event: "money_settled", code: "confirmed", once: true })).toBe("Paid and confirmed: Fuel card load, $125.00");
@@ -137,16 +137,16 @@ describe("feedLine", () => {
 
   it("reads the desk's steps, a held autopilot step, and drops a wake that finished nothing", () => {
     const d = { actor: "desk", key: `desk:${ID}` } as const;
-    expect(say({ ...d, event: "desk_claimed", kind: "card_transaction" })).toBe("Desk picked up a card transaction");
-    expect(say({ ...d, event: "desk_done", kind: "inbound_message", code: "drafted" })).toBe("Desk finished a message: drafted");
-    expect(say({ ...d, event: "desk_failed", kind: "audit", code: "threw" })).toBe("Desk could not finish an audit: threw");
-    expect(say({ ...d, event: "desk_skipped", kind: "sweep", code: "switched_off" })).toBe("Desk skipped a pay sweep: switched off");
+    expect(say({ ...d, event: "desk_claimed", kind: "card_transaction" })).toBe("Picked up a card transaction");
+    expect(say({ ...d, event: "desk_done", kind: "inbound_message", code: "drafted" })).toBe("Finished a message: drafted");
+    expect(say({ ...d, event: "desk_failed", kind: "audit", code: "threw" })).toBe("Could not finish an audit: threw");
+    expect(say({ ...d, event: "desk_skipped", kind: "sweep", code: "switched_off" })).toBe("Skipped a pay check: switched off");
     expect(say({ ...d, event: "desk_skipped", kind: "autopilot", code: "paused" })).toBe("Autopilot held an autopilot step: paused");
     expect(say({ ...d, event: "desk_skipped", kind: "autopilot", code: "before_start" })).toBe("Autopilot held an autopilot step: before start");
     expect(say({ ...d, event: "desk_skipped", kind: "autopilot", code: "no_rule" })).toBe("Autopilot held an autopilot step: no rule");
-    expect(say({ ...d, event: "desk_done", kind: "brand_new_source" })).toBe("Desk finished a brand new source");
-    expect(say({ ...d, event: "desk_sleep", count: 3 })).toBe("Desk checked in: 3 things done");
-    expect(say({ ...d, event: "desk_sleep", count: 1 })).toBe("Desk checked in: 1 thing done");
+    expect(say({ ...d, event: "desk_done", kind: "brand_new_source" })).toBe("Finished a brand new source");
+    expect(say({ ...d, event: "desk_sleep", count: 3 })).toBe("Checked the books: 3 things done");
+    expect(say({ ...d, event: "desk_sleep", count: 1 })).toBe("Checked the books: 1 thing done");
     expect(feedLine(row({ ...d, event: "desk_sleep", count: 0 }), ZONE)).toBeNull();
     expect(feedLine(row({ ...d, event: "desk_sleep", count: null }), ZONE)).toBeNull();
     expect(feedLines([row({ ...d, event: "desk_sleep", count: 0 }), row({ ...d, event: "desk_claimed" })], ZONE)).toHaveLength(1);

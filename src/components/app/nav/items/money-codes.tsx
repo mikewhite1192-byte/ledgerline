@@ -7,7 +7,7 @@ export const moneyCodes = {
   area: "pay",
   order: 35,
   href: "/money-codes",
-  label: "Money codes",
+  label: "Driver codes",
   icon: <Ticket aria-hidden />,
   shown: () => flags.moneyCodes.enabled === true,
   section: "pay",

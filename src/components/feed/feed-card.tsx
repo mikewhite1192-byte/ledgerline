@@ -11,7 +11,7 @@ export function FeedCard({ feed }: { feed: Loaded<FeedLine[]> }) {
       {!feed.ok ? (
         <Unavailable>Could not read the feed. Nothing changed.</Unavailable>
       ) : feed.value.length === 0 ? (
-        <Nothing>Each step the agent, the desk, the autopilot and people take with money shows here.</Nothing>
+        <Nothing>Everything done with money shows here.</Nothing>
       ) : (
         <FeedList lines={feed.value} />
       )}

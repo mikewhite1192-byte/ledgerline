@@ -34,7 +34,7 @@ import { readRecordPage } from "@/app/records/read-record";
 
 export const dynamic = "force-dynamic";
 
-const TITLE = "Card check";
+const TITLE = "Card charges";
 
 // The payment records that have their own page; any other is named in words only.
 const LINKED_RECORDS: readonly string[] = ["advances", "settlements", "invoices", "customer_payments"];
@@ -194,7 +194,7 @@ export default async function CardBreakPage({ params }: { params: Promise<{ brea
     return (
       <SignedInPage tenant={off.shell} current="/cards" title={TITLE}>
         <PageHeader title={TITLE} />
-        <FeatureOff name={TITLE} />
+        <FeatureOff name={TITLE} plural />
       </SignedInPage>
     );
   }
@@ -202,7 +202,7 @@ export default async function CardBreakPage({ params }: { params: Promise<{ brea
   if (page.kind === "problem") return <NoCarrierPage problem={page.problem} />;
   const back = (
     <Link href="/cards" className="text-link underline-offset-4 hover:underline">
-      Back to Card check
+      Back to Card charges
     </Link>
   );
   if (page.kind === "missing") {

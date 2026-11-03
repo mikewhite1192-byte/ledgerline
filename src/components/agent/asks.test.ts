@@ -166,6 +166,6 @@ describe("the text Ask a question puts in the box", () => {
     expect(askDraft(ask({ text: "I drafted a weekly settlement for Dana Reyes, $900.00. Approve?", proposalKind: "settlement_approve" }))).toBe(
       "About a weekly settlement: ",
     );
-    expect(askDraft({ text: "Morning digest. Needs you: nothing.", proposalKind: null })).toBe("About the morning digest: ");
+    expect(askDraft({ text: "Morning digest. Needs you: nothing.", proposalKind: null })).toBe("This morning: ");
   });
 });

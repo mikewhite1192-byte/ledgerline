@@ -59,8 +59,8 @@ describe("FeatureOff", () => {
   });
 
   it("uses is for one thing", () => {
-    render(<FeatureOff name="Pay sweep" />);
-    expect(screen.getByRole("heading", { name: "Pay sweep is off for this carrier" })).toBeTruthy();
+    render(<FeatureOff name="Pay check" />);
+    expect(screen.getByRole("heading", { name: "Pay check is off for this carrier" })).toBeTruthy();
   });
 });
 

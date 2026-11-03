@@ -424,7 +424,7 @@ describe("home's order and cards", () => {
     render(await Home({ searchParams: Promise.resolve({}) }));
     expect(mocks.readFeed).toHaveBeenCalledWith(expect.anything(), { limit: 3 });
     const feed = region("Live feed");
-    expect(within(feed).getByText("Desk picked up a card transaction")).toBeTruthy();
+    expect(within(feed).getByText("Picked up a card transaction")).toBeTruthy();
     expect(within(feed).getByText("Nov 10, 2026, 9:00 AM EST")).toBeTruthy();
     expect(within(feed).getByRole("link", { name: "Open the live feed" }).getAttribute("href")).toBe("/activity");
     cleanup();

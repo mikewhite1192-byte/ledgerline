@@ -32,6 +32,7 @@ import { doneNote } from "@/components/settlements/action-button";
 import { FuelChecks } from "@/components/fuel/fuel-checks";
 import { RuleChangeCards, type RuleChangeCard } from "@/components/pay-rules/rule-change-cards";
 import { HowWorkedOut } from "@/components/trace/how-worked-out";
+import { PlainModeProvider } from "@/components/trace/plain-mode";
 import { WriteBrief } from "@/components/profit/write-brief";
 import { WriteReview } from "@/components/quarter/write-review";
 import { ADVANCE_PROPOSAL, MOVE_PROPOSAL, PAYMENT_PROPOSAL, PAYSTUB, SHORT_WEEK_PAYSTUB } from "@/app/design/sample-data";
@@ -789,6 +790,13 @@ const simpleOn = () => {
   flags.simpleShape = { enabled: true };
 };
 
+// The plain words (flags.plainTrace) with the simple shape: the trace's "How I checked" and the
+// plain cards, read by the shell while it renders, put back by the afterEach above.
+const plainOn = () => {
+  simpleOn();
+  flags.plainTrace = { enabled: true };
+};
+
 // The simple Home's day: Nov 2 in New York, with a pay check that started that morning and the
 // feed's rows from late that morning.
 function simpleDay() {
@@ -823,10 +831,12 @@ beforeEach(() => {
   flags.simpleShape = { enabled: false };
 });
 const savedSimpleShape = { ...flags.simpleShape };
+const savedPlainTrace = { ...flags.plainTrace };
 afterEach(() => {
   cleanup();
   vi.useRealTimers();
   flags.simpleShape = { ...savedSimpleShape };
+  flags.plainTrace = { ...savedPlainTrace };
 });
 
 // The Cash page and Home's Friday card read the carrier's today; these variants pin it (only Date is
@@ -1092,7 +1102,7 @@ const PAGES: PageCase[] = [
           state.fx.feedHeader = { deskCheckedAt: "2026-11-02T16:30:00.000000Z", paused: true };
         },
         load: () => feedPage(),
-        shows: ["Autopilot approved Advance for Dana Reyes", "The autopilot is paused.", "Older"],
+        shows: ["Autopilot (your rules) approved Advance for Dana Reyes", "The autopilot is paused.", "Older"],
       },
       {
         name: "nothing yet",
@@ -1101,7 +1111,7 @@ const PAGES: PageCase[] = [
           state.fx.feedHeader = { deskCheckedAt: null, paused: false };
         },
         load: () => feedPage(),
-        shows: ["Nothing has happened with money yet.", "The desk has not checked in yet."],
+        shows: ["Nothing has happened with money yet.", "Has not checked the books yet."],
       },
       {
         name: "an older page",
@@ -1181,7 +1191,7 @@ const PAGES: PageCase[] = [
           state.fx.settlementsView = { ...fx.SETTLEMENTS_VIEW, rows: [] };
         },
         load: async () => (await import("@/app/page")).default(sp()),
-        shows: ["Nothing is waiting on you. Ask a question or open a page from the menu.", "No paystubs built for"],
+        shows: ["Nothing needs you right now.", "No paystubs built for"],
       },
       {
         name: "home, a quiet start",
@@ -1364,7 +1374,7 @@ const PAGES: PageCase[] = [
         name: "short, explained, with every move",
         setup: () => onDay("2026-11-02T15:00:00.000Z"),
         load: async () => (await import("@/app/cash/page")).default(),
-        shows: "Muse Wonder explains",
+        shows: "Every dollar amount in this note was checked against your figures.",
       },
       {
         name: "covered, the own sentence after a timeout, from an earlier day",
@@ -2368,12 +2378,21 @@ const PAGES: PageCase[] = [
   },
   {
     file: "sweep/page.tsx",
-    variants: [{ name: "home", load: async () => (await import("@/app/sweep/page")).default() }],
+    variants: [
+      { name: "home", load: async () => (await import("@/app/sweep/page")).default(), shows: ["Pay check", "Past checks"] },
+      { name: "simple, plain words", setup: plainOn, load: async () => (await import("@/app/sweep/page")).default(), shows: "Past checks (" },
+    ],
   },
   {
     file: "sweep/[id]/page.tsx",
     variants: [
       { name: "run", load: async () => (await import("@/app/sweep/[id]/page")).default({ params: p({ id: ID }) }) },
+      {
+        name: "simple, plain words",
+        setup: plainOn,
+        load: async () => (await import("@/app/sweep/[id]/page")).default({ params: p({ id: ID }) }),
+        shows: "How I checked",
+      },
       {
         name: "second check found nothing more",
         setup: () =>
@@ -2411,7 +2430,7 @@ const PAGES: PageCase[] = [
         setup: () =>
           (state.fx.sweepPage = { ...fx.SWEEP_PAGE, run: fx.SWEEP_RUN_MAX_TURNS, counts: { ...fx.SWEEP_PAGE.counts, left: 5 } }),
         load: async () => (await import("@/app/sweep/[id]/page")).default({ params: p({ id: ID }) }),
-        shows: "Stopped after 30 turns: 2 fixes drafted, 1 needs a person, 5 left for the next sweep. Nothing was paid.",
+        shows: "Stopped after 30 turns: 2 fixes drafted, 1 needs you, 5 left for the next check. Nothing was paid.",
       },
       {
         name: "second check stopped",
@@ -2868,6 +2887,26 @@ describe("no internal word on a card's Verified label", () => {
   }
 });
 
+// The plain card (flags.plainTrace): one trust line, the first reason, the rest under Details,
+// opened. No model name and no figure the everyday screens leave out (D-101).
+describe("no internal word on a plain card", () => {
+  it("advance card, every label state and verdict, with Details open", () => {
+    for (const verification of VERIFICATIONS) {
+      for (const audit of AUDITS) {
+        const { container, unmount } = render(
+          <PlainModeProvider plain>
+            <ProposalCard {...ADVANCE_PROPOSAL} status="proposed" audit={audit} verification={verification} onApprove={() => {}} onReject={() => {}} />
+          </PlainModeProvider>,
+        );
+        for (const summary of container.querySelectorAll("summary")) fireEvent.click(summary);
+        expect(scan(container), `${verification.line}, ${audit?.state ?? "no audit"}`).toEqual([]);
+        expect(container.textContent ?? "").not.toMatch(/Muse|\d+(\.\d+)? cents?\b|model time/i);
+        unmount();
+      }
+    }
+  });
+});
+
 // Every kind's card as the chat builds it, plus a kind the table has no row for, in every status;
 // a waiting card is also read with its approve question open and with its reject question open.
 const KIND_VIEWS: [string, ProposalView][] = (() => {
@@ -3247,6 +3286,25 @@ describe("no internal word in a chat answer or its trace", () => {
     expect(scan(body)).toEqual([]);
   });
 
+  it("the plain trace, for the answer and for a card", async () => {
+    render(
+      <PlainModeProvider plain>
+        <HowWorkedOut turnId={SAMPLE_TURN_ID} stepThrough load={async () => ({ trace: { ...sampleTrace(), notesUsed: fx.NOTES_USED } })} />
+        <HowWorkedOut turnId={SAMPLE_TURN_ID} proposalId={SAMPLE_PROPOSAL_ID} load={async () => ({ trace: sampleTrace() })} />
+      </PlainModeProvider>,
+    );
+    for (const button of screen.getAllByRole("button", { name: /How I checked/ })) {
+      await act(async () => {
+        fireEvent.click(button);
+      });
+    }
+    expect(await screen.findAllByRole("list", { name: "Steps, in order" })).toHaveLength(2);
+    const body = document.body;
+    expect(body.textContent).toContain("Second check agreed.");
+    expect(body.textContent).not.toMatch(/Muse|\bcents?\b|model time|\d+(\.\d+)? s\b/i);
+    expect(scan(body)).toEqual([]);
+  });
+
   it("the step-through, on every turn, with the summary's parts and its own text opened", async () => {
     render(<HowWorkedOut turnId={SAMPLE_TURN_ID} stepThrough load={async () => ({ trace: { ...sampleTrace(), notesUsed: fx.NOTES_USED } })} />);
     await act(async () => {
@@ -3584,7 +3642,7 @@ describe("no internal word in a shared state", () => {
         <EmptyState title="No advances yet" body="A driver's request shows here." />
         <LoadingState label="Loading your advances" />
         <FeatureOff name="Advances" plural />
-        <FeatureOff name="Pay sweep" />
+        <FeatureOff name="Pay check" />
         <PageNotFound />
         <DemoBanner carrier="Blue Ridge Freight" />
         <TestModeBanner />

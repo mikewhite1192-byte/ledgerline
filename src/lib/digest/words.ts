@@ -44,6 +44,27 @@ function list(parts: (string | null)[]): string {
   return parts.filter((p): p is string => p !== null).join(", ");
 }
 
+// "Billing: 1 load to fix, 85 loads to bill, 73 invoices past due ($61,220.00)." A part at zero is
+// left out; a part that was not read says so; with every part at zero, "Billing: nothing waiting.",
+// and with none of them read, "Billing: not read."
+const BILLING: readonly FactId[] = ["send", "fix", "add", "past_due"];
+
+function billing(f: Facts): string {
+  const unread = BILLING.every((id) => {
+    const x = f.get(id);
+    return x !== undefined && (!x.known || typeof x.value !== "number");
+  });
+  if (unread) return `Billing: ${NOT_READ}.`;
+  const pastDue = needs(f, "past_due", "invoice past due", "invoices past due");
+  const parts = list([
+    needs(f, "send", "invoice to send", "invoices to send"),
+    needs(f, "fix", "load to fix", "loads to fix"),
+    needs(f, "add", "load to bill", "loads to bill"),
+    pastDue === null ? null : `${pastDue} (${amount(f, "past_due_cents")})`,
+  ]);
+  return `Billing: ${parts || "nothing waiting"}.`;
+}
+
 export function digestWords(facts: readonly DigestFact[]): string {
   const f = byId(facts);
   const parked = needs(f, "parked", "parked advance", "parked advances");
@@ -72,7 +93,7 @@ export function digestWords(facts: readonly DigestFact[]): string {
     const x = f.get(id);
     return x && x.known && typeof x.value === "number" ? String(x.value) : NOT_READ;
   };
-  sentences.push(`Billing: SEND ${n("send")}, FIX ${n("fix")}, ADD ${n("add")}, FYI ${n("past_due")} past due (${amount(f, "past_due_cents")}).`);
+  sentences.push(billing(f));
   if (f.has("paystubs_paid")) {
     sentences.push(`This week: ${counted(f, "paystubs_paid", "paystub paid", "paystubs paid")} (${amount(f, "paystubs_net_cents")}).`);
   }

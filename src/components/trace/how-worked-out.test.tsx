@@ -3,6 +3,7 @@ import { act, cleanup, fireEvent, render, screen, within } from "@testing-librar
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { SAMPLE_PROPOSAL_ID, SAMPLE_TURN_ID, sampleTrace } from "@/lib/trace/sample";
 import { HowWorkedOut, fetchTrace, type TraceLoad } from "./how-worked-out";
+import { PlainModeProvider } from "./plain-mode";
 
 afterEach(() => {
   cleanup();
@@ -223,6 +224,51 @@ describe("HowWorkedOut", () => {
     await act(async () => pending.resolve({ trace: sampleTrace() }));
     expect(errors).not.toHaveBeenCalled();
     errors.mockRestore();
+  });
+});
+
+// The plain trace (flags.plainTrace): "How I checked", the steps and the records they read, and
+// one line for the second check. No model name, cents, seconds or totals.
+describe("HowWorkedOut in plain words", () => {
+  const NO_FIGURES = /Muse|cents?\b|model time|\d+(\.\d+)? s\b|model call/i;
+
+  it("names the link How I checked and lists the steps with no model, cost or time", async () => {
+    render(
+      <PlainModeProvider plain>
+        <HowWorkedOut turnId={SAMPLE_TURN_ID} load={async () => ({ trace: sampleTrace() })} stepThrough />
+      </PlainModeProvider>,
+    );
+    fireEvent.click(screen.getByRole("button", { name: "How I checked for this answer" }));
+    const list = await screen.findByRole("list", { name: "Steps, in order" });
+    expect(list.querySelectorAll(":scope > li").length).toBeGreaterThan(0);
+    expect(screen.getByText("Checking advance eligibility: blocked, the amount is over the eligible limit ($412.00)")).toBeTruthy();
+    expect(screen.queryByRole("list", { name: "Models used" })).toBeNull();
+    expect(screen.queryByText("Details", { selector: "summary" })).toBeNull();
+    expect(screen.queryByRole("button", { name: /Step through/ })).toBeNull();
+    expect(document.body.textContent ?? "").not.toMatch(NO_FIGURES);
+  });
+
+  it("says the second check in one line under a card", async () => {
+    render(
+      <PlainModeProvider plain>
+        <HowWorkedOut turnId={SAMPLE_TURN_ID} proposalId={SAMPLE_PROPOSAL_ID} load={async () => ({ trace: sampleTrace() })} />
+      </PlainModeProvider>,
+    );
+    fireEvent.click(screen.getByRole("button", { name: "How I checked for this card" }));
+    await screen.findByRole("list", { name: "Steps, in order" });
+    expect(screen.getByText("Second check agreed.")).toBeTruthy();
+    expect(document.body.textContent ?? "").not.toMatch(NO_FIGURES);
+  });
+
+  it("says it answered from the records when no step read or saved anything", async () => {
+    const trace = { ...sampleTrace(), steps: sampleTrace().steps.filter((s) => s.kind === "model"), extraCalls: [], proposals: [] };
+    render(
+      <PlainModeProvider plain>
+        <HowWorkedOut turnId={SAMPLE_TURN_ID} load={async () => ({ trace })} />
+      </PlainModeProvider>,
+    );
+    fireEvent.click(screen.getByRole("button", { name: "How I checked for this answer" }));
+    expect(await screen.findByText("Answered from your records, with no other steps.")).toBeTruthy();
   });
 });
 

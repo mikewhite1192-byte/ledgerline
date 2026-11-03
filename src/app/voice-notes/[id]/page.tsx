@@ -17,12 +17,9 @@ import { voiceOn } from "@/lib/voice/http";
 import { readVoiceDetail, type VoiceDetail } from "@/lib/voice/read";
 import {
   categoryLabel,
-  costWords,
   durationWords,
   languageLabel,
-  purposeLabel,
   stoppedWords,
-  targetLabel,
 } from "@/lib/voice/words";
 import { problemOf, ReadFailed, type ReadProblem } from "../../advances/frame";
 import { VoiceFrame, VoiceOffPage, VoiceStatusBadge } from "../frame";
@@ -31,8 +28,8 @@ import { CopyReply, NoteActions } from "./note-actions";
 export const dynamic = "force-dynamic";
 
 // One voice note: the recording, where it is in the pipeline, the words once the safety screen
-// passed them, the agent's proposal, the reply draft and which model did each step. A held note
-// shows why, never its words.
+// passed them, the agent's proposal and the reply draft. A held note shows why, never its words.
+// Which model did each step, and what it cost, is on Settings, Models and spend (/models).
 
 function Row({ label, children }: { label: string; children: React.ReactNode }) {
   return (
@@ -81,11 +78,10 @@ export default async function VoiceNotePage({ params }: { params: Promise<{ id: 
 
   const stopped = note.status === "blocked" || note.status === "failed";
   const flagged = note.screen?.verdict === "flagged" && !stopped;
-  const totalNanocents = note.trace.reduce((sum, c) => sum + c.costNanocents, 0);
   return (
     <VoiceFrame shell={page.shell} title="Voice note">
       <PageHeader
-        title={note.driverCode ? `Voice note from ${note.driverCode}` : "Voice note"}
+        title={note.driverName ? `Voice note from ${note.driverName}` : note.driverCode ? `Voice note from ${note.driverCode}` : "Voice note"}
         description={`Received ${formatInstant(note.createdAt, zone)}. Nothing is sent to the driver from here.`}
         actions={<VoiceStatusBadge status={note.status} />}
       />
@@ -183,38 +179,6 @@ export default async function VoiceNotePage({ params }: { params: Promise<{ id: 
           </CardBody>
         </Card>
       ) : null}
-
-      <Card>
-        <CardHeader>
-          <CardTitle>Who did what</CardTitle>
-          <CardDescription>Every model call for this note. The amounts come from your pay rules, never a model.</CardDescription>
-        </CardHeader>
-        <CardBody>
-          {note.trace.length === 0 ? (
-            <p className="text-body text-foreground-2">No model calls recorded for this note yet.</p>
-          ) : (
-            <ol className="grid gap-2">
-              {note.trace.map((c, i) => (
-                <li key={i} className="flex flex-wrap items-baseline justify-between gap-x-4 gap-y-0.5 border-b border-border pb-2 last:border-b-0">
-                  <span className="min-w-0">
-                    <span className="font-medium">{targetLabel(c.target)}</span>
-                    <span className="text-foreground-2">: {purposeLabel(c.purpose)}</span>
-                    {c.status !== "ok" ? <span className="text-warning"> ({codeToWords(c.status).toLowerCase()})</span> : null}
-                  </span>
-                  <span className="text-small whitespace-nowrap text-foreground-2 tabular-nums">
-                    {c.durationMs !== null ? `${(c.durationMs / 1000).toFixed(1)} s, ` : ""}
-                    {costWords(c.costNanocents)}
-                  </span>
-                </li>
-              ))}
-              <li className="flex justify-between gap-4 pt-1 text-small text-foreground-2">
-                <span>Total</span>
-                <span className="tabular-nums">{costWords(totalNanocents)}</span>
-              </li>
-            </ol>
-          )}
-        </CardBody>
-      </Card>
     </VoiceFrame>
   );
 }

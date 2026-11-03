@@ -7,7 +7,7 @@ export const clips = {
   area: "pay",
   order: 30,
   href: "/clips",
-  label: "Dock clips",
+  label: "Dock videos",
   icon: <Video aria-hidden />,
   shown: () => flags.clipsEnabled === true,
   section: "drivers",
