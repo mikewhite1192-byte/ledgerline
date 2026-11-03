@@ -51,18 +51,19 @@ describe("ipHashOf", () => {
 describe("demo visit guards", () => {
   it("reads nothing for a cookie that is not a visit id", async () => {
     const { q, calls } = fakeQ({ rows: [{ role: "judge", live: true }] });
-    await expect(readVisit(q, "sub-1", "not-a-visit")).resolves.toEqual({ role: null, live: false });
+    await expect(readVisit(q, "sub-1", "not-a-visit")).resolves.toEqual({ role: null, live: false, copy: null });
     expect(calls).toEqual([]);
   });
 
   it("reads no role from no row, two rows or an unknown role", async () => {
     for (const rows of [[], [{ role: "judge", live: true }, { role: "judge", live: true }], [{ role: "owner", live: true }]]) {
-      await expect(readVisit(fakeQ({ rows }).q, "sub-1", VISIT)).resolves.toEqual({ role: null, live: false });
+      await expect(readVisit(fakeQ({ rows }).q, "sub-1", VISIT)).resolves.toEqual({ role: null, live: false, copy: null });
     }
     // Only a true live column is live.
     await expect(readVisit(fakeQ({ rows: [{ role: "judge", live: "t" }] }).q, "sub-1", VISIT)).resolves.toEqual({
       role: "judge",
       live: false,
+      copy: null,
     });
   });
 

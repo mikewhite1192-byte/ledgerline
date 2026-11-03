@@ -28,7 +28,7 @@ export const LOCAL_OVERRIDABLE = [
 // (tmsSync.enabled), the dispatch webhook's switch (tmsHook.enabled), the card load ruling's
 // switch, the invoice on finalize's switch
 // (tmsFinalizeInvoice.enabled), parked advances' switch (advanceParking.enabled), the card
-// pull-back's switch, deficit recovery's switch, the morning digest's switch, the named stub lines' switch, the activation checklist's switch, the stub sent switch, the sample dispatch system's switch (mockTms.enabled), its new load form's (mockTms.newLoad), the pay week roll's switch (payWeekRoll.enabled), the autopilot rules page's switch (autopilotRules.enabled), the live feed's switch (activityFeed.enabled), the sign-in walkthrough's switch (signInTour.enabled), the simple Home's switch (simpleShape.enabled) and the driver's phone switch (driverPaperwork.enabled) are listed ahead of their own release, while they still ship off, so each
+// pull-back's switch, deficit recovery's switch, the morning digest's switch, the named stub lines' switch, the activation checklist's switch, the stub sent switch, the sample dispatch system's switch (mockTms.enabled), its new load form's (mockTms.newLoad), the pay week roll's switch (payWeekRoll.enabled), the autopilot rules page's switch (autopilotRules.enabled), the live feed's switch (activityFeed.enabled), the sign-in walkthrough's switch (signInTour.enabled), the simple Home's switch (simpleShape.enabled), the driver's phone switch (driverPaperwork.enabled) and the visit copies' switch (visitCopies.enabled) are listed ahead of their own release, while they still ship off, so each
 // release PR changes only its flag: an off-only switch can never be turned on, so listing one early
 // lets the local run do nothing it could not already do.
 export const LOCAL_OFF_ONLY = [
@@ -108,6 +108,7 @@ export const LOCAL_OFF_ONLY = [
   "signInTour.enabled",
   "driverPaperwork.enabled",
   "simpleShape.enabled",
+  "visitCopies.enabled",
 ] as const;
 
 type Overridable = (typeof LOCAL_OVERRIDABLE)[number];

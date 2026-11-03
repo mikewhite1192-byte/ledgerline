@@ -471,6 +471,12 @@ describe("model spend ledger", () => {
           "wonder_reserved_nanocents",
           "calls",
           "updated_at",
+          // What a visit copy's purge removed from the log (0091).
+          "purged_spent_nanocents",
+          "purged_reserved_nanocents",
+          "purged_calls",
+          "purged_wonder_spent_nanocents",
+          "purged_wonder_reserved_nanocents",
         ].map((c) => `ops.ai_spend.${c}`),
       ].sort(),
     );

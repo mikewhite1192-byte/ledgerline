@@ -1000,6 +1000,13 @@ export type Flags = {
   // coworker finished today, at most three things that need a person, and an ask box. It reuses the
   // reads Home already makes and changes no number. Off, Home renders as before.
   simpleShape: { enabled: boolean };
+  // Each demo visit gets its own copy of the demo carrier (src/lib/visit-copy): the sign-in claims
+  // a copy for the visit's ticket, a "Preparing your carrier" page builds it in slices of at most
+  // sliceMs each, and every request of the visit then runs in the copy as its admin. A copy lives
+  // while its visit does plus graceMinutes, then is purged (purgePerCall at each new build, and
+  // the purge script). deskDayCents caps the desk loop's model spend in one copy each day, under
+  // deskLoop.limits.dayCents. Off, a visit shares the demo carrier as before.
+  visitCopies: { enabled: boolean; sliceMs: number; graceMinutes: number; purgePerCall: number; deskDayCents: number };
 };
 
 // One kind's ceiling over the owner's autopilot limits: one item, and the carrier's local day.
@@ -1313,6 +1320,8 @@ export const flags: Flags = {
   driverPaperwork: { enabled: false, startDate: "2026-11-03", perDay: 30 },
   // Off until the owner turns it on in its own PR. Presentation only.
   simpleShape: { enabled: false },
+  // Off until the owner turns it on in its own PR.
+  visitCopies: { enabled: false, sliceMs: 12_000, graceMinutes: 60, purgePerCall: 2, deskDayCents: 100 },
 };
 
 applyLocalOverrides(flags);

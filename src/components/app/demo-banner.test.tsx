@@ -1,6 +1,8 @@
 // @vitest-environment jsdom
 import { cleanup, render, screen } from "@testing-library/react";
 import { afterEach, describe, expect, it } from "vitest";
+import { flags } from "@/config/flags";
+import { VISIT_EMAIL } from "@/lib/visit-copy/visitor";
 import { AppShell } from "./app-shell";
 import { DemoBanner } from "./demo-banner";
 
@@ -38,6 +40,52 @@ describe("DemoBanner", () => {
       );
       expect(screen.queryByRole("region", { name: "Demo visit" }) !== null, role).toBe(role === "judge");
       cleanup();
+    }
+  });
+
+  it("tells a visit's own copy it is its own, in plain words with no amounts, and hides Demo settings", () => {
+    const saved = flags.visitCopies.enabled;
+    const nav = [
+      ...NAV,
+      { group: "Settings", href: "/settings/demo", label: "Demo", icon: null, current: false },
+    ];
+    const visitor = { ...tenant("admin"), email: VISIT_EMAIL };
+    try {
+      flags.visitCopies.enabled = true;
+      render(
+        <AppShell tenant={visitor} nav={nav} title="Page" signOut={null}>
+          <p>Body</p>
+        </AppShell>,
+      );
+      const region = screen.getByRole("region", { name: "Demo visit" });
+      expect(region.textContent).toContain(
+        "This is your own copy of Blue Ridge Freight Lines, a demo carrier with made-up data. Nothing real is paid or sent, and your copy is removed after your visit.",
+      );
+      expect(region.textContent).not.toMatch(/\$|cent/i);
+      expect(screen.queryByRole("link", { name: "Demo" })).toBeNull();
+      expect(document.body.textContent).not.toContain(VISIT_EMAIL);
+      cleanup();
+
+      // An admin of the carrier itself sees no banner and keeps Demo settings.
+      render(
+        <AppShell tenant={tenant("admin")} nav={nav} title="Page" signOut={null}>
+          <p>Body</p>
+        </AppShell>,
+      );
+      expect(screen.queryByRole("region", { name: "Demo visit" })).toBeNull();
+      expect(screen.queryAllByRole("link", { name: "Demo" }).length).toBeGreaterThan(0);
+      cleanup();
+
+      // With the switch off nothing changes for anyone.
+      flags.visitCopies.enabled = false;
+      render(
+        <AppShell tenant={visitor} nav={nav} title="Page" signOut={null}>
+          <p>Body</p>
+        </AppShell>,
+      );
+      expect(screen.queryByRole("region", { name: "Demo visit" })).toBeNull();
+    } finally {
+      flags.visitCopies.enabled = saved;
     }
   });
 });

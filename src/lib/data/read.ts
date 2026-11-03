@@ -137,15 +137,20 @@ export async function countTenantRows(q: Queryable): Promise<Record<TenantTable,
   return out;
 }
 
-export type TenantSummary = { id: string; slug: string; name: string; timezone: string };
+// demo_copy_of (0091) is the demo carrier a visit's copy was built from, null on every other
+// carrier (src/lib/seed/carriers.ts demoTemplateFor).
+export type TenantSummary = { id: string; slug: string; name: string; timezone: string; demo_copy_of?: string | null };
 
 // The current tenant's own row, or null when app.tenant_id names no tenant.
 export async function readTenant(q: Queryable): Promise<TenantSummary | null> {
   const rows = await q.query<TenantSummary>(
-    "SELECT id, slug, name, timezone FROM tenants WHERE id = current_tenant_id()",
+    "SELECT id, slug, name, timezone, demo_copy_of FROM tenants WHERE id = current_tenant_id()",
   );
   if (rows.length > 1) throw new Error("more than one tenant row");
-  return rows[0] ?? null;
+  const row = rows[0];
+  if (!row) return null;
+  // A row without the column (a test's fake) is no copy.
+  return { ...row, demo_copy_of: typeof row.demo_copy_of === "string" ? row.demo_copy_of : null };
 }
 
 // ---- The engine's inputs ----

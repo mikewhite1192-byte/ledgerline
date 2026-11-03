@@ -1,4 +1,5 @@
 import { randomBytes } from "node:crypto";
+import { isVisitSub } from "../../../auth/claims";
 import type { Queryable } from "../../../db";
 import { MoneyError } from "../../../money/types";
 import { createQboClient, type Prepared, type QboDeps, type Target } from "./client";
@@ -71,6 +72,8 @@ export function createQboConnect(deps: QboDeps = {}) {
 
   // An admin asks to connect: a single-use state tied to their membership, then Intuit.
   async function start(run: TenantRun, sub: string): Promise<StartResult> {
+    // A visit's own copy of a demo carrier never connects QuickBooks (flags.visitCopies).
+    if (isVisitSub(sub)) return { ok: false, reason: "forbidden" };
     const p = await prepared();
     if (!p) return { ok: false, reason: "not_configured" };
     const state = randomBytes(32).toString("base64url");
@@ -139,6 +142,8 @@ export function createQboConnect(deps: QboDeps = {}) {
 
   // Intuit sends the person back. The state is used up first, whatever happens next.
   async function finish(run: TenantRun, sub: string, params: CallbackParams): Promise<FinishResult> {
+    // A visit's own copy of a demo carrier never connects QuickBooks (flags.visitCopies).
+    if (isVisitSub(sub)) return { ok: false, reason: "forbidden" };
     const state = params.state;
     if (typeof state !== "string" || !STATE.test(state)) return { ok: false, reason: "expired" };
     const taken = await run(async (q) => {
@@ -208,6 +213,8 @@ export function createQboConnect(deps: QboDeps = {}) {
     run: TenantRun,
     sub: string,
   ): Promise<{ ok: true; revoked: boolean } | { ok: false; reason: "forbidden" }> {
+    // A visit's own copy of a demo carrier never connects QuickBooks (flags.visitCopies).
+    if (isVisitSub(sub)) return { ok: false, reason: "forbidden" };
     const p = await prepared();
     const read = await run(async (q) => {
       const m = await membershipOf(q, sub);

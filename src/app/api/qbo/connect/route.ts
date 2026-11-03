@@ -21,6 +21,8 @@ export async function GET(request: Request) {
   const session = await requireSession();
   const notStaff = await staffGate(session);
   if (notStaff) return toSettings(notStaff.status === 403 ? "forbidden" : "failed");
+  // A visit's own copy of a demo carrier has no QuickBooks (flags.visitCopies).
+  if (session.visitTicketId !== undefined) return toSettings("forbidden");
   try {
     const result = await qbo.start(tenantRun(session), session.sub);
     if (!result.ok) return toSettings(result.reason);

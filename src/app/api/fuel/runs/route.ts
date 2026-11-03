@@ -4,7 +4,7 @@ import { staffGate } from "@/lib/auth/staff-gate";
 import { readTenant } from "@/lib/data/read";
 import { runFuelCheck } from "@/lib/fuel/run";
 import { isCrossSite } from "@/lib/http/same-site";
-import { demoCarrierFor } from "@/lib/seed/carriers";
+import { demoTemplateFor } from "@/lib/seed/carriers";
 import { withSessionTenant } from "@/lib/tenant/context";
 import { failed, refused, reply } from "../reply";
 
@@ -27,7 +27,7 @@ export async function POST(request: Request) {
     // The checks list fill-ups from one shared start date, the first day of the seeded demo weeks,
     // so they run for the demo carriers only: any other carrier is refused as if the switch were
     // off, before any work.
-    const demo = await withSessionTenant(session, async (q) => demoCarrierFor(await readTenant(q)));
+    const demo = await withSessionTenant(session, async (q) => demoTemplateFor(await readTenant(q)));
     if (!demo) return refused("disabled");
     const run = await runFuelCheck(session);
     if (!run.ok) return refused(run.category);

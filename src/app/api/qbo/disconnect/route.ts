@@ -20,6 +20,8 @@ export async function POST(request: Request) {
   const session = await requireSession();
   const notStaff = await staffGate(session);
   if (notStaff) return toSettings(notStaff.status === 403 ? "forbidden" : "failed");
+  // A visit's own copy of a demo carrier has no QuickBooks (flags.visitCopies).
+  if (session.visitTicketId !== undefined) return toSettings("forbidden");
   try {
     const result = await qbo.disconnect(tenantRun(session), session.sub);
     return toSettings(result.ok ? "disconnected" : result.reason);

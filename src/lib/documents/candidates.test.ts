@@ -21,7 +21,7 @@ function fakeDb(loads: Numbered[], byId: (id: string) => Record<string, unknown>
   const q: Queryable = {
     async query<T>(sql: string, params: Param[] = []): Promise<T[]> {
       calls.push({ sql, params });
-      if (sql === "SELECT id, slug, name, timezone FROM tenants WHERE id = current_tenant_id()") {
+      if (sql === "SELECT id, slug, name, timezone, demo_copy_of FROM tenants WHERE id = current_tenant_id()") {
         return [{ id: idOf(800), slug: "test", name: "Test Carrier", timezone: "America/Chicago" }] as T[];
       }
       const page = / LIMIT (\d+)$/.exec(sql);

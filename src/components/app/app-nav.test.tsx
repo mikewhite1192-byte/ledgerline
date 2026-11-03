@@ -350,6 +350,8 @@ describe("every signed-in page is reachable", () => {
     .map(routeOf)
     .filter((r) => r !== "/sign-in" && r !== "/design" && r !== "/help" && r !== "/portal" && !r.startsWith("/portal/"))
     .filter((r) => r !== "/tms-demo" && !r.startsWith("/tms-demo/"))
+    // The short wait while a visit's own copy is set up: reached only from the demo sign-in.
+    .filter((r) => r !== "/preparing")
     .filter((r) => !r.includes("["));
 
   const itemPage = (href: string) => {

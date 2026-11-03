@@ -169,6 +169,8 @@ const KEPT_OFF = [
   "driverPaperwork.enabled",
   // Presentation only, but it changes what Home shows: the owner turns it on in its own PR.
   "simpleShape.enabled",
+  // Each visit's own copy of the demo carrier: the owner turns it on in its own PR.
+  "visitCopies.enabled",
 ] as const;
 
 // The on/off switches in flags.ts, by path: every top-level boolean and every boolean inside a
@@ -438,6 +440,22 @@ describe("flags", () => {
     expect(LOCAL_OFF_ONLY as readonly string[]).toContain("simpleShape.enabled");
   });
 
+  it("ships visit copies off, with whole-number limits, off for the local demo run", () => {
+    expect(flags.visitCopies).toEqual({
+      enabled: false,
+      sliceMs: 12_000,
+      graceMinutes: 60,
+      purgePerCall: 2,
+      deskDayCents: 100,
+    });
+    for (const v of [flags.visitCopies.sliceMs, flags.visitCopies.graceMinutes, flags.visitCopies.purgePerCall]) {
+      expect(Number.isSafeInteger(v) && v > 0).toBe(true);
+    }
+    // A copy's desk day cap is never above the desk's own.
+    expect(flags.visitCopies.deskDayCents).toBeLessThanOrEqual(flags.deskLoop.limits.dayCents);
+    expect(LOCAL_OFF_ONLY as readonly string[]).toContain("visitCopies.enabled");
+  });
+
   it("releases deficit recovery, with a start date, off for the local demo run", () => {
     expect(flags.deficitRecovery).toEqual({ enabled: true, startDate: "2026-11-02" });
     expect(isLocalDate(flags.deficitRecovery.startDate)).toBe(true);
@@ -578,6 +596,7 @@ describe("flags", () => {
       "signInTour.enabled",
       "driverPaperwork.enabled",
       "simpleShape.enabled",
+      "visitCopies.enabled",
     ];
     const offOnly = LOCAL_OFF_ONLY as readonly string[];
     expect(KEPT_OFF.filter((k) => offOnly.includes(k))).toEqual(KEPT_OFF.filter((k) => armedAhead.includes(k)));

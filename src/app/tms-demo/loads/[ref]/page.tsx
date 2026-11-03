@@ -10,7 +10,7 @@ import { formatCents } from "@/lib/format/money";
 import { ourLoadIdOf } from "@/lib/mock-tms/new-load";
 import { ourPaperStatusOf } from "@/lib/mock-tms/paperwork";
 import { readMockLoad, STATUS_CHOICES, type MockLoadView } from "@/lib/mock-tms/store";
-import { demoCarrierOf } from "@/lib/seed/reset";
+import { demoTemplateOf } from "@/lib/seed/reset";
 import { ForbiddenError, withRequestTenant } from "@/lib/tenant/context";
 import { localClockOf } from "@/lib/tms/clocks";
 import { SYNTHETIC_LABELS } from "@/lib/tms/status";
@@ -58,7 +58,7 @@ export default async function MockLoadPage({ params }: { params: Promise<{ ref: 
   let problem: "forbidden" | "unreadable" | null = null;
   try {
     const got = await withRequestTenant<{ read: MockLoadView | null; ours: string | null; status: string | null }>(async (q) => {
-      if (!(await demoCarrierOf(q))) return { read: null, ours: null, status: null };
+      if (!(await demoTemplateOf(q))) return { read: null, ours: null, status: null };
       const read = await readMockLoad(q, reference);
       const ours = read !== null && flags.mockTms.newLoad === true ? await ourLoadIdOf(q, reference) : null;
       const status = read !== null && flags.driverPaperwork.enabled === true ? await ourPaperStatusOf(q, reference) : null;

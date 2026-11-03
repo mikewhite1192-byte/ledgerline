@@ -16,6 +16,11 @@ function clean(): ModelCallsRow {
     counter_calls: 4,
     counter_wonder_spent: "20000000",
     counter_wonder_reserved: 0,
+    purged_spent: 0,
+    purged_reserved: 0,
+    purged_calls: 0,
+    purged_wonder_spent: 0,
+    purged_wonder_reserved: 0,
     demo_over_cap: 0,
     calls_logged: 5,
     answered_without_cost: 0,
@@ -30,6 +35,28 @@ function clean(): ModelCallsRow {
 }
 
 describe("judgeModelCalls", () => {
+  it("counts what a visit copy's purge deleted from the log on the counters' side", () => {
+    // The purge deleted two settled calls (30 spent, 10 of it the auditor's) and one held call.
+    const purged = {
+      ...clean(),
+      counter_spent: "150000000",
+      counter_reserved: "6000000",
+      counter_calls: 6,
+      counter_wonder_spent: "30000000",
+      purged_spent: "30000000",
+      purged_reserved: "1000000",
+      purged_calls: 2,
+      purged_wonder_spent: "10000000",
+    };
+    expect(judgeModelCalls([purged]).verdict).toBe("PASS");
+    // The same counters with nothing recorded as purged are off on every one.
+    const lost = { ...purged, purged_spent: 0, purged_reserved: 0, purged_calls: 0, purged_wonder_spent: 0 };
+    const r = judgeModelCalls([lost]);
+    expect(r.verdict).not.toBe("PASS");
+    // A purged column that is not a whole number is unreadable, not zero.
+    expect(() => judgeModelCalls([{ ...purged, purged_calls: null }])).toThrow();
+  });
+
   it("passes when every call is costed and the counters equal the log", () => {
     const r = judgeModelCalls([clean()]);
     expect(r.verdict).toBe("PASS");

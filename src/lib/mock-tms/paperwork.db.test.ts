@@ -20,7 +20,7 @@ import { sendDriverPaperwork, type PaperStage } from "./paperwork";
 const demo = vi.hoisted(() => ({ on: true }));
 vi.mock("../seed/reset", async (importOriginal) => {
   const real = await importOriginal<typeof import("../seed/reset")>();
-  return { ...real, demoCarrierOf: async () => (demo.on ? ({ slug: "test" } as unknown as Awaited<ReturnType<typeof real.demoCarrierOf>>) : null) };
+  return { ...real, demoTemplateOf: async () => (demo.on ? ({ slug: "test" } as unknown as Awaited<ReturnType<typeof real.demoTemplateOf>>) : null) };
 });
 
 const saved = {

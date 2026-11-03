@@ -119,3 +119,21 @@ export function demoCarrierFor(
   if (!carrier || carrier.name !== tenant.name || carrier.timezone !== tenant.timezone) return null;
   return carrier;
 }
+
+// The demo carrier a tenant row is, or was copied from (a visit's own copy, flags.visitCopies,
+// migration 0091): the exact match above, or a row whose demo_copy_of names a demo carrier whose
+// name and timezone it has. The copy has its own slug, so it never matches demoCarrierFor; the
+// demo reset, the fleet move and the Demo settings page keep that exact match, so a copy cannot
+// reset or move a fleet. Everything a demo carrier may do with its sample data (the sample
+// dispatch system, the fuel checks, test-mode payouts) asks this one.
+export function demoTemplateFor(
+  tenant: { slug: string; name: string; timezone: string; demo_copy_of?: string | null } | null,
+): DemoCarrier | null {
+  if (!tenant) return null;
+  const exact = demoCarrierFor(tenant);
+  if (exact) return exact;
+  if (typeof tenant.demo_copy_of !== "string") return null;
+  const carrier = carrierBySlug(tenant.demo_copy_of);
+  if (!carrier || carrier.name !== tenant.name || carrier.timezone !== tenant.timezone) return null;
+  return carrier;
+}

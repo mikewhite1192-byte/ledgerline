@@ -1,7 +1,7 @@
 import { randomUUID } from "node:crypto";
 import { flags } from "../../config/flags";
 import { DbError, type Param, type Queryable } from "../db";
-import { demoCarrierFor } from "../seed/carriers";
+import { demoTemplateFor } from "../seed/carriers";
 import { idempotencyKey, isAttempt, isCanonicalUuid, requestIdOf } from "./keys";
 import { assertPendingSubject, readAction, readActionByKey, type PendingSubject } from "./read";
 import {
@@ -47,14 +47,15 @@ export function demoCarriersOnly(kind: MoneyActionKind, system: OutsideSystem): 
 
 // The payment switch for one payout and the tenant's own row, read at every call: off whenever
 // payoutsEnabled is off, and off for any carrier but the two demo carriers (slug, name and
-// timezone, demoCarrierFor) when the payout runs only for them.
+// timezone) and a visit's own copy of one (demo_copy_of, demoTemplateFor) when the payout runs only
+// for them.
 export function payoutSwitchOn(
   kind: MoneyActionKind,
   system: OutsideSystem,
-  tenant: { slug: string; name: string; timezone: string } | null,
+  tenant: { slug: string; name: string; timezone: string; demo_copy_of?: string | null } | null,
 ): boolean {
   if (!switchOn("payment")) return false;
-  return !demoCarriersOnly(kind, system) || demoCarrierFor(tenant) !== null;
+  return !demoCarriersOnly(kind, system) || demoTemplateFor(tenant) !== null;
 }
 
 export type CleanDraft = {

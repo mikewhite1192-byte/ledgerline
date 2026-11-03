@@ -121,23 +121,168 @@ export async function startVisit(q: Queryable, input: StartVisitInput): Promise<
 }
 
 // What getSession() needs about a pc_demo cookie: the signed-in subject's one role in the tenant,
-// and whether the named visit is theirs and still live. No membership row (or more than one, or a
-// role this code does not know) is role null.
-export type VisitRead = { role: Role | null; live: boolean };
+// whether the named visit is theirs and still live, and the copy of the demo carrier the visit
+// points at (0091, flags.visitCopies), if any. No membership row (or more than one, or a role this
+// code does not know) is role null. A visit that is not this subject's is not live and has no
+// copy.
+export type VisitCopy = {
+  // The copy carrier's tenants.id and the visit row inside it (spend and turns are counted there).
+  tenantId: string;
+  sessionId: string;
+  ready: boolean;
+  deleted: boolean;
+  // The visit's expiry, an ISO instant in UTC: the copy's own visit row ends with it.
+  expiresAt: string;
+};
+
+export type VisitRead = { role: Role | null; live: boolean; copy: VisitCopy | null };
+
+type VisitRow = {
+  role: unknown;
+  live: unknown;
+  copy_tenant_id?: unknown;
+  copy_session_id?: unknown;
+  copy_ready?: unknown;
+  copy_deleted?: unknown;
+  expires_at?: unknown;
+};
+
+const ISO_UTC = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(\.\d{1,6})?Z$/;
+
+// The copy columns of one read row. Neither id set is no copy. Both set, with the flags and the
+// expiry in their shapes, is the copy. Anything else (one id, a malformed value) is unknown and
+// throws, so the caller fails closed.
+function copyOf(row: VisitRow): VisitCopy | null {
+  const tenant = row.copy_tenant_id ?? null;
+  const session = row.copy_session_id ?? null;
+  if (tenant === null && session === null) return null;
+  if (!isUuid(tenant) || !isUuid(session)) throw new DbError("unknown");
+  if (typeof row.copy_ready !== "boolean" || typeof row.copy_deleted !== "boolean") throw new DbError("unknown");
+  if (typeof row.expires_at !== "string" || !ISO_UTC.test(row.expires_at)) throw new DbError("unknown");
+  return {
+    tenantId: tenant.toLowerCase(),
+    sessionId: session.toLowerCase(),
+    ready: row.copy_ready,
+    deleted: row.copy_deleted,
+    expiresAt: row.expires_at,
+  };
+}
+
+// The visit's expiry as an ISO instant in UTC, whatever the driver does with timestamptz.
+const EXPIRES_AT_SQL = `to_char(d.expires_at AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.US"Z"')`;
 
 export async function readVisit(q: Queryable, sub: string, visitId: string): Promise<VisitRead> {
-  if (!isUuid(visitId)) return { role: null, live: false };
-  const rows = await q.query<{ role: unknown; live: boolean }>(
+  if (!isUuid(visitId)) return { role: null, live: false, copy: null };
+  const rows = await q.query<VisitRow>(
     `SELECT m.role,
-            EXISTS (SELECT 1 FROM demo_sessions d
-                     WHERE d.id = CAST($2 AS uuid) AND d.tenant_id = current_tenant_id()
-                       AND d.cognito_sub = m.cognito_sub AND d.expires_at > now()) AS live
+            (d.id IS NOT NULL AND d.expires_at > now()) AS live,
+            d.copy_tenant_id, d.copy_session_id,
+            CASE WHEN d.id IS NULL THEN NULL ELSE d.copy_ready_at IS NOT NULL END AS copy_ready,
+            CASE WHEN d.id IS NULL THEN NULL ELSE d.copy_deleted_at IS NOT NULL END AS copy_deleted,
+            ${EXPIRES_AT_SQL} AS expires_at
        FROM memberships m
+       LEFT JOIN demo_sessions d
+              ON d.id = CAST($2 AS uuid) AND d.tenant_id = current_tenant_id()
+             AND d.cognito_sub = m.cognito_sub
       WHERE m.tenant_id = current_tenant_id() AND m.cognito_sub = $1`,
     [sub, visitId],
   );
-  if (rows.length !== 1 || !isRole(rows[0].role)) return { role: null, live: false };
-  return { role: rows[0].role, live: rows[0].live === true };
+  if (rows.length !== 1 || !isRole(rows[0].role)) return { role: null, live: false, copy: null };
+  return { role: rows[0].role, live: rows[0].live === true, copy: copyOf(rows[0]) };
+}
+
+// The sign-in's claim of a copy for its visit (flags.visitCopies): one guarded write gives the
+// live visit, this subject's, the two fresh ids, only while it has none. "claimed" is that write;
+// "kept" is a visit that already had its copy (a second click reuses the visit and its copy).
+// Anything else (the visit gone, ended, someone else's) is refused, and nothing was written.
+export type CopyClaim = "claimed" | "kept" | "refused";
+
+export async function claimCopy(
+  q: Queryable,
+  input: { visitId: string; sub: string; copyTenantId: string; copySessionId: string },
+): Promise<CopyClaim> {
+  if (!isUuid(input.visitId) || !isUuid(input.copyTenantId) || !isUuid(input.copySessionId)) return "refused";
+  const updated = await q.execute(
+    `UPDATE demo_sessions
+        SET copy_tenant_id = CAST($3 AS uuid), copy_session_id = CAST($4 AS uuid)
+      WHERE id = CAST($1 AS uuid) AND tenant_id = current_tenant_id() AND cognito_sub = $2
+        AND expires_at > now() AND copy_tenant_id IS NULL`,
+    [input.visitId, input.sub, input.copyTenantId, input.copySessionId],
+  );
+  if (updated === 1) return "claimed";
+  if (updated > 1) throw new DbError("unknown");
+  const kept = await q.query<{ id: string }>(
+    `SELECT id FROM demo_sessions
+      WHERE id = CAST($1 AS uuid) AND tenant_id = current_tenant_id() AND cognito_sub = $2
+        AND expires_at > now() AND copy_tenant_id IS NOT NULL AND copy_deleted_at IS NULL`,
+    [input.visitId, input.sub],
+  );
+  return kept.length === 1 ? "kept" : "refused";
+}
+
+// Once the copy is built whole: the visit's copy_ready_at, set once. True when the copy is ready
+// after this call (set now, or already); false when the visit no longer points at this copy, or
+// the copy was purged.
+export async function markCopyReady(
+  q: Queryable,
+  input: { visitId: string; sub: string; copyTenantId: string },
+): Promise<boolean> {
+  if (!isUuid(input.visitId) || !isUuid(input.copyTenantId)) return false;
+  const updated = await q.execute(
+    `UPDATE demo_sessions SET copy_ready_at = now()
+      WHERE id = CAST($1 AS uuid) AND tenant_id = current_tenant_id() AND cognito_sub = $2
+        AND copy_tenant_id = CAST($3 AS uuid) AND copy_ready_at IS NULL AND copy_deleted_at IS NULL`,
+    [input.visitId, input.sub, input.copyTenantId],
+  );
+  if (updated === 1) return true;
+  if (updated > 1) throw new DbError("unknown");
+  const ready = await q.query<{ id: string }>(
+    `SELECT id FROM demo_sessions
+      WHERE id = CAST($1 AS uuid) AND tenant_id = current_tenant_id() AND cognito_sub = $2
+        AND copy_tenant_id = CAST($3 AS uuid) AND copy_ready_at IS NOT NULL AND copy_deleted_at IS NULL`,
+    [input.visitId, input.sub, input.copyTenantId],
+  );
+  return ready.length === 1;
+}
+
+// The copies the purge may delete, oldest first: a visit's copy set and not yet deleted, whose
+// visit ended more than graceMinutes ago (the database clock). The partial index
+// demo_sessions_copy_purge_idx (0091) serves it.
+export type PurgeCandidate = { visitId: string; copyTenantId: string };
+
+export async function purgeCandidates(
+  q: Queryable,
+  input: { graceMinutes: number; limit: number },
+): Promise<PurgeCandidate[]> {
+  if (!Number.isSafeInteger(input.graceMinutes) || input.graceMinutes < 0) throw new DbError("unknown");
+  if (!Number.isSafeInteger(input.limit) || input.limit < 0) throw new DbError("unknown");
+  if (input.limit === 0) return [];
+  const rows = await q.query<{ id: unknown; copy_tenant_id: unknown }>(
+    `SELECT id, copy_tenant_id FROM demo_sessions
+      WHERE tenant_id = current_tenant_id() AND copy_tenant_id IS NOT NULL AND copy_deleted_at IS NULL
+        AND expires_at < now() - CAST($1 AS integer) * interval '1 minute'
+      ORDER BY expires_at, id
+      LIMIT CAST($2 AS integer)`,
+    [input.graceMinutes, input.limit],
+  );
+  return rows.map((r) => {
+    if (!isUuid(r.id) || !isUuid(r.copy_tenant_id)) throw new DbError("unknown");
+    return { visitId: r.id.toLowerCase(), copyTenantId: r.copy_tenant_id.toLowerCase() };
+  });
+}
+
+// After the purge deleted the copy: the visit's copy_deleted_at, set once. True when this call set
+// it; false when it was already set or the visit no longer points at this copy.
+export async function markCopyDeleted(q: Queryable, input: { visitId: string; copyTenantId: string }): Promise<boolean> {
+  if (!isUuid(input.visitId) || !isUuid(input.copyTenantId)) return false;
+  const updated = await q.execute(
+    `UPDATE demo_sessions SET copy_deleted_at = now()
+      WHERE id = CAST($1 AS uuid) AND tenant_id = current_tenant_id()
+        AND copy_tenant_id = CAST($2 AS uuid) AND copy_deleted_at IS NULL`,
+    [input.visitId, input.copyTenantId],
+  );
+  if (updated > 1) throw new DbError("unknown");
+  return updated === 1;
 }
 
 // Inside the spend ledger's lock (src/lib/ai/spend.ts reserve): adds the reservation to the

@@ -7,7 +7,7 @@ import { flags } from "@/config/flags";
 import { DbError } from "@/lib/db";
 import { formatPeriod } from "@/lib/format/dates";
 import { NEW_LOAD_PLACES, placeLabel, readNewLoadForm, type NewLoadFormView } from "@/lib/mock-tms/new-load";
-import { demoCarrierOf } from "@/lib/seed/reset";
+import { demoTemplateOf } from "@/lib/seed/reset";
 import { ForbiddenError, withRequestTenant } from "@/lib/tenant/context";
 import { NewLoadForm } from "./new-load-form";
 
@@ -24,7 +24,7 @@ export default async function NewMockLoadPage() {
   let problem: "forbidden" | "unreadable" | null = null;
   try {
     view = await withRequestTenant<View | null>(async (q) => {
-      if (!(await demoCarrierOf(q))) return null;
+      if (!(await demoTemplateOf(q))) return null;
       const form = await readNewLoadForm(q, Date.now());
       return form === null ? { kind: "off_mock" } : { kind: "ready", form };
     });

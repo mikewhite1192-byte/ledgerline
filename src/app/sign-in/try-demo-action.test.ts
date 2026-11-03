@@ -38,6 +38,7 @@ const state = vi.hoisted(() => ({
   signInCalls: [] as string[][],
   loginReads: 0,
   forgot: 0,
+  claim: 1,
 }));
 
 vi.mock("next/headers", () => ({
@@ -88,6 +89,7 @@ vi.mock("@/lib/db", async (importOriginal) => ({
         },
         execute: async (sql: string, params: unknown[] = []) => {
           state.writes.push({ sql, params });
+          if (sql.includes("SET copy_tenant_id")) return state.claim;
           return 1;
         },
       } as unknown as Queryable;
@@ -99,6 +101,7 @@ vi.mock("@/lib/db", async (importOriginal) => ({
 const { tryDemoAction } = await import("./try-demo-action");
 
 const saved = { ...flags.judgeAccess };
+const savedCopies = flags.visitCopies.enabled;
 let info: ReturnType<typeof vi.spyOn>;
 let error: ReturnType<typeof vi.spyOn>;
 
@@ -122,6 +125,7 @@ beforeEach(() => {
     signInCalls: [],
     loginReads: 0,
     forgot: 0,
+    claim: 1,
   });
   resetJudgeSignIns();
   flags.judgeAccess.enabled = true;
@@ -130,6 +134,7 @@ beforeEach(() => {
 });
 afterEach(() => {
   Object.assign(flags.judgeAccess, saved);
+  flags.visitCopies.enabled = savedCopies;
   info.mockRestore();
   error.mockRestore();
 });
@@ -341,5 +346,58 @@ describe("tryDemoAction and the sign-in walkthrough", () => {
     } finally {
       flags.signInTour.enabled = savedTour;
     }
+  });
+});
+
+describe("tryDemoAction and a visit's own copy (flags.visitCopies)", () => {
+  const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/;
+
+  it("claims a copy for a new visit, in the same transaction, and sends it to the preparing page", async () => {
+    flags.visitCopies.enabled = true;
+    expect(await run()).toBe("/preparing");
+    expect(state.writes.map((w) => w.sql.trim().split(/\s+/).slice(0, 3).join(" "))).toEqual([
+      "INSERT INTO demo_sessions",
+      "UPDATE demo_sessions SET",
+    ]);
+    const visit = state.writes[0].params[0];
+    const [claimed, sub, copyTenant, copySession] = state.writes[1].params as string[];
+    expect(claimed).toBe(visit);
+    expect(sub).toBe(SESSION.sub);
+    expect(copyTenant).toMatch(UUID);
+    expect(copySession).toMatch(UUID);
+    expect(copyTenant).not.toBe(copySession);
+    expect(state.writes[1].sql).toContain("copy_tenant_id IS NULL");
+    expect(state.set.map((c) => c.name)).toEqual(["pc_session", "pc_demo"]);
+    expect(info).toHaveBeenCalledWith("demo sign-in: copy claimed");
+  });
+
+  it("keeps the copy a reused visit already points at", async () => {
+    flags.visitCopies.enabled = true;
+    state.cookies = { pc_demo: KEPT };
+    state.live = [{ id: KEPT }];
+    state.claim = 0;
+    expect(await run()).toBe("/preparing");
+    expect(state.set.map((c) => [c.name, c.value])).toEqual([
+      ["pc_session", TOKEN],
+      ["pc_demo", KEPT],
+    ]);
+    expect(info).toHaveBeenCalledWith("demo sign-in: copy kept");
+  });
+
+  it("is refused, setting no cookie, when the claim neither lands nor finds a copy", async () => {
+    flags.visitCopies.enabled = true;
+    state.claim = 0;
+    state.live = [];
+    expect(await run()).toBe("/sign-in?demo=unavailable");
+    expect(state.set).toEqual([]);
+    expect(info).toHaveBeenCalledWith("demo sign-in: refused (copy)");
+  });
+
+  it("claims nothing while the switch is off", async () => {
+    flags.visitCopies.enabled = false;
+    expect(await run()).toBe("/");
+    expect(state.writes.map((w) => w.sql.trim().split(/\s+/).slice(0, 3).join(" "))).toEqual([
+      "INSERT INTO demo_sessions",
+    ]);
   });
 });

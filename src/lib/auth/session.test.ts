@@ -49,9 +49,10 @@ vi.mock("../db", async (importOriginal) => ({
   }),
 }));
 
-const { getSession, requireSession } = await import("./session");
+const { getPreparingVisit, getSession, requireSession, visitLanding } = await import("./session");
 
 const saved = flags.judgeAccess.enabled;
+const savedCopies = flags.visitCopies.enabled;
 let errors: ReturnType<typeof vi.spyOn>;
 beforeEach(() => {
   state.cookies = { pc_session: "good-token", pc_demo: VISIT };
@@ -60,10 +61,12 @@ beforeEach(() => {
   state.fail = null;
   state.calls = [];
   flags.judgeAccess.enabled = true;
+  flags.visitCopies.enabled = false;
   errors = vi.spyOn(console, "error").mockImplementation(() => {});
 });
 afterEach(() => {
   flags.judgeAccess.enabled = saved;
+  flags.visitCopies.enabled = savedCopies;
   errors.mockRestore();
 });
 
@@ -152,5 +155,109 @@ describe("requireSession", () => {
   it("returns the visit's session for a live judge", async () => {
     state.rows = [{ role: "judge", live: true }];
     await expect(requireSession()).resolves.toEqual({ ...TOKEN_SESSION, demoSessionId: VISIT });
+  });
+});
+
+describe("a visit's own copy (flags.visitCopies)", () => {
+  const COPY_TENANT = "0a1b2c3d-0000-4000-8000-0000000000c1";
+  const COPY_SESSION = "0a1b2c3d-0000-4000-8000-0000000000c2";
+  const EXPIRES = "2026-11-03T22:00:00.000000Z";
+  const copyRow = (over: Record<string, unknown> = {}) => ({
+    role: "judge",
+    live: true,
+    copy_tenant_id: COPY_TENANT,
+    copy_session_id: COPY_SESSION,
+    copy_ready: true,
+    copy_deleted: false,
+    expires_at: EXPIRES,
+    ...over,
+  });
+
+  beforeEach(() => {
+    flags.visitCopies.enabled = true;
+  });
+
+  it("runs a ready copy as the copy's own visitor login, in the copy's tenant, with the copy's visit row", async () => {
+    state.rows = [copyRow()];
+    const expected = {
+      sub: `visit:${VISIT}`,
+      email: TOKEN_SESSION.email,
+      tenantId: COPY_TENANT,
+      demoSessionId: COPY_SESSION,
+      visitTicketId: VISIT,
+    };
+    await expect(getSession()).resolves.toEqual(expected);
+    await expect(requireSession()).resolves.toEqual(expected);
+    await expect(getPreparingVisit()).resolves.toBeNull();
+    await expect(visitLanding()).resolves.toBe("/");
+    // The visit is always read in the token's tenant, the demo carrier.
+    for (const c of state.calls) expect(c.tenant).toBe(TENANT);
+  });
+
+  it("has no session while the copy is being built, and sends the visit to the preparing page", async () => {
+    state.rows = [copyRow({ copy_ready: false })];
+    await expect(getSession()).resolves.toBeNull();
+    expect(await redirectOf(requireSession())).toBe("/preparing");
+    await expect(getPreparingVisit()).resolves.toEqual({
+      token: TOKEN_SESSION,
+      ticketId: VISIT,
+      copy: { tenantId: COPY_TENANT, sessionId: COPY_SESSION, ready: false, deleted: false, expiresAt: EXPIRES },
+    });
+    await expect(visitLanding()).resolves.toBe("/sign-in");
+  });
+
+  it("treats a purged copy as an ended visit", async () => {
+    state.rows = [copyRow({ copy_deleted: true })];
+    await expect(getSession()).resolves.toBeNull();
+    expect(await redirectOf(requireSession())).toBe("/sign-in?demo=expired");
+    await expect(getPreparingVisit()).resolves.toBeNull();
+    await expect(visitLanding()).resolves.toBe("/sign-in?demo=expired");
+  });
+
+  it("keeps an ended visit ended, copy or not", async () => {
+    state.rows = [copyRow({ live: false })];
+    await expect(getSession()).resolves.toBeNull();
+    expect(await redirectOf(requireSession())).toBe("/sign-in?demo=expired");
+  });
+
+  it("gives a visit with no copy the shared demo carrier, as before", async () => {
+    state.rows = [{ role: "judge", live: true, copy_tenant_id: null, copy_session_id: null }];
+    await expect(getSession()).resolves.toEqual({ ...TOKEN_SESSION, demoSessionId: VISIT });
+    await expect(getPreparingVisit()).resolves.toBeNull();
+  });
+
+  it("ignores the copy columns while the switch is off", async () => {
+    flags.visitCopies.enabled = false;
+    for (const ready of [true, false]) {
+      state.rows = [copyRow({ copy_ready: ready })];
+      await expect(getSession()).resolves.toEqual({ ...TOKEN_SESSION, demoSessionId: VISIT });
+      await expect(getPreparingVisit()).resolves.toBeNull();
+    }
+  });
+
+  it("has no session at all when the read fails or a copy column is malformed, never the shared carrier", async () => {
+    state.fail = Object.assign(new Error("connection text"), { name: "DbError" });
+    await expect(getSession()).resolves.toBeNull();
+    expect(await redirectOf(requireSession())).toBe("/sign-in");
+    await expect(getPreparingVisit()).resolves.toBeNull();
+    expect(errors).toHaveBeenCalledWith("session: the demo visit could not be read (DbError)");
+    state.fail = null;
+    for (const bad of [
+      { copy_session_id: null },
+      { copy_tenant_id: "not-a-uuid" },
+      { copy_ready: "yes" },
+      { copy_deleted: null },
+      { expires_at: "tomorrow" },
+    ]) {
+      state.rows = [copyRow(bad)];
+      await expect(getSession()).resolves.toBeNull();
+    }
+  });
+
+  it("ignores the copy for admin and staff", async () => {
+    for (const role of ["admin", "staff"]) {
+      state.rows = [copyRow({ role })];
+      await expect(getSession()).resolves.toEqual(TOKEN_SESSION);
+    }
   });
 });

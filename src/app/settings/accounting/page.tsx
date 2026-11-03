@@ -32,6 +32,8 @@ const NOTES: Record<string, Note> = {
 type View = {
   shell: ShellTenant;
   admin: boolean;
+  // A visit's own copy of a demo carrier: no QuickBooks, so no connect button.
+  visit: boolean;
   connection: { realmTail: string; connectedAt: string } | null;
 };
 
@@ -54,6 +56,7 @@ export default async function AccountingSettings({
       return {
         shell,
         admin: shell.role === "admin",
+        visit: session.visitTicketId !== undefined,
         connection: await connectionSummary(q),
       };
     });
@@ -84,7 +87,11 @@ export default async function AccountingSettings({
           </div>
         </CardHeader>
         <CardBody>
-          {!view.admin ? (
+          {view.visit ? (
+            <p className="text-body text-foreground-2">
+              Your copy of the demo carrier does not connect to QuickBooks.
+            </p>
+          ) : !view.admin ? (
             <p className="text-body text-foreground-2">An admin of this carrier can change this.</p>
           ) : view.connection ? (
             <form action="/api/qbo/disconnect" method="post">

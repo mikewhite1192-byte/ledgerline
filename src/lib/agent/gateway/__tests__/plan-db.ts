@@ -87,7 +87,7 @@ export function planDb(plan: CarrierPlan, extra?: Handler): FakeDb {
   const handler: Handler = (sql, params) => {
     const custom = extra?.(sql, params);
     if (custom !== undefined) return custom;
-    if (sql === "SELECT id, slug, name, timezone FROM tenants WHERE id = current_tenant_id()") {
+    if (sql === "SELECT id, slug, name, timezone, demo_copy_of FROM tenants WHERE id = current_tenant_id()") {
       const c = plan.carrier;
       return [{ id: TENANT, slug: c.slug, name: c.name, timezone: c.timezone }];
     }

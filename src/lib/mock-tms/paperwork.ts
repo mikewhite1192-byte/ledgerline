@@ -22,7 +22,7 @@ import { PICKUP_WINDOW, POD_WINDOW_DAYS } from "../loads/paperwork";
 import { isJudge } from "../roles";
 import { instantAt } from "../seed/calendar";
 import { localStampText, mmddyyyy, type PdfContent } from "../seed/docs/documents";
-import { demoCarrierOf } from "../seed/reset";
+import { demoTemplateOf } from "../seed/reset";
 import { assertMembership } from "../tenant/context";
 import { addDays, daysBetween, localDateOf, type Instant, type LocalDate } from "../time/local-date";
 import { localClockOf } from "../tms/clocks";
@@ -319,7 +319,7 @@ type Ready = { ok: true; load: PaperLoad; times: PaperTimes; judge: boolean } | 
 async function ready(q: Queryable, session: Session, reference: string, stage: PaperStage, now: Date): Promise<Ready> {
   const no = (category: PaperworkRefusal): Ready => ({ ok: false, result: refused(category) });
   const role = await readRole(q, session);
-  if (!(await demoCarrierOf(q))) return no("not_demo");
+  if (!(await demoTemplateOf(q))) return no("not_demo");
   const load = await readPaperLoad(q, reference);
   if (load === null) return no("not_found");
   const today = localDateOf(now.toISOString(), load.zone);

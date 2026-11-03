@@ -8,7 +8,7 @@ import { flags } from "@/config/flags";
 import { DbError } from "@/lib/db";
 import { formatInstant } from "@/lib/format/dates";
 import { readBoard, type BoardRow } from "@/lib/mock-tms/store";
-import { demoCarrierOf } from "@/lib/seed/reset";
+import { demoTemplateOf } from "@/lib/seed/reset";
 import { ForbiddenError, withRequestTenant } from "@/lib/tenant/context";
 
 export const dynamic = "force-dynamic";
@@ -23,7 +23,7 @@ export default async function TmsDemoBoard() {
   let problem: "forbidden" | "unreadable" | null = null;
   try {
     view = await withRequestTenant<View | null>(async (q) => {
-      if (!(await demoCarrierOf(q))) return null;
+      if (!(await demoTemplateOf(q))) return null;
       const board = await readBoard(q);
       return board === null ? { kind: "off_mock" } : { kind: "ready", zone: board.zone, rows: board.rows };
     });
