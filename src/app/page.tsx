@@ -21,6 +21,7 @@ import { HomeCard, Unavailable } from "@/components/home/home-card";
 import { CashFlowCard, OwedCard } from "@/components/home/money-cards";
 import { FeedCard } from "@/components/feed/feed-card";
 import { PaydayCard } from "@/components/home/payday-card";
+import { AskAnything, DidToday, NeedsYouShort } from "@/components/home/simple-home";
 import { TodayCard } from "@/components/home/today-card";
 import { Tour } from "@/components/home/tour";
 import { NewHereLine } from "@/components/help/how-pay-works";
@@ -48,14 +49,15 @@ import { cardsRow, readNeedsYou, type NeedsYouRow, type NeedsYouView } from "@/l
 import { readTodayIntake, type TodayIntake } from "@/lib/home/today";
 import { readInvoiceList } from "@/lib/invoices/views";
 import { readFeed } from "@/lib/feed/read";
-import { feedLines, type FeedLine } from "@/lib/feed/words";
+import { readDoneToday } from "@/lib/feed/done-today";
+import { feedLines, type DoneLine, type FeedLine } from "@/lib/feed/words";
 import { readNextWeekStart } from "@/lib/pay-rules/read";
 import { codeToWords, modelCallStatusLabel } from "@/lib/format/labels";
 import { readPaystubAsk } from "@/lib/settlements/list";
 import { readSettlementsView } from "@/lib/settlements/views";
 import { readLatestSweepRun } from "@/lib/sweep/view";
 import { readTourFacts } from "@/lib/tour/facts";
-import { tourFooter, tourSteps } from "@/lib/tour/steps";
+import { TOUR_FOOTER, tourSteps } from "@/lib/tour/steps";
 import { ForbiddenError, withRequestTenant } from "@/lib/tenant/context";
 import { carrierToday } from "@/lib/tenant/shell";
 import { localTimeOf, type LocalDate } from "@/lib/time/local-date";
@@ -108,6 +110,8 @@ export default async function Home({
   const askedPaystub = params.paystub;
   const askedCard = isCardAsk(params.ask) ? params.ask : null;
   const tourShown = flags.signInTour.enabled === true && params.welcome === "1";
+  // The simple Home: three blocks from the same reads, and none of the reads only the full Home uses.
+  const simple = flags.simpleShape.enabled === true;
   const paystubId =
     typeof askedPaystub === "string" && isUuid(askedPaystub) ? askedPaystub.toLowerCase() : null;
   let carrier: Carrier | null = null;
@@ -134,7 +138,7 @@ export default async function Home({
       if (!counts) throw new DbError("unknown");
       // The model check's read-back, from the database on every render: this carrier's newest
       // calls (row-level security applies) and the global spend counter.
-      const ledger = flags.aiProofRoute
+      const ledger = flags.aiProofRoute && !simple
         ? { calls: await readRecentCalls(q, 5), spend: await readSpend(q) }
         : null;
       const paystub = paystubId ? await readPaystubAsk(q, paystubId) : null;
@@ -181,10 +185,10 @@ export default async function Home({
         // date (its pay day has passed), or that there is none.
         // A failed database or membership read says so on the card, never "not checked"; any other
         // error goes on to Next.
-        flags.cashFridayEnabled ? loaded("cash home", () => readCashHome(carrier.session)) : null,
+        flags.cashFridayEnabled && !simple ? loaded("cash home", () => readCashHome(carrier.session)) : null,
         // Home's cards, each in its own carrier transaction and only while its page is on, so one
         // failed read shows that card as unavailable and leaves the rest of the page alone.
-        readCards(carrierToday(carrier.timezone, now), carrier.timezone),
+        readCards(carrierToday(carrier.timezone, now), carrier.timezone, simple),
         // The walkthrough's own reads, only when it shows. Each says so in its step when it fails.
         tourShown
           ? readTourFacts({ now, today: carrierToday(carrier.timezone, now), timezone: carrier.timezone })
@@ -247,34 +251,81 @@ export default async function Home({
           needs: needsYou,
           payday: cards.payday,
           firstQuestion: suggestions[0]?.label,
+          today,
           on: {
             activityFeed: flags.activityFeed.enabled === true,
             adminAboveCents: flags.approverRole.adminAboveCents,
             judgeTurns: flags.judgeAccess.turnsPerSession,
-            judgeCapCents: flags.judgeAccess.sessionCapCents,
+            simpleShape: simple,
           },
         }),
-        footer: tourFooter(tourFacts),
+        footer: TOUR_FOOTER,
       }
     : null;
 
+  const tenant = {
+    name: carrier.name,
+    email: carrier.email,
+    timezone: carrier.timezone,
+    role: carrier.role,
+    asksKey: dismissKey(carrier.session.tenantId, carrier.session.sub),
+  };
+  // The bell's dot counts only a read that came back; an unread list never reads as zero.
+  const needsYouCount = needsYou.unread ? undefined : needsYou.rows.length;
+
+  if (simple) {
+    return (
+      <AppShell
+        tenant={tenant}
+        nav={appNav("/")}
+        help={HOW_PAY_WORKS}
+        title="Home"
+        signOut={signOut}
+        suggestions={suggestions}
+        agentOpening={opening}
+        needsYouCount={needsYouCount}
+        // Home has its own ask box.
+        askBox={false}
+      >
+        <h1 className="sr-only">Home</h1>
+        <div className="mx-auto grid w-full max-w-[760px] gap-5">
+          {tour ? <Tour steps={tour.steps} footer={tour.footer} reopen /> : null}
+          <Greeting
+            name={carrier.name}
+            today={today}
+            hour={localTimeOf(now.toISOString(), carrier.timezone).hour}
+            shortcuts={[]}
+          />
+          <DidToday
+            sweep={lastSweep}
+            intake={cards.intake}
+            shown={{
+              documents: flags.documentsEnabled,
+              voiceNotes: flags.voiceIntakeEnabled,
+              messages: flags.inboxEnabled,
+              notesPage: flags.driverNotesEnabled,
+            }}
+            done={cards.done}
+            today={today}
+            timezone={carrier.timezone}
+          />
+          <NeedsYouShort view={needsYou} />
+          {flags.agentEnabled ? <AskAnything suggestions={suggestions} /> : null}
+        </div>
+      </AppShell>
+    );
+  }
+
   return (
     <AppShell
-      tenant={{
-        name: carrier.name,
-        email: carrier.email,
-        timezone: carrier.timezone,
-        role: carrier.role,
-        asksKey: dismissKey(carrier.session.tenantId, carrier.session.sub),
-      }}
+      tenant={tenant}
       nav={appNav("/")}
       help={HOW_PAY_WORKS}
       title="Home"
       signOut={signOut}
       suggestions={suggestions}
       agentOpening={opening}
-      // The bell's dot counts only a read that came back; an unread list never reads as zero.
-      needsYouCount={needsYou.unread ? undefined : needsYou.rows.length}
+      needsYouCount={needsYouCount}
       // The sidebar's pinned amounts, from the cards' own reads; a card not read leaves its out.
       pinned={{
         payWeekCents: cards.payday?.ok ? cards.payday.value.netCents : undefined,
@@ -363,32 +414,40 @@ type Cards = {
   flow: Loaded<FlowWeek[]> | null;
   owed: Loaded<Owed> | null;
   feed: Loaded<FeedLine[]> | null;
+  // The simple Home's "What I did today" lines, from the same feed read.
+  done: Loaded<DoneLine[]> | null;
 };
 
 // The live feed card's newest lines.
 const FEED_CARD_LINES = 3;
 
-// null is a card whose page is switched off, so it is not shown at all.
-async function readCards(today: LocalDate, timezone: string): Promise<Cards> {
+// null is a card whose page is switched off, so it is not shown at all. The simple Home reads only
+// what came in and the feed.
+async function readCards(today: LocalDate, timezone: string, simple: boolean): Promise<Cards> {
   const intakeOn = flags.documentsEnabled || flags.voiceIntakeEnabled || flags.inboxEnabled;
-  const [intake, payday, flow, owed, feed] = await Promise.all([
+  const [intake, payday, flow, owed, feed, done] = await Promise.all([
     intakeOn ? loaded("intake", () => withRequestTenant((q) => readTodayIntake(q, today))) : null,
-    flags.settlementsEnabled
+    flags.settlementsEnabled && !simple
       ? loaded("payday", () => withRequestTenant(async (q) => paydayOf(await readSettlementsView(q, null))))
       : null,
-    flags.settlementsEnabled && flags.invoicesEnabled
+    flags.settlementsEnabled && flags.invoicesEnabled && !simple
       ? loaded("money flow", () => withRequestTenant((q) => readMoneyFlow(q, today)))
       : null,
-    flags.invoicesEnabled
+    flags.invoicesEnabled && !simple
       ? loaded("owed", () => withRequestTenant(async (q) => owedOf(await readInvoiceList(q, today))))
       : null,
-    flags.activityFeed.enabled
+    flags.activityFeed.enabled && !simple
       ? loaded("feed", () =>
           withRequestTenant(async (q) => feedLines((await readFeed(q, { limit: FEED_CARD_LINES })).rows, timezone)),
         )
       : null,
+    flags.activityFeed.enabled && simple
+      ? loaded("done today", () =>
+          withRequestTenant((q) => readDoneToday(q, timezone, today)),
+        )
+      : null,
   ]);
-  return { intake, payday, flow, owed, feed };
+  return { intake, payday, flow, owed, feed, done };
 }
 
 // The agent's recent turns, for a reload to show the same thread. A failed read shows an empty

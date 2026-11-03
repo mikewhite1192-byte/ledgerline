@@ -1,7 +1,8 @@
 import { codeToWords } from "../format/labels";
 import { formatCents } from "../format/money";
-import { formatInstant, isRealInstant } from "../format/dates";
+import { formatClock, formatInstant, isRealInstant } from "../format/dates";
 import { hrefOrNull, recordHref } from "../records/href";
+import { localDateOf, type LocalDate } from "../time/local-date";
 import type { FeedActor, FeedRow } from "./read";
 
 // The live feed's words: one plain sentence per row, from its code words, cents, counts and the
@@ -269,4 +270,102 @@ export function feedLine(r: FeedRow, timeZone: string): FeedLine | null {
 
 export function feedLines(rows: readonly FeedRow[], timeZone: string): FeedLine[] {
   return rows.map((r) => feedLine(r, timeZone)).filter((l): l is FeedLine => l !== null);
+}
+
+// Home's "What I did today": the same rows, as what the coworker itself finished, in the first
+// person and without a role word. Only the desk, the agent, the autopilot and the rules engine
+// count; what a person did is theirs, not the coworker's.
+export type DoneLine = {
+  key: string;
+  at: string;
+  // The time of day alone ("9:10 AM"): every line is today's.
+  time: string;
+  words: string;
+  href: string | null;
+};
+
+const COWORKER = new Set<FeedActor>(["desk", "agent", "autopilot", "engine"]);
+
+// A finished desk step, by its source. The pay check has its own line on Home, and an autopilot
+// step shows as the card it approved, so neither has one here.
+const DESK_DONE: Readonly<Record<string, string>> = {
+  customer_payment: "Checked a customer payment against its invoice.",
+  collections: "Checked who owes money past due.",
+  digest: "Wrote this morning's summary.",
+  card_transaction: "Checked a card transaction.",
+  inbound_message: "Read a message from a driver.",
+  voice_note: "Listened to a voice note.",
+  document: "Read a document.",
+  load_event: "Checked a load update.",
+  tms_event: "Checked a dispatch update.",
+  cash_check: "Checked the cash for Friday's pay run.",
+  audit: "Checked a draft a second time.",
+};
+const NO_DESK_LINE = new Set(["sweep", "autopilot"]);
+
+// A confirmed money step, by its kind; anything else reads as "Finished" and its own words.
+const PAID_WORDS: Readonly<Record<string, string>> = {
+  advance_payout: "Paid an advance",
+  settlement_payout: "Paid a paystub",
+  money_code_issue: "Issued a money code",
+  card_pullback: "Pulled back a card load",
+  escrow_release: "Released escrow",
+};
+
+function doneWords(r: FeedRow): string | null {
+  const moving = r.direction === "out" || r.direction === "in";
+  const sum = (cents: number | null) => (cents !== null && cents > 0 ? `, ${formatCents(cents)}` : "");
+  const title = r.title ?? "a card";
+  switch (r.event) {
+    case "proposal_proposed":
+      return `Drafted for you to approve: ${title}${moving ? sum(r.cents) : ""}.`;
+    case "proposal_decided":
+      return r.actor === "autopilot" && r.code !== "rejected"
+        ? `Approved within your limit: ${title}${moving ? sum(r.cents) : ""}.`
+        : null;
+    case "money_settled": {
+      if (r.code !== "confirmed") return null;
+      if (r.channel === "accounting") {
+        return `Recorded ${withArticle(moneyThing(r.kind, r.system).toLowerCase())} in QuickBooks${sum(r.cents)}.`;
+      }
+      if (r.kind !== null && Object.hasOwn(PAID_WORDS, r.kind)) return `${PAID_WORDS[r.kind]}${sum(r.cents)}.`;
+      return `Finished ${withArticle(moneyThing(r.kind, r.system).toLowerCase())}${sum(r.cents)}.`;
+    }
+    case "desk_done": {
+      if (r.count === 0 || (r.kind !== null && NO_DESK_LINE.has(r.kind))) return null;
+      if (r.kind !== null && Object.hasOwn(DESK_DONE, r.kind)) return DESK_DONE[r.kind];
+      return `Checked ${deskThing(r.kind)}.`;
+    }
+    default:
+      return null;
+  }
+}
+
+// One row as one of today's lines, or null for a row the coworker did not finish.
+export function doneLine(r: FeedRow, timeZone: string): DoneLine | null {
+  if (!COWORKER.has(r.actor)) return null;
+  const text = doneWords(r);
+  if (text === null) return null;
+  return {
+    key: r.key,
+    at: r.at,
+    time: formatClock(r.at, timeZone),
+    words: text,
+    href: r.record === null ? null : hrefOrNull(recordHref, r.record),
+  };
+}
+
+// The feed's newest rows (newest first, as readFeed returns them) as today's lines, oldest first:
+// only rows from the carrier's today, a draft left out once its decision is in, at most max lines.
+export function doneLines(rows: readonly FeedRow[], timeZone: string, today: LocalDate, max = 4): DoneLine[] {
+  const decided = new Set(rows.filter((r) => r.event === "proposal_decided").map((r) => r.key.replace(/:decided$/, "")));
+  const lines: DoneLine[] = [];
+  for (const r of rows) {
+    if (lines.length >= max) break;
+    if (localDateOf(r.at, timeZone) !== today) continue;
+    if (r.event === "proposal_proposed" && decided.has(r.key.replace(/:proposed$/, ""))) continue;
+    const line = doneLine(r, timeZone);
+    if (line !== null) lines.push(line);
+  }
+  return lines.reverse();
 }

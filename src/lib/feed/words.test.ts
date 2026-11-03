@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { DbError } from "@/lib/db";
 import { cursorParam, feedRowOf, parseCursor, type FeedRow } from "./read";
-import { ACTOR_LABELS, feedLine, feedLines } from "./words";
+import { ACTOR_LABELS, doneLine, doneLines, feedLine, feedLines } from "./words";
 
 // The feed's words from fixed rows, in a fixed zone: every event reads as one plain line, a person
 // reads as a role word, and nothing a row is not meant to carry (a login id, an email, a note, an
@@ -181,6 +181,81 @@ describe("feedLine", () => {
     expect(line?.href).toBe(`/records/advances/${ID}`);
     expect(feedLine(row({ record: { table: "card_pullbacks", id: ID } }), ZONE)?.href).toBeNull();
     expect(feedLine(row({}), ZONE)?.href).toBeNull();
+  });
+});
+
+describe("doneLine", () => {
+  const done = (over: Partial<FeedRow>) => doneLine(row(over), ZONE)?.words ?? null;
+
+  it("says what the coworker finished, in the first person, with the amount once", () => {
+    expect(done({ title: "Advance for Dana Reyes", direction: "out", cents: 20_000 })).toBe(
+      "Drafted for you to approve: Advance for Dana Reyes, $200.00.",
+    );
+    expect(done({ title: "Fix a paystub" })).toBe("Drafted for you to approve: Fix a paystub.");
+    expect(done({})).toBe("Drafted for you to approve: a card.");
+    expect(
+      done({ event: "proposal_decided", actor: "autopilot", code: "approved", title: "Invoice 1042", direction: "in", cents: 435_000, limitCents: 500_000 }),
+    ).toBe("Approved within your limit: Invoice 1042, $4,350.00.");
+    expect(done({ event: "money_settled", actor: "autopilot", code: "confirmed", kind: "invoice", channel: "accounting", cents: 435_000 })).toBe(
+      "Recorded an invoice in QuickBooks, $4,350.00.",
+    );
+    expect(done({ event: "money_settled", actor: "autopilot", code: "confirmed", kind: "advance_payout", channel: "payment", cents: 20_000 })).toBe(
+      "Paid an advance, $200.00.",
+    );
+    expect(done({ event: "money_settled", actor: "desk", code: "confirmed", kind: "settlement_payout", cents: 150_000 })).toBe("Paid a paystub, $1,500.00.");
+    expect(done({ event: "money_settled", actor: "engine", code: "confirmed", kind: "factoring_advance", cents: 90_000 })).toBe(
+      "Finished a factoring advance, $900.00.",
+    );
+    expect(done({ event: "desk_done", actor: "desk", kind: "customer_payment" })).toBe("Checked a customer payment against its invoice.");
+    expect(done({ event: "desk_done", actor: "desk", kind: "voice_note" })).toBe("Listened to a voice note.");
+    expect(done({ event: "desk_done", actor: "desk", kind: "fuel_receipt" })).toBe("Checked a fuel receipt.");
+  });
+
+  it("leaves out what a person did, what did not finish, and what Home already says", () => {
+    for (const actor of ["admin", "staff", "judge", "someone"] as const) expect(done({ actor }), actor).toBeNull();
+    expect(done({ event: "proposal_decided", actor: "autopilot", code: "rejected" })).toBeNull();
+    expect(done({ event: "proposal_decided", actor: "staff", code: "approved" })).toBeNull();
+    expect(done({ event: "proposal_audited", code: "pass" })).toBeNull();
+    expect(done({ event: "money_settled", actor: "autopilot", code: "failed", kind: "advance_payout" })).toBeNull();
+    expect(done({ event: "money_sent", actor: "autopilot", code: "unknown", kind: "advance_payout" })).toBeNull();
+    expect(done({ event: "desk_done", actor: "desk", kind: "sweep" })).toBeNull();
+    expect(done({ event: "desk_done", actor: "desk", kind: "autopilot" })).toBeNull();
+    expect(done({ event: "desk_failed", actor: "desk", kind: "document" })).toBeNull();
+    expect(done({ event: "desk_sleep", actor: "desk", count: 3 })).toBeNull();
+    expect(done({ event: "autopilot_pause", actor: "admin" })).toBeNull();
+  });
+
+  it("gives the time of day alone in the carrier's zone and the record's page", () => {
+    const line = doneLine(row({ title: "Advance", record: { table: "advances", id: ID } }), ZONE);
+    expect(line?.time).toBe("9:00 AM");
+    expect(line?.href).toBe(`/records/advances/${ID}`);
+  });
+});
+
+describe("doneLines", () => {
+  const P = "1f0e0d0c-0b0a-4908-8706-050403020100";
+  const at = (iso: string) => `${iso}.000000Z`;
+
+  it("keeps today's lines only, oldest first, drops a draft once it is decided, and stops at the cap", () => {
+    // Newest first, as the feed reads them. 9:00 AM Nov 10 in Chicago is 15:00Z.
+    const rows = [
+      row({ key: "desk:a", at: at("2026-11-10T16:10:00"), event: "desk_done", actor: "desk", kind: "document" }),
+      row({ key: `proposal:${P}:decided`, at: at("2026-11-10T16:00:00"), event: "proposal_decided", actor: "autopilot", code: "approved", title: "Invoice 1042" }),
+      row({ key: "desk:b", at: at("2026-11-10T15:30:00"), event: "desk_done", actor: "staff", kind: "document" }),
+      row({ key: `proposal:${P}:proposed`, at: at("2026-11-10T15:20:00"), title: "Invoice 1042" }),
+      row({ key: "desk:c", at: at("2026-11-10T15:10:00"), event: "desk_done", actor: "desk", kind: "voice_note" }),
+      // 11:30 PM Nov 9 in Chicago: yesterday.
+      row({ key: "desk:d", at: at("2026-11-10T05:30:00"), event: "desk_done", actor: "desk", kind: "audit" }),
+    ];
+    const lines = doneLines(rows, ZONE, "2026-11-10");
+    expect(lines.map((l) => [l.time, l.words])).toEqual([
+      ["9:10 AM", "Listened to a voice note."],
+      ["10:00 AM", "Approved within your limit: Invoice 1042."],
+      ["10:10 AM", "Read a document."],
+    ]);
+    expect(doneLines(rows, ZONE, "2026-11-10", 2).map((l) => l.key)).toEqual([`proposal:${P}:decided`, "desk:a"]);
+    expect(doneLines(rows, ZONE, "2026-11-11")).toEqual([]);
+    expect(doneLines([], ZONE, "2026-11-10")).toEqual([]);
   });
 });
 

@@ -17,12 +17,30 @@ const LINK = "text-small text-link underline-offset-4 hover:underline";
 // it. Closing it is this page's state only: nothing is stored or written, and the next sign-in (or
 // "Show me around") opens it again. "Ask about this" opens the agent card with the step's question
 // in the box; nothing is sent until the person sends it. Without the agent card on the page there
-// is no Ask.
-export function Tour({ steps, footer }: { steps: readonly TourStep[]; footer: string }) {
+// is no Ask. With `reopen` (the simple Home, which has no shortcut row), a closed walkthrough
+// leaves one quiet "Show me around" link that opens it again at the first step.
+export function Tour({ steps, footer, reopen = false }: { steps: readonly TourStep[]; footer: string; reopen?: boolean }) {
   const [at, setAt] = useState(0);
   const [open, setOpen] = useState(true);
   const panel = useAgentPanel();
-  if (!open || steps.length === 0) return null;
+  if (steps.length === 0) return null;
+  if (!open) {
+    if (!reopen) return null;
+    return (
+      <p className="min-w-0">
+        <button
+          type="button"
+          onClick={() => {
+            setAt(0);
+            setOpen(true);
+          }}
+          className={cn(LINK, "cursor-pointer")}
+        >
+          Show me around
+        </button>
+      </p>
+    );
+  }
   const i = Math.min(at, steps.length - 1);
   const step = steps[i];
   const last = i === steps.length - 1;
