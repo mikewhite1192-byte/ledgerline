@@ -8,6 +8,7 @@ import { ErrorState } from "@/components/app/states";
 import { StatusBadge } from "@/components/app/status-badge";
 import { Card, CardBody, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { proposalCardFrom } from "@/components/agent/proposal-card-from";
+import { BooksStatusLine } from "@/components/books/books-line";
 import { InvoiceCards, type InvoiceCard } from "@/components/invoices/invoice-cards";
 import { flags } from "@/config/flags";
 import { readEngineProposalViews } from "@/lib/agent/gateway/store";
@@ -18,6 +19,7 @@ import { decisionNoteSentence, refusalSentence } from "@/lib/advances/reasons";
 import { sourceWords } from "@/lib/advances/request";
 import { takebackReasonWords } from "@/lib/advances/takeback-words";
 import { advancesOn } from "@/lib/advances/switches";
+import { booksStatus, latestByKind } from "@/lib/books/status";
 import { pullbackOn } from "@/lib/pullbacks/switches";
 import { PULL_APPROVE_NOTICES } from "@/lib/pullbacks/words";
 import { formatInstant, formatLocalDate } from "@/lib/format/dates";
@@ -138,6 +140,16 @@ export default async function AdvanceRecordPage({ params }: { params: Promise<{ 
         }
       />
       <RecordActionButtons advanceId={advance.id} actions={actions} />
+      {advance.status === "paid" ? (
+        // A paid advance's expense posts to QuickBooks by itself (D-104); this says where it stands.
+        <BooksStatusLine
+          line={booksStatus(ledger, ["advance_expense"], {
+            on: flags.books.enabled,
+            maxAttempts: flags.books.maxAttempts,
+            tail: latestByKind(ledger, "advance_expense")?.outsideTail ?? null,
+          })}
+        />
+      ) : null}
       <TakeBack
         advanceId={advance.id}
         offered={actions.takeBack}

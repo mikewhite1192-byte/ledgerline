@@ -41,7 +41,7 @@ export type RecordResult =
       category: "disabled" | "validation" | "not_found" | "duplicate_ref" | "over_applied" | "limit";
     };
 
-type PostablePayment = {
+export type PostablePayment = {
   id: string;
   customer: { id: string; code: string; name: string };
   paymentRef: string;
@@ -54,7 +54,7 @@ type PostablePayment = {
 };
 
 // The payment with its customer and applications, the payment row locked.
-async function readPostablePayment(q: Queryable, paymentId: string): Promise<PostablePayment | null> {
+export async function readPostablePayment(q: Queryable, paymentId: string): Promise<PostablePayment | null> {
   const [p] = await q.query<{
     id: string;
     customer_id: string;
@@ -116,9 +116,10 @@ function sameApplications(a: PostablePayment["applications"], b: PostablePayment
   return left.length === right.length && left.every((k, i) => k === right[i]);
 }
 
-// The one money action that posts a payment. Refuses (not_configured) before any reserve while
+// The one money action that posts a payment (the books step calls it too). Refuses
+// (not_configured) before any reserve while
 // an applied invoice is not in the accounting system yet.
-async function postPaymentAction(
+export async function postPaymentAction(
   db: TenantDb,
   session: Session,
   payment: PostablePayment,

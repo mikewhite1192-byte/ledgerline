@@ -1297,6 +1297,8 @@ const leg = (n: number, kind: SettlementRecordView["legs"][number]["kind"], stat
   attempt: 1,
   state,
   failureCategory: null,
+  checkCount: 0,
+  outsideId: null,
   settledVia: null,
   batchId: null,
   amountCents: settled.settlement.net_cents,

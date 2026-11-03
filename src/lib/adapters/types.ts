@@ -205,6 +205,13 @@ export type InvoiceLine = {
   amountCents: number;
 };
 export type PayLine = { kind: string; description: string; amountCents: number };
+// One line of a check: the account role it is booked to (each one the connection already maps),
+// integer cents, and plain text.
+export type CheckLine = {
+  role: "driver_advances" | "driver_chargebacks" | "driver_reimbursements" | "driver_escrow";
+  amountCents: number;
+  description: string;
+};
 
 // Every method takes the tenant's Queryable first (its connection row and id map live there).
 // Run each call in its own short tenant transaction and let it return: a token refresh made
@@ -269,6 +276,20 @@ export interface AccountingAdapter {
       feeCents: number;
       onDate: LocalDate;
       docRef: string;
+    },
+    ctx: SendContext,
+  ): Promise<SendOutcome>;
+  // One purchase paid by check from LedgerLine Clearing to the driver's vendor record, each line on
+  // its own expense account (a money code on driver reimbursements, an escrow release on driver
+  // escrow). Numbered docRef; a document with that number already ours is adopted, never doubled.
+  createCheck(
+    q: Queryable,
+    c: {
+      actionId: string;
+      vendorOutsideId: string;
+      onDate: LocalDate;
+      docRef: string;
+      lines: readonly CheckLine[];
     },
     ctx: SendContext,
   ): Promise<SendOutcome>;

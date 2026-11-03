@@ -89,6 +89,10 @@ export type LegRow = {
   attempt: number;
   state: MoneyActionState;
   failureCategory: string | null;
+  // How many read-backs the reconcile pass made, and the outside record's id once it answered:
+  // the books status line reads both (src/lib/books/status.ts).
+  checkCount: number;
+  outsideId: string | null;
   settledVia: string | null;
   batchId: string | null;
   amountCents: number;
@@ -146,6 +150,8 @@ export async function readSettlementRecord(q: Queryable, id: string): Promise<Se
       attempt: a.attempt,
       state: a.state,
       failureCategory: a.failureCategory,
+      checkCount: a.checkCount,
+      outsideId: a.outsideId,
       settledVia: a.settledVia,
       batchId: a.batchId,
       amountCents: a.amountCents,

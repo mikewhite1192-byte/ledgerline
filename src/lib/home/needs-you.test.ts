@@ -6,7 +6,18 @@ import type { InvoiceListRow } from "@/lib/invoices/views";
 import type { SettlementListRow } from "@/lib/settlements/views";
 import { carrierToday } from "@/lib/tenant/shell";
 import * as fx from "@/test/page-fixtures";
-import { advancesRow, cardsRow, escalatedRow, invoiceCardsRow, pastDueRow, paystubsRow, readNeedsYou } from "./needs-you";
+import {
+  advancesRow,
+  booksHref,
+  booksRow,
+  cardsRow,
+  escalatedRow,
+  invoiceCardsRow,
+  pastDueRow,
+  paystubsRow,
+  readNeedsYou,
+  type BooksStuckRow,
+} from "./needs-you";
 
 // The reads the strip makes, answered from fixture rows, with what each was asked for.
 const reads = vi.hoisted(() => ({
@@ -215,5 +226,83 @@ describe("the escalated row", () => {
     expect(asked[0].sql).toContain("c.created_by = $1");
     expect(asked[0].sql).toContain("c.demo_session_id IS NOT DISTINCT FROM CAST($2 AS uuid)");
     expect(asked[0].sql).toContain("make_interval(days => 7)");
+  });
+});
+
+describe("Home's books row (D-104)", () => {
+  const SUB = "00000000-0000-4000-8000-000000000001";
+  const DRIVER = "00000000-0000-4000-8000-000000000002";
+  const stuck = (over: Partial<BooksStuckRow> = {}): BooksStuckRow => ({
+    kind: "advance_expense",
+    subjectId: SUB,
+    counterpartyId: DRIVER,
+    state: "failed",
+    attempt: 3,
+    failureCategory: "validation",
+    checkCount: 0,
+    amountCents: 12_500,
+    ...over,
+  });
+
+  it("counts a record whose tries ran out and opens the oldest record page", () => {
+    const row = booksRow([stuck(), stuck({ kind: "invoice", subjectId: DRIVER, amountCents: 100 })], 3);
+    expect(row).toEqual({
+      key: "books",
+      count: 2,
+      atLeast: false,
+      what: "records QuickBooks did not take",
+      amounts: [{ cents: 12_600, label: "not in QuickBooks" }],
+      href: `/records/advances/${SUB}`,
+      linkLabel: "Open the oldest one",
+    });
+    expect(booksRow([stuck()], 3)?.what).toBe("record QuickBooks did not take");
+  });
+
+  it("leaves out a failure with tries left, but never another amount or an unread post", () => {
+    expect(booksRow([stuck({ attempt: 2 })], 3)).toBeNull();
+    expect(booksRow([stuck({ attempt: 1, failureCategory: "amount_mismatch" })], 3)?.count).toBe(1);
+    expect(booksRow([stuck({ state: "unknown", attempt: 1, checkCount: 49 })], 3)).toBeNull();
+    expect(booksRow([stuck({ state: "unknown", attempt: 1, checkCount: 50 })], 3)?.count).toBe(1);
+  });
+
+  it("links each kind to the page that shows it", () => {
+    const at = (kind: BooksStuckRow["kind"]) => booksHref({ kind, subjectId: SUB, counterpartyId: DRIVER });
+    expect(at("settlement_bill")).toBe(`/records/settlements/${SUB}`);
+    expect(at("settlement_bill_payment")).toBe(`/records/settlements/${SUB}`);
+    expect(at("invoice")).toBe(`/records/invoices/${SUB}`);
+    expect(at("customer_payment")).toBe(`/records/customer_payments/${SUB}`);
+    expect(at("money_code_expense")).toBe(`/money-codes/${SUB}`);
+    expect(at("escrow_release_expense")).toBe(`/records/drivers/${DRIVER}`);
+    expect(at("advance_payout")).toBeNull();
+  });
+
+  it("is read only when Home asks, as the latest accounting row of each record", async () => {
+    const asked: { sql: string; params: unknown[] }[] = [];
+    const q = {
+      query: async (sql: string, params: unknown[]) => {
+        asked.push({ sql, params });
+        return [
+          {
+            kind: "settlement_bill",
+            subject_id: SUB,
+            counterparty_id: DRIVER,
+            state: "failed",
+            attempt: "3",
+            failure_category: "validation",
+            check_count: "0",
+            amount_cents: "50000",
+          },
+        ];
+      },
+    } as unknown as Queryable;
+    const base = { today: "2026-11-03" as const, settlements: false, advances: false, invoices: false };
+    expect(await readNeedsYou(q, base)).toEqual([]);
+    expect(asked).toEqual([]);
+    const rows = await readNeedsYou(q, { ...base, books: { maxAttempts: 3 } });
+    expect(rows.map((r) => [r.key, r.count, r.href])).toEqual([["books", 1, `/records/settlements/${SUB}`]]);
+    expect(asked).toHaveLength(1);
+    expect(asked[0].params).toEqual([3, 50, 50]);
+    expect(asked[0].sql).toContain("channel = 'accounting'");
+    expect(asked[0].sql).toContain("DISTINCT ON (kind, subject_id)");
   });
 });

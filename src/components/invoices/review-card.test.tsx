@@ -139,9 +139,9 @@ describe("the Review card", () => {
     expect(screen.queryAllByRole("button")).toHaveLength(0);
   });
 
-  it("offers Retry post on a failed post and Check pending on an unconfirmed one", () => {
+  it("offers no Retry post on a failed post (the books step retries) and Check pending on an unconfirmed one", () => {
     card(view("sync_error", ["posting_failed", "not_reviewed"]));
-    expect(screen.getByRole("button", { name: "Retry post" })).toBeTruthy();
+    expect(screen.queryByRole("button", { name: "Retry post" })).toBeNull();
     expect(screen.queryByRole("button", { name: "Check pending" })).toBeNull();
     expect(screen.getByRole("link", { name: "See the attempts" }).getAttribute("href")).toBe("#posting-attempts");
     cleanup();

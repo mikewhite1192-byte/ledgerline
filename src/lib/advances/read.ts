@@ -289,6 +289,8 @@ export type LedgerEntry = {
   outsideTail: string | null;
   createdAt: string;
   settledAt: string | null;
+  // How many read-backs the reconcile pass made (the books status line reads it).
+  checkCount?: number;
 };
 
 export function outsideTail(id: string | null): string | null {
@@ -308,6 +310,7 @@ function entryOf(a: MoneyAction): LedgerEntry {
     outsideTail: outsideTail(a.outsideId),
     createdAt: a.createdAt,
     settledAt: a.settledAt,
+    checkCount: a.checkCount,
   };
 }
 

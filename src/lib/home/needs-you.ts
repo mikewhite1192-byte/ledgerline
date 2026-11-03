@@ -4,6 +4,8 @@ import type { ProposalView, TurnView } from "@/lib/agent/view";
 import type { Queryable } from "@/lib/db";
 import { readInvoiceList, type InvoiceListRow } from "@/lib/invoices/views";
 import { readSettlementsView, type SettlementListRow } from "@/lib/settlements/views";
+import { needsPerson } from "@/lib/books/status";
+import { MAX_CHECKS, type MoneyActionKind } from "@/lib/money/types";
 import type { LocalDate } from "@/lib/time/local-date";
 import { cardAnchor } from "./card-anchor";
 
@@ -14,7 +16,7 @@ import { cardAnchor } from "./card-anchor";
 
 export type NeedsYouAmount = { cents: number; label: string };
 export type NeedsYouRow = {
-  key: "cards" | "escalated" | "paystubs" | "advances" | "invoice_cards" | "past_due";
+  key: "cards" | "escalated" | "paystubs" | "advances" | "invoice_cards" | "past_due" | "books";
   count: number;
   // The count was cut off at the read's limit, so there may be more.
   atLeast: boolean;
@@ -161,6 +163,113 @@ export function pastDueRow(rows: readonly InvoiceListRow[]): NeedsYouRow | null 
   };
 }
 
+// A record the books step could not get into QuickBooks after its tries (D-104): its latest
+// accounting row failed for good or was never read back. Asked as the record pages ask
+// (books/status.ts needsPerson), so the count and the page's line agree.
+export type BooksStuckRow = {
+  kind: MoneyActionKind;
+  subjectId: string;
+  counterpartyId: string;
+  state: "failed" | "unknown";
+  attempt: number;
+  failureCategory: string | null;
+  checkCount: number;
+  amountCents: number;
+};
+
+// How many stuck records the read returns at most.
+export const BOOKS_LIMIT = 50;
+
+// Where a stuck record is shown, by its ledger kind. An escrow release has no page of its own: its
+// driver's page lists it.
+export function booksHref(r: Pick<BooksStuckRow, "kind" | "subjectId" | "counterpartyId">): string | null {
+  switch (r.kind) {
+    case "settlement_bill":
+    case "settlement_bill_payment":
+      return `/records/settlements/${r.subjectId}`;
+    case "advance_expense":
+      return `/records/advances/${r.subjectId}`;
+    case "invoice":
+      return `/records/invoices/${r.subjectId}`;
+    case "customer_payment":
+      return `/records/customer_payments/${r.subjectId}`;
+    case "money_code_expense":
+      return `/money-codes/${r.subjectId}`;
+    case "escrow_release_expense":
+      return `/records/drivers/${r.counterpartyId}`;
+    default:
+      return null;
+  }
+}
+
+// rows come oldest first; the link opens the oldest.
+export function booksRow(
+  rows: readonly BooksStuckRow[],
+  maxAttempts: number,
+  limit = BOOKS_LIMIT,
+): NeedsYouRow | null {
+  const seen = new Set<string>();
+  const stuck = rows.filter((r) => {
+    if (!needsPerson(r, maxAttempts) || booksHref(r) === null || seen.has(r.subjectId)) return false;
+    seen.add(r.subjectId);
+    return true;
+  });
+  if (stuck.length === 0) return null;
+  return {
+    key: "books",
+    count: stuck.length,
+    atLeast: rows.length >= limit,
+    what: `${plural(stuck.length, "record", "records")} QuickBooks did not take`,
+    amounts: [{ cents: stuck.reduce((s, r) => s + r.amountCents, 0), label: "not in QuickBooks" }],
+    href: booksHref(stuck[0]) as string,
+    linkLabel: "Open the oldest one",
+  };
+}
+
+type StuckRead = {
+  kind: string;
+  subject_id: string;
+  counterparty_id: string;
+  state: string;
+  attempt: number | string;
+  failure_category: string | null;
+  check_count: number | string;
+  amount_cents: number | string;
+};
+
+// Every accounting record's latest ledger row that waits on a person, oldest first.
+async function readBooks(q: Queryable, maxAttempts: number): Promise<NeedsYouRow | null> {
+  const rows = await q.query<StuckRead>(
+    `WITH latest AS (
+       SELECT DISTINCT ON (kind, subject_id) kind, subject_id, counterparty_id, state, attempt,
+              failure_category, check_count, amount_cents, created_at
+         FROM money_actions
+        WHERE tenant_id = current_tenant_id() AND channel = 'accounting'
+        ORDER BY kind, subject_id, attempt DESC, created_at DESC
+     )
+     SELECT kind, subject_id, counterparty_id, state, attempt, failure_category, check_count, amount_cents
+       FROM latest
+      WHERE (state = 'failed' AND (failure_category = 'amount_mismatch' OR attempt >= $1))
+         OR (state = 'unknown' AND check_count >= $2)
+      ORDER BY created_at, subject_id
+      LIMIT $3`,
+    [maxAttempts, MAX_CHECKS, BOOKS_LIMIT],
+  );
+  return booksRow(
+    rows.map((r) => ({
+      kind: r.kind as MoneyActionKind,
+      subjectId: r.subject_id,
+      counterpartyId: r.counterparty_id,
+      state: r.state === "unknown" ? "unknown" : "failed",
+      attempt: Number(r.attempt),
+      failureCategory: r.failure_category,
+      checkCount: Number(r.check_count),
+      amountCents: Number(r.amount_cents),
+    })),
+    maxAttempts,
+  );
+}
+
 // The strip's reads, each only while its page is switched on. Runs inside the caller's carrier
 // transaction; a failed read throws to the caller, which shows the strip as not read.
 export async function readNeedsYou(
@@ -174,6 +283,8 @@ export async function readNeedsYou(
     advances: boolean;
     invoices: boolean;
     escalations?: { now: Date; sub: string; visitId: string | null };
+    // books: records QuickBooks did not take after the books step's tries (the caller decides).
+    books?: { maxAttempts: number };
   },
 ): Promise<NeedsYouRow[]> {
   const rows: (NeedsYouRow | null)[] = [];
@@ -184,6 +295,7 @@ export async function readNeedsYou(
     rows.push(invoiceCardsRow(await readEngineProposalViews(q, "invoice_post", ENGINE_LIMIT)));
     rows.push(pastDueRow(await readInvoiceList(q, opts.today)));
   }
+  if (opts.books) rows.push(await readBooks(q, opts.books.maxAttempts));
   return rows.filter((r): r is NeedsYouRow => r !== null);
 }
 

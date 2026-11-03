@@ -1,6 +1,7 @@
 import Link from "next/link";
 import { notFound } from "next/navigation";
 import type { ReactNode } from "react";
+import { BooksStatusLine } from "@/components/books/books-line";
 import { LedgerEntryRow } from "@/components/app/ledger-entry";
 import { Money } from "@/components/app/money";
 import { PageHeader } from "@/components/app/page-header";
@@ -10,7 +11,9 @@ import { StatusBadge } from "@/components/app/status-badge";
 import { Term } from "@/components/app/term";
 import { Card, CardBody, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { InlineAlert } from "@/components/ui/inline-alert";
+import { flags } from "@/config/flags";
 import { outsideTail } from "@/lib/advances/read";
+import { booksStatus, latestByKind } from "@/lib/books/status";
 import { formatInstant } from "@/lib/format/dates";
 import { readMoneyCode, type MoneyCodeDetail } from "@/lib/money-codes/read";
 import { moneyCodesOn } from "@/lib/money-codes/switches";
@@ -106,6 +109,18 @@ export default async function MoneyCodePage({ params }: { params: Promise<{ id: 
     createdAt: a.createdAt,
     settledAt: a.settledAt,
   }));
+  // Where the issued code stands in QuickBooks (D-104): shown once its kind posts by itself, or
+  // once a post was made.
+  const bookRows = detail.books ?? [];
+  const booksOn = flags.books.enabled === true && flags.books.kinds.moneyCodes === true;
+  const books =
+    code.status === "issued" && (booksOn || bookRows.length > 0)
+      ? booksStatus(bookRows, ["money_code_expense"], {
+          on: booksOn,
+          maxAttempts: flags.books.maxAttempts,
+          tail: outsideTail(latestByKind(bookRows, "money_code_expense")?.outsideId ?? null),
+        })
+      : null;
 
   return (
     <CodesFrame shell={page.shell} title="Money code">
@@ -242,6 +257,11 @@ export default async function MoneyCodePage({ params }: { params: Promise<{ id: 
               ))}
             </ol>
           )}
+          {books ? (
+            <div className="mt-3">
+              <BooksStatusLine line={books} />
+            </div>
+          ) : null}
           {code.status === "unknown" ? (
             <InlineAlert tone="warning" className="mt-3">
               Not confirmed yet: unknown is not the same as failed. Check pending reads the answer back before anything is charged.

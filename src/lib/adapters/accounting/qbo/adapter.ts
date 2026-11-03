@@ -23,6 +23,7 @@ import {
   keyedDocNumber,
   PATH_OF,
   paymentBody,
+  checkPurchaseBody,
   purchaseBody,
   queryRows,
   REF_FIELD,
@@ -378,6 +379,10 @@ export function createQboAdapter(deps: QboDeps = {}): AccountingAdapter {
 
     createExpense(q, e, ctx) {
       return create(q, "Purchase", e?.actionId, ctx, (o) => purchaseBody(e, o.conn.accounts));
+    },
+
+    createCheck(q, c, ctx) {
+      return create(q, "Purchase", c?.actionId, ctx, (o) => checkPurchaseBody(c, o.conn.accounts));
     },
 
     recordCustomerPayment(q, p, ctx) {

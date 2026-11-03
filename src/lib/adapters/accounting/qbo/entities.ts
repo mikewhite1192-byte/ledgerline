@@ -314,29 +314,48 @@ export function billPaymentBody(
   };
 }
 
-export function purchaseBody(
+// The expense accounts a purchase line may be booked to. Each is an account role every
+// connection already maps (mapping.ts ACCOUNT_ROLES), so no new role is ever needed here.
+export const PURCHASE_LINE_ROLES = [
+  "driver_advances",
+  "driver_chargebacks",
+  "driver_reimbursements",
+  "driver_escrow",
+] as const;
+export type PurchaseLineRole = (typeof PURCHASE_LINE_ROLES)[number];
+export type PurchaseLine = { role: PurchaseLineRole; amountCents: number; description: string };
+
+// At most this many lines on one purchase; the callers send one or two.
+const MAX_PURCHASE_LINES = 10;
+
+// One purchase paid by check from LedgerLine Clearing to a driver's vendor record: each line an
+// expense line on its own account, the total their sum. Every line is checked (a known role, a
+// positive amount, printable text), and so is the total, before any of it goes into the body.
+export function checkPurchaseBody(
   e: {
     actionId: string;
     vendorOutsideId: string;
-    amountCents: number;
-    feeCents: number;
     onDate: LocalDate;
     docRef: string;
+    lines: readonly PurchaseLine[];
   },
   accounts: AccountMap,
 ): { body: Record<string, unknown>; totalCents: number; docNumber: string } {
-  const cents = checkAmount(e.amountCents);
-  if (typeof e.feeCents !== "number" || !Number.isSafeInteger(e.feeCents) || e.feeCents < 0) fail();
-  const total = cents + e.feeCents;
-  if (total >= AMOUNT_LIMIT_CENTS) fail();
-  const line = (c: number, role: "driver_advances" | "driver_chargebacks", text: string) => ({
-    DetailType: "AccountBasedExpenseLineDetail",
-    Amount: amount(c),
-    Description: text,
-    AccountBasedExpenseLineDetail: { AccountRef: { value: checkOutsideId(accounts[role]) } },
+  if (!Array.isArray(e?.lines) || e.lines.length < 1 || e.lines.length > MAX_PURCHASE_LINES) fail();
+  let total = 0;
+  const Line = e.lines.map((l) => {
+    const role: unknown = l?.role;
+    if (typeof role !== "string" || !(PURCHASE_LINE_ROLES as readonly string[]).includes(role)) fail();
+    const cents = checkAmount(l.amountCents);
+    total += cents;
+    return {
+      DetailType: "AccountBasedExpenseLineDetail",
+      Amount: amount(cents),
+      Description: checkText(l.description, 100),
+      AccountBasedExpenseLineDetail: { AccountRef: { value: checkOutsideId(accounts[role as PurchaseLineRole]) } },
+    };
   });
-  const Line = [line(cents, "driver_advances", "Driver advance")];
-  if (e.feeCents > 0) Line.push(line(e.feeCents, "driver_chargebacks", "Advance fee"));
+  if (total >= AMOUNT_LIMIT_CENTS) fail();
   const docNumber = checkDocNumber(e.docRef);
   return {
     docNumber,
@@ -351,6 +370,41 @@ export function purchaseBody(
       Line,
     },
   };
+}
+
+// A paid advance: the advance on driver advances and its fee, when there is one, on driver
+// chargebacks.
+export function purchaseBody(
+  e: {
+    actionId: string;
+    vendorOutsideId: string;
+    amountCents: number;
+    feeCents: number;
+    onDate: LocalDate;
+    docRef: string;
+  },
+  accounts: AccountMap,
+): { body: Record<string, unknown>; totalCents: number; docNumber: string } {
+  const cents = checkAmount(e.amountCents);
+  if (typeof e.feeCents !== "number" || !Number.isSafeInteger(e.feeCents) || e.feeCents < 0) fail();
+  const lines: PurchaseLine[] = [{ role: "driver_advances", amountCents: cents, description: "Driver advance" }];
+  if (e.feeCents > 0) lines.push({ role: "driver_chargebacks", amountCents: e.feeCents, description: "Advance fee" });
+  return checkPurchaseBody(
+    { actionId: e.actionId, vendorOutsideId: e.vendorOutsideId, onDate: e.onDate, docRef: e.docRef, lines },
+    accounts,
+  );
+}
+
+// The document number of a money code's or an escrow release's purchase: MC- or ER-, the tenant's
+// bill key, and the first 12 hex digits of the record's id, 21 characters in all (Intuit's limit).
+// Derived from stored ids only, so a re-send after a crash or a demo reset finds the same number
+// and adopts the purchase QuickBooks already holds.
+export const RECORD_DOC_PREFIXES = ["MC", "ER"] as const;
+export type RecordDocPrefix = (typeof RECORD_DOC_PREFIXES)[number];
+
+export function recordDocNumber(prefix: RecordDocPrefix, tenantId: string, recordId: string): string {
+  if (!(RECORD_DOC_PREFIXES as readonly string[]).includes(prefix) || !isCanonicalUuid(recordId)) fail();
+  return checkDocNumber(`${prefix}-${billKeyOf(tenantId)}-${recordId.replace(/-/g, "").slice(0, 12).toUpperCase()}`);
 }
 
 export type Application = { invoiceOutsideId: string; amountCents: number };

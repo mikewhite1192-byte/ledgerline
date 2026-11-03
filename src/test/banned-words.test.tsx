@@ -240,6 +240,8 @@ const fakeQ = {
     if (/SELECT id, load_number, dest_city, dest_state FROM loads/.test(sql)) return fx.CLIP_LOADS;
     // The home page's escalated-turns count, read while verification is on: none waiting.
     if (/^SELECT count\(\*\) AS n\s+FROM turns t\s+JOIN conversations c/.test(sql)) return [{ n: 0 }];
+    // The home page's books row, read while accounting is on: nothing waiting on a person.
+    if (/^WITH latest AS \(\s+SELECT DISTINCT ON \(kind, subject_id\)[\s\S]*channel = 'accounting'/.test(sql)) return [];
     // Settings > Demo's dispatch fault panel: a synthetic connection with every fault off.
     if (/FROM tms_connections/.test(sql)) return [{ system: "synthetic", faults: "{}" }];
     // The sample board's load page, with the driver's phone on: our own load's status.
