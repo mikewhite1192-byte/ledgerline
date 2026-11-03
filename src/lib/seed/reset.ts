@@ -4,7 +4,7 @@ import { TENANT_TABLES, assertIdentifier, type TenantTable } from "../data/table
 import { DbError, type Queryable, type TenantDb } from "../db/types";
 import { settleDriver } from "../rules-engine";
 import { HERO_OPEN_WEEK } from "./assert-plan";
-import { demoCarrierFor, type DemoCarrier } from "./carriers";
+import { demoCarrierFor, demoTemplateFor, type DemoCarrier } from "./carriers";
 import type { CarrierPlan } from "./plan";
 import { replaceInTransaction, verifyTenant, type SeedReport } from "./run";
 
@@ -329,6 +329,12 @@ export async function demoCarrierOf(q: Queryable): Promise<DemoCarrier | null> {
   return demoCarrierFor(await readTenant(q));
 }
 
+// The current tenant's demo carrier, or the one it is a visit's copy of (carriers.ts
+// demoTemplateFor), or null. Never for the reset, the fleet move or the Demo settings page.
+export async function demoTemplateOf(q: Queryable): Promise<DemoCarrier | null> {
+  return demoTemplateFor(await readTenant(q));
+}
+
 function count(value: unknown): number {
   if (typeof value !== "number" || !Number.isSafeInteger(value) || value < 0) {
     // Unknown is not zero.
@@ -418,7 +424,7 @@ ON CONFLICT (tenant_id) DO UPDATE
   WHERE NOT (autopilot_state.paused_at IS NOT NULL AND autopilot_state.paused_until IS NULL)`;
 
 // The hero's open-week net, read back and settled by the engine; null for a carrier with no hero.
-async function heroNet(q: Queryable, plan: CarrierPlan): Promise<number | null> {
+export async function heroNet(q: Queryable, plan: CarrierPlan): Promise<number | null> {
   if (!plan.carrier.heroCode) return null;
   const hero = plan.rows.drivers.find((d) => d.code === plan.carrier.heroCode);
   const open = plan.rows.settlement_periods.find((p) => p.status === "open");

@@ -11,6 +11,7 @@ import { flags } from "../../config/flags";
 import type { Queryable, TenantDb } from "../db";
 import { loadsOf } from "../data/records";
 import { readRowsWhereId, readTenant } from "../data/read";
+import { demoTemplateFor } from "../seed/carriers";
 import { executeMoneyAction, type ExecuteResult, type MoneyDeps } from "../money/execute";
 import type { ReconcileHooks } from "../money/reconcile";
 import { MoneyError, type MoneyAction } from "../money/types";
@@ -431,7 +432,8 @@ async function writeInvoice(
   // A number past what the accounting system can hold with the tenant's key is refused, never cut.
   let invoiceNumber: string;
   try {
-    invoiceNumber = await nextInvoiceNumber(q, invoicePrefixOf(tenant.slug));
+    // A visit's own copy of a demo carrier numbers as the demo carrier does (0091).
+    invoiceNumber = await nextInvoiceNumber(q, invoicePrefixOf(demoTemplateFor(tenant)?.slug ?? tenant.slug));
   } catch (err) {
     if (!(err instanceof RangeError)) throw err;
     return { kind: "result", result: await failStale(q, proposal.id, "validation") };

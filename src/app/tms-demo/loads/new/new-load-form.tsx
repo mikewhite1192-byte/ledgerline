@@ -19,7 +19,7 @@ export const NEW_LOAD_MESSAGES: Record<NewLoadCategory, string> = {
   unknown: "The load did not confirm, so it may have been created. Open the board before trying again.",
   failed: "The load failed a check and was undone. Nothing was created.",
   not_found: "This carrier is not on the sample dispatch system. Nothing was created.",
-  cap: "This carrier has reached its limit of new loads; a demo reset clears them. Nothing was created.",
+  cap: "This carrier has reached its limit of new loads. Nothing was created.",
   exists: "A load with that number already exists. Pick another number. Nothing was created.",
   unknown_customer: "Pick a customer from the list. Nothing was created.",
   unknown_driver: "Pick a driver from the list. Nothing was created.",

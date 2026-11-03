@@ -66,6 +66,7 @@ type Fake = DeskStore & {
   synced: { token: string; nowIso: string; deadlineMs: number }[];
   failSync: boolean;
   order: string[];
+  copy?: boolean;
 };
 
 function fakeStore(): Fake {
@@ -86,7 +87,11 @@ function fakeStore(): Fake {
       if (fake.lease && fake.lease.until >= input.nowIso) return null;
       fake.lease = { token: input.token, until: input.leaseUntilIso };
       // A row no wake has moved yet: no watermarks.
-      return { zone: "America/Chicago", watermarks: { card_transactions: null, customer_payments: null, documents: null, load_events: null, tms_status_events: null } };
+      return {
+        zone: "America/Chicago",
+        copy: fake.copy,
+        watermarks: { card_transactions: null, customer_payments: null, documents: null, load_events: null, tms_status_events: null },
+      };
     },
     async startClock(input) {
       if (fake.lease?.token === input.token) fake.clockStarts.push(input.nowIso);
@@ -469,6 +474,41 @@ describe("wakeDesk", () => {
     expect(ofKind("claimed")).toHaveLength(1);
   });
 
+  it("holds a visit's own copy of a demo carrier to the smaller day cap, and a copy cap that is not set to none", async () => {
+    const saved = flags.visitCopies.deskDayCents;
+    try {
+      expect(flags.visitCopies.deskDayCents).toBeLessThan(flags.deskLoop.limits.dayCents);
+      store.copy = true;
+      store.pending = [1, 2].map((n) => ({ eventKey: cardKey(n), source: "card_transaction" as const }));
+      store.spent = { wakeNanocents: 0, dayNanocents: flags.visitCopies.deskDayCents * NANOCENTS_PER_CENT };
+      const run = vi.fn(async () => done());
+      const capped = await wake(handlersWith(run));
+      expect(run).not.toHaveBeenCalled();
+      expect(capped).toMatchObject({ ok: true, status: "done", reason: "day_cents" });
+
+      // The same spend on the demo carrier itself is under its own cap.
+      store.copy = false;
+      store.lease = null;
+      const own = await wake(handlersWith(run));
+      expect(run).toHaveBeenCalled();
+      expect(own).toMatchObject({ ok: true });
+      expect(own.ok && own.reason).not.toBe("day_cents");
+
+      // A copy cap that is not a whole positive number stops the copy's wake before any work.
+      store.copy = true;
+      store.lease = null;
+      store.spent = { wakeNanocents: 0, dayNanocents: 0 };
+      store.pending = [3].map((n) => ({ eventKey: cardKey(n), source: "card_transaction" as const }));
+      run.mockClear();
+      flags.visitCopies.deskDayCents = Number.NaN;
+      const unset = await wake(handlersWith(run));
+      expect(run).not.toHaveBeenCalled();
+      expect(unset).toMatchObject({ ok: true, reason: "day_cents" });
+    } finally {
+      flags.visitCopies.deskDayCents = saved;
+    }
+  });
+
   it("stops before the next piece of work once the day's model spend reaches its cap", async () => {
     store.pending = [1, 2].map((n) => ({ eventKey: cardKey(n), source: "card_transaction" as const }));
     store.spent = { wakeNanocents: 0, dayNanocents: flags.deskLoop.limits.dayCents * NANOCENTS_PER_CENT };
@@ -622,6 +662,35 @@ describe("wakeDesk", () => {
     const capped = await wake(handlersWith(vi.fn(async () => done())), uuid(901));
     expect(capped).toMatchObject({ ok: true, reason: "day_cents" });
     expect(calls.at(-1)?.reasons).toBe(false);
+  });
+
+  it("writes no reason lines once a cap is spent, even on a wake with no open work, and none when spend does not read", async () => {
+    const calls: boolean[] = [];
+    store.asks = async (input) => {
+      calls.push(input.reasons);
+    };
+    store.spent = { wakeNanocents: 0, dayNanocents: flags.deskLoop.limits.dayCents * NANOCENTS_PER_CENT };
+    const capped = await wake(handlersWith(vi.fn(async () => done())));
+    expect(capped).toMatchObject({ ok: true, reason: "no_work" });
+    expect(calls).toEqual([false]);
+
+    // A visit's copy, at its own smaller cap with no open work.
+    store.copy = true;
+    store.lease = null;
+    store.spent = { wakeNanocents: 0, dayNanocents: flags.visitCopies.deskDayCents * NANOCENTS_PER_CENT };
+    await wake(handlersWith(vi.fn(async () => done())), uuid(902));
+    expect(calls.at(-1)).toBe(false);
+
+    // Spend not known: still closes stale questions, with no reasons.
+    store.copy = false;
+    store.lease = null;
+    store.spend = async () => {
+      throw new Error("connection reset by 10.0.0.7");
+    };
+    const unread = await wake(handlersWith(vi.fn(async () => done())), uuid(903));
+    expect(unread).toMatchObject({ ok: true, reason: "no_work" });
+    expect(calls).toHaveLength(3);
+    expect(calls.at(-1)).toBe(false);
   });
 
   it("logs a questions pass that throws, by name only, and still sleeps and gives the lease back", async () => {

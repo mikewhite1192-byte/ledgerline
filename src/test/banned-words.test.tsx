@@ -416,6 +416,7 @@ vi.mock("@/lib/adapters/accounting/qbo/store", async (importOriginal) => ({
 vi.mock("@/lib/seed/reset", async (importOriginal) => ({
   ...(await importOriginal<typeof import("@/lib/seed/reset")>()),
   demoCarrierOf: async () => DEMO_CARRIERS[0],
+  demoTemplateOf: async () => DEMO_CARRIERS[0],
   previewDemoReset: async () => get("demoPreview"),
 }));
 // The sample dispatch system's reads (src/app/tms-demo): one load on its board, picked up, with
@@ -2622,6 +2623,8 @@ const PAGES: PageCase[] = [
 // Route files this test does not render as a page, each with the reason. Keep it short: a new page
 // belongs above.
 const LISTED: Readonly<Record<string, string>> = {
+  "preparing/page.tsx":
+    "The short wait while a visit's own copy of the demo carrier is set up (flags.visitCopies, off; it redirects home with the switch off, so it cannot render here). Its words are fixed: a heading, one line about the visitor's own copy of made-up data, a progress line and a sign-out note if the setup fails, with no number, model name or internal word.",
   "layout.tsx":
     "The document around every page: it puts each one in the html shell and the toast holder and shows no words on the page. Its tab title and description are scanned below.",
   "records/settlement_periods/[id]/page.tsx":

@@ -13,6 +13,7 @@ import { PlainModeProvider } from "@/components/trace/plain-mode";
 import { cn } from "@/lib/cn";
 import { NEEDS_YOU_ANCHOR } from "./anchors";
 import { AreaTabs, type AreaTab } from "./area-tabs";
+import { isVisitor } from "@/lib/visit-copy/visitor";
 import { DemoBanner, VisitorNotice } from "./demo-banner";
 import { MobileNav } from "./mobile-nav";
 import { Money } from "./money";
@@ -204,20 +205,24 @@ export function AppShell({
   const agentOn = flags.agentEnabled === true;
   const panelOn = agentPanel && agentOn;
   const simple = flags.simpleShape.enabled === true;
-  const visitor = tenant.role === "judge";
+  // A visit's own copy of the demo carrier (flags.visitCopies): the visit's banner, and no Demo
+  // settings (a copy is never reset).
+  const copy = flags.visitCopies.enabled === true && isVisitor(tenant);
+  const visitor = tenant.role === "judge" || copy;
+  const items = copy ? nav.filter((i) => i.href !== "/settings/demo") : nav;
   const list =
-    simple && nav.some((i) => i.section !== undefined) ? (
-      <SectionNav nav={nav} />
-    ) : nav.some((i) => i.area !== undefined) ? (
-      <AreaNav nav={nav} agentOn={agentOn} pinned={pinned} />
+    simple && items.some((i) => i.section !== undefined) ? (
+      <SectionNav nav={items} />
+    ) : items.some((i) => i.area !== undefined) ? (
+      <AreaNav nav={items} agentOn={agentOn} pinned={pinned} />
     ) : (
-      <NavList items={nav} />
+      <NavList items={items} />
     );
   // The one slot across the top. Off, the test-mode line sits there and a visitor's line sits
   // under it, above the top bar.
   const notice =
     simple && visitor ? (
-      <VisitorNotice carrier={tenant.name} testMode={testMode} />
+      <VisitorNotice carrier={tenant.name} testMode={testMode} copy={copy} />
     ) : testMode ? (
       <TestModeBanner />
     ) : null;
@@ -252,7 +257,7 @@ export function AppShell({
           </div>
         </aside>
         <div className="min-w-0 flex-1">
-          {visitor && !simple ? <DemoBanner carrier={tenant.name} /> : null}
+          {visitor && !simple ? <DemoBanner carrier={tenant.name} copy={copy} /> : null}
           <TopBar
             offset={offset}
             agentOn={agentOn}

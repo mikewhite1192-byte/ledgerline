@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { Queryable } from "../db";
-import { chargeVisit, countVisitTurn, ipHashOf, readVisit, settleVisit, startVisit } from "./demo-visit";
+import { atHome, chargeVisit, countVisitTurn, ipHashOf, readVisit, settleVisit, startVisit } from "./demo-visit";
 
 // The guards that run before any SQL, and the fail-closed answers to rows that cannot be right.
 // The SQL itself is proven against a real database in demo-visit.db.test.ts.
@@ -51,18 +51,19 @@ describe("ipHashOf", () => {
 describe("demo visit guards", () => {
   it("reads nothing for a cookie that is not a visit id", async () => {
     const { q, calls } = fakeQ({ rows: [{ role: "judge", live: true }] });
-    await expect(readVisit(q, "sub-1", "not-a-visit")).resolves.toEqual({ role: null, live: false });
+    await expect(readVisit(q, "sub-1", "not-a-visit")).resolves.toEqual({ role: null, live: false, copy: null });
     expect(calls).toEqual([]);
   });
 
   it("reads no role from no row, two rows or an unknown role", async () => {
     for (const rows of [[], [{ role: "judge", live: true }, { role: "judge", live: true }], [{ role: "owner", live: true }]]) {
-      await expect(readVisit(fakeQ({ rows }).q, "sub-1", VISIT)).resolves.toEqual({ role: null, live: false });
+      await expect(readVisit(fakeQ({ rows }).q, "sub-1", VISIT)).resolves.toEqual({ role: null, live: false, copy: null });
     }
     // Only a true live column is live.
     await expect(readVisit(fakeQ({ rows: [{ role: "judge", live: "t" }] }).q, "sub-1", VISIT)).resolves.toEqual({
       role: "judge",
       live: false,
+      copy: null,
     });
   });
 
@@ -119,5 +120,42 @@ describe("demo visit guards", () => {
     await expect(
       startVisit(noLength, { sub: "sub-1", ipHash: null, reuseId: null, limits: { ...LIMITS, cookieHours: 0 }, at: null }),
     ).rejects.toMatchObject({ name: "DbError" });
+  });
+});
+
+describe("atHome", () => {
+  const HOME = "00000000-0000-4000-8000-0000000000a1";
+  const COPY = "00000000-0000-4000-8000-0000000000c1";
+
+  it("runs its work in the demo carrier, then sets the transaction back to the copy", async () => {
+    const seen: { sql: string; params: unknown[] }[] = [];
+    const q = {
+      query: async (sql: string, params: unknown[] = []) => {
+        seen.push({ sql, params });
+        return [];
+      },
+    } as unknown as Queryable;
+    const out = await atHome(q, HOME, COPY, async () => {
+      seen.push({ sql: "work", params: [] });
+      return 7;
+    });
+    expect(out).toBe(7);
+    expect(seen).toEqual([
+      { sql: "SELECT set_config('app.tenant_id', $1, true)", params: [HOME] },
+      { sql: "work", params: [] },
+      { sql: "SELECT set_config('app.tenant_id', $1, true)", params: [COPY] },
+    ]);
+  });
+
+  it("refuses an id that is not a uuid, or a home that is the copy, before any SQL", async () => {
+    for (const [home, copy] of [
+      ["not-a-uuid", COPY],
+      [HOME, "not-a-uuid"],
+      [HOME, HOME],
+    ]) {
+      const { q, calls } = fakeQ();
+      await expect(atHome(q, home, copy, async () => 1)).rejects.toMatchObject({ name: "DbError" });
+      expect(calls).toEqual([]);
+    }
   });
 });

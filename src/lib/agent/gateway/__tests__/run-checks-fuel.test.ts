@@ -17,7 +17,7 @@ const zone = plan.carrier.timezone;
 const ctx: GatewayContext = context({ now: new Date(instantAt(PLAN_ANCHOR, 12, 0, zone)), timeZone: zone });
 const call = { id: "call-1", name: "run_checks", argumentsJson: "{}" };
 const FUEL_CHECKS = new Set(["fuel_off_route", "fuel_over_tank", "fuel_while_parked", "fuel_duplicate"]);
-const TENANT_SQL = "SELECT id, slug, name, timezone FROM tenants WHERE id = current_tenant_id()";
+const TENANT_SQL = "SELECT id, slug, name, timezone, demo_copy_of FROM tenants WHERE id = current_tenant_id()";
 
 const shipped = structuredClone(flags);
 

@@ -18,6 +18,7 @@
     "demo:users": "tsx scripts/create-demo-users.ts",
     "seed": "tsx scripts/seed.ts",
     "demo:reset": "tsx scripts/demo-reset.ts",
+    "visit-copies:purge": "tsx scripts/visit-copies-purge.ts",
     "invariants": "tsx scripts/invariants.ts",
     "eval": "tsx scripts/eval.ts",
     "eval:readme": "tsx scripts/eval.ts --readme",

@@ -10,7 +10,7 @@ import { sendMockHook, type HookResult } from "@/lib/mock-tms/hook";
 import { createMockLoad, draftOf, NewLoadUndone, parseNewLoad, type NewLoadDraft, type NewLoadRefusal } from "@/lib/mock-tms/new-load";
 import { sendDriverPaperwork, type PaperworkRefusal, type PaperworkResult } from "@/lib/mock-tms/paperwork";
 import { applyMockAction, recordHookResult, type MockAction, type MockRefusal } from "@/lib/mock-tms/store";
-import { demoCarrierOf } from "@/lib/seed/reset";
+import { demoTemplateOf } from "@/lib/seed/reset";
 import { ForbiddenError, withRequestTenant } from "@/lib/tenant/context";
 
 // MOCK-TMS: the sample dispatch system's buttons (/tms-demo/loads/[ref]). Each one changes only that
@@ -86,7 +86,7 @@ async function run(form: FormData, actionOf: (form: FormData) => MockAction | nu
   try {
     const done = await withRequestTenant(async (q, session) => {
       const role = await readRole(q, session);
-      if (!(await demoCarrierOf(q))) throw new NotDemoCarrier();
+      if (!(await demoTemplateOf(q))) throw new NotDemoCarrier();
       const out = await applyMockAction(q, reference, action, role, {
         nowMs: Date.now(),
         maxEventsPerLoad: flags.mockTms.maxEventsPerLoad,
@@ -143,7 +143,7 @@ export async function createLoadAction(_prev: NewLoadState, form: FormData): Pro
   try {
     const done = await withRequestTenant(async (q, session) => {
       const role = await readRole(q, session);
-      if (!(await demoCarrierOf(q))) throw new NotDemoCarrier();
+      if (!(await demoTemplateOf(q))) throw new NotDemoCarrier();
       const out = await createMockLoad(q, input, role, {
         nowMs: Date.now(),
         maxNewLoads: flags.mockTms.maxNewLoads,

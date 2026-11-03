@@ -33,7 +33,7 @@ vi.mock("@/lib/tenant/context", async (importOriginal) => ({
   withSessionTenant: async <T,>(_s: Session, fn: (q: unknown) => Promise<T>) =>
     fn({
       query: async (sql: string) => {
-        if (sql !== "SELECT id, slug, name, timezone FROM tenants WHERE id = current_tenant_id()") {
+        if (sql !== "SELECT id, slug, name, timezone, demo_copy_of FROM tenants WHERE id = current_tenant_id()") {
           throw new Error("unexpected read");
         }
         return mocks.tenant.current ? [mocks.tenant.current] : [];

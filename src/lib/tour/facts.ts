@@ -5,7 +5,7 @@ import { DbError, type Queryable } from "@/lib/db";
 import { readFeedHeader } from "@/lib/feed/read";
 import { loaded, wholeNumber, type Loaded } from "@/lib/home/loaded";
 import { readBoard } from "@/lib/mock-tms/store";
-import { demoCarrierOf } from "@/lib/seed/reset";
+import { demoTemplateOf } from "@/lib/seed/reset";
 import { withRequestTenant } from "@/lib/tenant/context";
 import { addDays, type LocalDate } from "@/lib/time/local-date";
 
@@ -79,7 +79,7 @@ export async function readAutopilotFacts(q: Queryable, now: Date): Promise<Autop
 
 // The loads on this demo carrier's board, or null when it is not a demo carrier on the sample system.
 export async function readBoardCount(q: Queryable): Promise<number | null> {
-  if (!(await demoCarrierOf(q))) return null;
+  if (!(await demoTemplateOf(q))) return null;
   const board = await readBoard(q);
   return board === null ? null : board.rows.length;
 }

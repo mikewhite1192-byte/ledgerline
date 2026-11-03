@@ -174,6 +174,8 @@ const KEPT_OFF = [
   // Read only, but it changes where sign-in lands and adds a panel on Home: the owner turns it on in
   // its own PR.
   "signInTour.enabled",
+  // Each visit's own copy of the demo carrier: the owner turns it on in its own PR.
+  "visitCopies.enabled",
 ] as const;
 
 // The on/off switches in flags.ts, by path: every top-level boolean and every boolean inside a
@@ -443,6 +445,22 @@ describe("flags", () => {
     expect(LOCAL_OFF_ONLY as readonly string[]).toContain("simpleShape.enabled");
   });
 
+  it("ships visit copies off, with whole-number limits, off for the local demo run", () => {
+    expect(flags.visitCopies).toEqual({
+      enabled: false,
+      sliceMs: 12_000,
+      graceMinutes: 60,
+      purgePerCall: 2,
+      deskDayCents: 100,
+    });
+    for (const v of [flags.visitCopies.sliceMs, flags.visitCopies.graceMinutes, flags.visitCopies.purgePerCall]) {
+      expect(Number.isSafeInteger(v) && v > 0).toBe(true);
+    }
+    // A copy's desk day cap is never above the desk's own.
+    expect(flags.visitCopies.deskDayCents).toBeLessThanOrEqual(flags.deskLoop.limits.dayCents);
+    expect(LOCAL_OFF_ONLY as readonly string[]).toContain("visitCopies.enabled");
+  });
+
   it("ships the plain trace on, off for the local demo run", () => {
     expect(flags.plainTrace).toEqual({ enabled: true });
     // Listed ahead of its release, so the demo-path run keeps it off once it ships on.
@@ -589,6 +607,7 @@ describe("flags", () => {
       "signInTour.enabled",
       "driverPaperwork.enabled",
       "simpleShape.enabled",
+      "visitCopies.enabled",
       "plainTrace.enabled",
     ];
     const offOnly = LOCAL_OFF_ONLY as readonly string[];

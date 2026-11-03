@@ -7,13 +7,14 @@ import { flags } from "@/config/flags";
 import { DbError } from "@/lib/db";
 import { formatPeriod } from "@/lib/format/dates";
 import { NEW_LOAD_PLACES, placeLabel, readNewLoadForm, type NewLoadFormView } from "@/lib/mock-tms/new-load";
-import { demoCarrierOf } from "@/lib/seed/reset";
+import { demoCarrierOf, demoTemplateOf } from "@/lib/seed/reset";
 import { ForbiddenError, withRequestTenant } from "@/lib/tenant/context";
 import { NewLoadForm } from "./new-load-form";
 
 export const dynamic = "force-dynamic";
 
-type View = { kind: "ready"; form: NewLoadFormView } | { kind: "off_mock" };
+// copy: a visit's own copy of a demo carrier, which the demo reset does not reach.
+type View = { kind: "ready"; form: NewLoadFormView; copy: boolean } | { kind: "off_mock" };
 
 // MOCK-TMS: the sample dispatch system's "New load" form. It writes the sample system's load and
 // LedgerLine's planned load with the same number at once (src/lib/mock-tms/new-load.ts). While
@@ -24,9 +25,10 @@ export default async function NewMockLoadPage() {
   let problem: "forbidden" | "unreadable" | null = null;
   try {
     view = await withRequestTenant<View | null>(async (q) => {
-      if (!(await demoCarrierOf(q))) return null;
+      if (!(await demoTemplateOf(q))) return null;
       const form = await readNewLoadForm(q, Date.now());
-      return form === null ? { kind: "off_mock" } : { kind: "ready", form };
+      if (form === null) return { kind: "off_mock" };
+      return { kind: "ready", form, copy: (await demoCarrierOf(q)) === null };
     });
   } catch (err) {
     if (err instanceof ForbiddenError) problem = "forbidden";
@@ -65,7 +67,11 @@ export default async function NewMockLoadPage() {
                     ? "A paystub drafts only for a delivery inside an open pay week, and none is open now."
                     : `A paystub drafts only for a delivery inside the open pay week (${formatPeriod(view.form.openWeek.start, view.form.openWeek.end)}).`}
                 </li>
-                <li>{`${view.form.made} of ${flags.mockTms.maxNewLoads} new loads used; a demo reset clears them.`}</li>
+                <li>
+                  {view.copy
+                    ? `${view.form.made} of ${flags.mockTms.maxNewLoads} new loads used.`
+                    : `${view.form.made} of ${flags.mockTms.maxNewLoads} new loads used; a demo reset clears them.`}
+                </li>
               </ul>
               <NewLoadForm
                 suggestedNumber={`NEW-${randomInt(1000, 10000)}`}

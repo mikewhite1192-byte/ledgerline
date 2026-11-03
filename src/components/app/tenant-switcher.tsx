@@ -6,6 +6,7 @@ import { useDetailsMenu } from "@/components/ui/details-menu";
 import type { Role } from "@/lib/roles";
 import { cn } from "@/lib/cn";
 import { zoneName } from "@/lib/format/dates";
+import { isVisitor } from "@/lib/visit-copy/visitor";
 import { ThemeToggle } from "./theme-toggle";
 
 // role is the membership's, read with the rest. Required: a page that cannot read it fails closed.
@@ -42,9 +43,9 @@ function Initials({ name, size = "sm", className }: { name: string; size?: "sm" 
   );
 }
 
-// A demo visitor's carrier says so next to its name.
-function DemoBadge({ role }: { role: Role }) {
-  if (role !== "judge") return null;
+// A demo visitor's carrier says so next to its name (a judge, or the visitor of its own copy).
+function DemoBadge({ role, email }: { role: Role; email: string }) {
+  if (role !== "judge" && !isVisitor({ email })) return null;
   return <span className="shrink-0 rounded-sm bg-secondary px-1.5 text-caption text-foreground-2">Demo</span>;
 }
 
@@ -55,7 +56,13 @@ export function AccountParts({ tenant, signOut }: { tenant: TenantInfo; signOut:
     <>
       <div className="grid gap-0.5 border-t border-border pt-3 text-body">
         <p className="[overflow-wrap:anywhere]">
-          Signed in as <span className="font-medium">{tenant.email}</span>
+          {isVisitor(tenant) ? (
+            "Signed in as a demo visitor"
+          ) : (
+            <>
+              Signed in as <span className="font-medium">{tenant.email}</span>
+            </>
+          )}
         </p>
         {/* The zone's everyday name ("Central time"), never its id. The name does not change with the date. */}
         <p className="text-foreground-2">Time zone: {zoneName(tenant.timezone, new Date())}</p>
@@ -75,7 +82,7 @@ export function CarrierTile({ tenant }: { tenant: TenantInfo }) {
     <div className="flex min-w-0 items-center gap-2.5">
       <Initials name={tenant.name} size="md" />
       <span className="min-w-0 truncate text-body font-medium text-foreground">{tenant.name}</span>
-      <DemoBadge role={tenant.role} />
+      <DemoBadge role={tenant.role} email={tenant.email} />
     </div>
   );
 }
@@ -129,7 +136,7 @@ export function TenantSwitcher({ tenant, signOut }: { tenant: TenantInfo; signOu
       >
         <Initials name={tenant.name} size="md" />
         <span className="min-w-0 flex-1 truncate text-body font-medium text-foreground">{tenant.name}</span>
-        <DemoBadge role={tenant.role} />
+        <DemoBadge role={tenant.role} email={tenant.email} />
         <span className="sr-only">, carrier menu</span>
         <ChevronDown
           aria-hidden

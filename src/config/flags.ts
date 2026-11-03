@@ -1000,6 +1000,13 @@ export type Flags = {
   // coworker finished today, at most three things that need a person, and an ask box. It reuses the
   // reads Home already makes and changes no number. Off, Home renders as before.
   simpleShape: { enabled: boolean };
+  // Each demo visit gets its own copy of the demo carrier (src/lib/visit-copy): the sign-in claims
+  // a copy for the visit's ticket, a "Preparing your carrier" page builds it in slices of at most
+  // sliceMs each, and every request of the visit then runs in the copy as its admin. A copy lives
+  // while its visit does plus graceMinutes, then is purged (purgePerCall at each new build, and
+  // the purge script). deskDayCents caps the desk loop's model spend in one copy each day, under
+  // deskLoop.limits.dayCents. Off, a visit shares the demo carrier as before.
+  visitCopies: { enabled: boolean; sliceMs: number; graceMinutes: number; purgePerCall: number; deskDayCents: number };
   // The plain trace (src/components/trace/plain-mode.tsx): under an answer or a card, "How I
   // checked" lists the steps and the records they read, with one line for the second check, and no
   // model names, cents or seconds; a card shows one trust line and folds its reasons under Details.
@@ -1321,6 +1328,8 @@ export const flags: Flags = {
   simpleShape: { enabled: true },
   // Released by the owner (D-103, 2026-11-03). Presentation only.
   plainTrace: { enabled: true },
+  // Off until the owner turns it on in its own PR.
+  visitCopies: { enabled: false, sliceMs: 12_000, graceMinutes: 60, purgePerCall: 2, deskDayCents: 100 },
 };
 
 applyLocalOverrides(flags);

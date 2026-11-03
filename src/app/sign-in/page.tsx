@@ -7,7 +7,7 @@ import { Field } from "@/components/ui/field";
 import { InlineAlert } from "@/components/ui/inline-alert";
 import { Input } from "@/components/ui/input";
 import { flags } from "@/config/flags";
-import { getSession } from "@/lib/auth/session";
+import { getPreparingVisit, getSession } from "@/lib/auth/session";
 import { signInAction } from "./actions";
 import { tryDemoAction } from "./try-demo-action";
 
@@ -20,6 +20,8 @@ export default async function SignIn({
   searchParams: Promise<{ error?: string | string[]; demo?: string | string[] }>;
 }) {
   if (await getSession()) redirect("/");
+  // A demo visit whose own copy is still being built waits on the preparing page.
+  if (flags.visitCopies.enabled && (await getPreparingVisit())) redirect("/preparing");
   const { error, demo } = await searchParams;
   const message =
     error === "invalid"

@@ -8,7 +8,9 @@ import type { Db } from "../db/types";
 //   refused or unknown, so an old reservation is a settle that never happened.
 // - ops.ai_spend equals the log: spent is every settled cost, reserved is the reservations still
 //   held (rows reserved, and unknown rows, whose reservation stays counted for good), calls is
-//   every settled row; the auditor's counters likewise over its own rows.
+//   every settled row; the auditor's counters likewise over its own rows. Rows a visit copy's purge
+//   deleted with the copy (0091, src/lib/visit-copy/purge.ts) are counted by ops.ai_spend's purged
+//   columns instead, so each counter equals the log plus what was purged.
 // - Every demo visit's spent plus reserved is at or under the per-visit cap (demo_sessions, 0043):
 //   the cap is flags.judgeAccess.sessionCapCents in nanocents, written into the statement as a
 //   whole-number literal, never input.
@@ -27,6 +29,11 @@ export const MODEL_CALLS_SQL = `SELECT
        (SELECT calls FROM ops.ai_spend WHERE id = 1) AS counter_calls,
        (SELECT wonder_spent_nanocents FROM ops.ai_spend WHERE id = 1) AS counter_wonder_spent,
        (SELECT wonder_reserved_nanocents FROM ops.ai_spend WHERE id = 1) AS counter_wonder_reserved,
+       (SELECT purged_spent_nanocents FROM ops.ai_spend WHERE id = 1) AS purged_spent,
+       (SELECT purged_reserved_nanocents FROM ops.ai_spend WHERE id = 1) AS purged_reserved,
+       (SELECT purged_calls FROM ops.ai_spend WHERE id = 1) AS purged_calls,
+       (SELECT purged_wonder_spent_nanocents FROM ops.ai_spend WHERE id = 1) AS purged_wonder_spent,
+       (SELECT purged_wonder_reserved_nanocents FROM ops.ai_spend WHERE id = 1) AS purged_wonder_reserved,
        (SELECT count(*) FROM demo_sessions
          WHERE spent_nanocents + reserved_nanocents > ${DEMO_SESSION_CAP_NANOCENTS}) AS demo_over_cap,
        count(*) AS calls_logged,
@@ -51,6 +58,11 @@ export type ModelCallsRow = Record<
   | "counter_calls"
   | "counter_wonder_spent"
   | "counter_wonder_reserved"
+  | "purged_spent"
+  | "purged_reserved"
+  | "purged_calls"
+  | "purged_wonder_spent"
+  | "purged_wonder_reserved"
   | "demo_over_cap"
   | "calls_logged"
   | "answered_without_cost"
@@ -73,11 +85,15 @@ export function judgeModelCalls(rows: ModelCallsRow[]): InvariantResult {
   tally(v, "text_without_tokens", whole(r.text_without_tokens));
   tally(v, "stale_reserved", whole(r.stale_reserved));
   tally(v, "demo_session_over_cap", whole(r.demo_over_cap));
-  if (whole(r.counter_spent) !== whole(r.spent)) tally(v, "counter_off:spent");
-  if (whole(r.counter_reserved) !== whole(r.reserved)) tally(v, "counter_off:reserved");
-  if (whole(r.counter_calls) !== whole(r.settled)) tally(v, "counter_off:calls");
-  if (whole(r.counter_wonder_spent) !== whole(r.wonder_spent)) tally(v, "counter_off:wonder_spent");
-  if (whole(r.counter_wonder_reserved) !== whole(r.wonder_reserved)) tally(v, "counter_off:wonder_reserved");
+  if (whole(r.counter_spent) !== whole(r.spent) + whole(r.purged_spent)) tally(v, "counter_off:spent");
+  if (whole(r.counter_reserved) !== whole(r.reserved) + whole(r.purged_reserved)) tally(v, "counter_off:reserved");
+  if (whole(r.counter_calls) !== whole(r.settled) + whole(r.purged_calls)) tally(v, "counter_off:calls");
+  if (whole(r.counter_wonder_spent) !== whole(r.wonder_spent) + whole(r.purged_wonder_spent)) {
+    tally(v, "counter_off:wonder_spent");
+  }
+  if (whole(r.counter_wonder_reserved) !== whole(r.wonder_reserved) + whole(r.purged_wonder_reserved)) {
+    tally(v, "counter_off:wonder_reserved");
+  }
   return resultOf("I4", { calls: whole(r.calls_logged), settled: whole(r.settled) }, v);
 }
 

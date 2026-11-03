@@ -76,7 +76,7 @@ function ctxOf(opts: { fail?: boolean; loads?: unknown[] } = {}): TmsContext {
   const q: Queryable = {
     async query<T>(sql: string, params: unknown[] = []): Promise<T[]> {
       if (opts.fail) throw new Error("connection reset");
-      if (sql.startsWith("SELECT slug FROM tenants")) return [{ slug: "demo-test" }] as T[];
+      if (sql.startsWith("SELECT slug")) return [{ slug: "demo-test", name: "Demo Test", timezone: "America/New_York", demo_copy_of: null }] as T[];
       if (sql.includes("FROM mock_tms_loads")) {
         const loads = opts.loads === undefined ? [MOCK_LOAD] : opts.loads.length === 0 ? [] : [MOCK_LOAD];
         return (sql.includes("external_id = $1") ? loads.filter((l) => l.external_id === params[0]) : loads) as T[];

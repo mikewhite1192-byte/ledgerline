@@ -239,13 +239,13 @@ describe("reading a demo visit for the session", () => {
     const live = await visitId(R, null);
     const ended = await visitId(R, Date.UTC(2020, 0, 6, 15, 0, 0));
     const read = (sub: string, id: string, tenantId = R) => app.withTenant(tenantId, (q) => readVisit(q, sub, id));
-    expect(await read(JUDGE(R), live)).toEqual({ role: "judge", live: true });
-    expect(await read(JUDGE(R), ended)).toEqual({ role: "judge", live: false });
-    expect(await read(ADMIN(R), live)).toEqual({ role: "admin", live: false });
-    expect(await read("nobody", live)).toEqual({ role: null, live: false });
-    expect(await read(JUDGE(R), randomUUID())).toEqual({ role: "judge", live: false });
+    expect(await read(JUDGE(R), live)).toEqual({ role: "judge", live: true, copy: null });
+    expect(await read(JUDGE(R), ended)).toEqual({ role: "judge", live: false, copy: null });
+    expect(await read(ADMIN(R), live)).toEqual({ role: "admin", live: false, copy: null });
+    expect(await read("nobody", live)).toEqual({ role: null, live: false, copy: null });
+    expect(await read(JUDGE(R), randomUUID())).toEqual({ role: "judge", live: false, copy: null });
     // Another carrier's judge, in its own carrier's transaction, cannot see this visit.
-    expect(await read(JUDGE(OTHER), live, OTHER)).toEqual({ role: "judge", live: false });
+    expect(await read(JUDGE(OTHER), live, OTHER)).toEqual({ role: "judge", live: false, copy: null });
   });
 });
 

@@ -5,7 +5,8 @@ import { redirect } from "next/navigation";
 import { flags } from "@/config/flags";
 import { signIn } from "@/lib/auth/cognito";
 import { DEMO_COOKIE, SESSION_COOKIE, visitCookieOptions } from "@/lib/auth/cookie";
-import { ipHashOf, startVisit, type StartedVisit } from "@/lib/auth/demo-visit";
+import { randomUUID } from "node:crypto";
+import { claimCopy, ipHashOf, startVisit, type CopyClaim, type StartedVisit } from "@/lib/auth/demo-visit";
 import { forgetJudgeLogin, judgeLogin } from "@/lib/auth/judge-login";
 import { takeJudgeSignIn } from "@/lib/auth/judge-throttle";
 import { readRole } from "@/lib/auth/role";
@@ -23,6 +24,11 @@ import { getDb } from "@/lib/db";
 // new-visit limits per address, per day and per hour). Only then are pc_session and pc_demo set,
 // both for flags.judgeAccess.cookieHours. Every refusal goes back to the sign-in page with one
 // friendly line; the log gets the category, never the login, the token or the upstream's words.
+//
+// While flags.visitCopies is on, the same transaction also claims the visit's own copy of the demo
+// carrier (src/lib/auth/demo-visit.ts claimCopy: two fresh ids, written once, only while the visit
+// has none; a reused visit keeps its copy), and the visitor lands on /preparing, which builds it.
+// A claim that is neither written nor kept refuses the sign-in, and the transaction rolls back.
 
 type Category =
   | "disabled"
@@ -36,13 +42,21 @@ type Category =
   | "day_cap"
   | "ip_limit"
   | "day_limit"
-  | "hour_limit";
+  | "hour_limit"
+  | "copy";
 
 const REFUSED = "/sign-in?demo=unavailable";
 
 function refused(category: Category): string {
   console.info(`demo sign-in: refused (${category})`);
   return REFUSED;
+}
+
+class CopyRefused extends Error {
+  constructor() {
+    super("copy");
+    this.name = "CopyRefused";
+  }
 }
 
 async function visit(): Promise<string> {
@@ -69,15 +83,28 @@ async function visit(): Promise<string> {
   const jar = await cookies();
   const reuseId = jar.get(DEMO_COOKIE)?.value ?? null;
   const ipHash = ipHashOf((await headers()).get("x-forwarded-for"));
+  const copies = flags.visitCopies.enabled === true;
   let started: StartedVisit | "not_judge";
+  let copy: CopyClaim | null;
   try {
-    started = await getDb().withTenant(session.tenantId, async (q) => {
+    [started, copy] = await getDb().withTenant(session.tenantId, async (q): Promise<[StartedVisit | "not_judge", CopyClaim | null]> => {
       const role = await readRole(q, session);
-      if (role !== "judge") return "not_judge" as const;
-      return startVisit(q, { sub: session.sub, ipHash, reuseId, limits: flags.judgeAccess });
+      if (role !== "judge") return ["not_judge", null];
+      const s = await startVisit(q, { sub: session.sub, ipHash, reuseId, limits: flags.judgeAccess });
+      if (!s.ok || !copies) return [s, null];
+      const claim = await claimCopy(q, {
+        visitId: s.id,
+        sub: session.sub,
+        copyTenantId: randomUUID(),
+        copySessionId: randomUUID(),
+      });
+      // Thrown, so a new visit row rolls back with the refused claim.
+      if (claim === "refused") throw new CopyRefused();
+      return [s, claim];
     });
   } catch (err) {
     if (err instanceof Error && err.name === "ForbiddenError") return refused("role");
+    if (err instanceof CopyRefused) return refused("copy");
     console.error(`demo sign-in: the visit could not start (${err instanceof Error ? err.name : "non-error"})`);
     return refused("unavailable");
   }
@@ -87,6 +114,10 @@ async function visit(): Promise<string> {
   jar.set(SESSION_COOKIE, result.idToken, options);
   jar.set(DEMO_COOKIE, started.id, options);
   console.info(`demo sign-in: ${started.reused ? "visit kept" : "visit started"}`);
+  if (copy !== null) {
+    console.info(`demo sign-in: copy ${copy}`);
+    return "/preparing";
+  }
   // While the walkthrough is on, every sign-in lands on it; off, on Home as before.
   return flags.signInTour.enabled === true ? "/?welcome=1" : "/";
 }

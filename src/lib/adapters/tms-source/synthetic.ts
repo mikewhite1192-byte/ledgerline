@@ -1,6 +1,7 @@
 import { flags } from "../../../config/flags";
 import type { Queryable } from "../../db";
 import { instantAt } from "../../seed/calendar";
+import { demoTemplateFor } from "../../seed/carriers";
 import { clocksOf, localClockOf } from "../../tms/clocks";
 import { SYNTHETIC_LABELS, SYNTHETIC_RENAMED, type TmsStatusCode } from "../../tms/status";
 import { addDays, parseInstant, type Instant, type LocalDate } from "../../time/local-date";
@@ -499,10 +500,18 @@ function toSynLoad(r: LoadSqlRow, accessorials: SynLoad["accessorials"]): SynLoa
   };
 }
 
+// The world's slug is the carrier's own, or for a visit's own copy of a demo carrier (0091) the
+// demo carrier's: the copy's seeded loads carry the demo carrier's feed ids.
 async function worldOf(ctx: TmsContext): Promise<SynWorld> {
-  const rows = await ctx.q.query<{ slug: string }>("SELECT slug FROM tenants WHERE id = current_tenant_id()");
+  const rows = await ctx.q.query<{ slug: string; name: string; timezone: string; demo_copy_of: string | null }>(
+    "SELECT slug, name, timezone, demo_copy_of FROM tenants WHERE id = current_tenant_id()",
+  );
   if (rows.length !== 1 || typeof rows[0].slug !== "string") throw new TmsSourceError("server_error");
-  return { slug: rows[0].slug, zone: ctx.zone };
+  const row = rows[0];
+  if (row.demo_copy_of === null || row.demo_copy_of === undefined) return { slug: row.slug, zone: ctx.zone };
+  const template = demoTemplateFor(row);
+  if (!template) throw new TmsSourceError("server_error");
+  return { slug: template.slug, zone: ctx.zone };
 }
 
 // The feed's clock: now, never earlier than the seeded snapshot's instant.

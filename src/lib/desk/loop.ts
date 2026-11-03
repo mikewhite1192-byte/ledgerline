@@ -55,7 +55,9 @@ export type WakeResult =
 
 // The lease's row as stored: the carrier's zone, and the watermarks as written (read into their
 // one form by the loop, once it knows the carrier's start).
-export type Claimed = { watermarks: Record<keyof Watermarks, unknown>; zone: string };
+// copy: the tenant is a visit's own copy of a demo carrier (0091), whose day cap is the smaller
+// flags.visitCopies.deskDayCents.
+export type Claimed = { watermarks: Record<keyof Watermarks, unknown>; zone: string; copy?: boolean };
 
 export type Caps = { seenToday: number; wakeNanocents: number; dayNanocents: number };
 
@@ -107,7 +109,8 @@ const CLAIM_LEASE_SQL = `UPDATE desk_loops
   RETURNING watermarks->>'card_transactions' AS card_transactions, watermarks->>'customer_payments' AS customer_payments,
             watermarks->>'documents' AS documents, watermarks->>'load_events' AS load_events,
             watermarks->>'tms_status_events' AS tms_status_events,
-            (SELECT t.timezone FROM tenants t WHERE t.id = current_tenant_id()) AS zone`;
+            (SELECT t.timezone FROM tenants t WHERE t.id = current_tenant_id()) AS zone,
+            (SELECT t.demo_copy_of IS NOT NULL FROM tenants t WHERE t.id = current_tenant_id()) AS copy_of`;
 
 // The panel's "running since": set once, by the lease holder only.
 const START_CLOCK_SQL = `UPDATE desk_loops SET running_since = CAST($2 AS timestamptz)
@@ -140,6 +143,7 @@ export function dbDeskStore(db: TenantDb, session: Session, clock: () => Date = 
           load_events: unknown;
           tms_status_events: unknown;
           zone: unknown;
+          copy_of: unknown;
         }>(
           CLAIM_LEASE_SQL,
           [input.nowIso, input.token, input.leaseUntilIso],
@@ -147,8 +151,10 @@ export function dbDeskStore(db: TenantDb, session: Session, clock: () => Date = 
         if (rows.length === 0) return null;
         const r = rows[0];
         if (typeof r.zone !== "string" || r.zone.length === 0) throw new DbError("unknown");
+        if (typeof r.copy_of !== "boolean") throw new DbError("unknown");
         return {
           zone: r.zone,
+          copy: r.copy_of,
           watermarks: {
             card_transactions: r.card_transactions,
             customer_payments: r.customer_payments,
@@ -268,6 +274,15 @@ export async function wakeDesk(
     return { ok: false, category: "unavailable" };
   }
   if (!claimed) return { ok: true, wakeId, status: "busy", reason: null, counts };
+  // A visit's copy spends at most the smaller day cap; a cap that is not a whole positive number
+  // stops the copy's wake before any work.
+  const copyCap = flags.visitCopies.deskDayCents;
+  const dayCents =
+    claimed.copy === true
+      ? Number.isSafeInteger(copyCap) && copyCap > 0
+        ? Math.min(limits.dayCents, copyCap)
+        : 0
+      : limits.dayCents;
 
   const line = (kind: Line["kind"], event: { eventKey: string; source: DeskSource } | null, detail: LineDetail = {}) =>
     store.append({
@@ -385,7 +400,7 @@ export async function wakeDesk(
         reason = "wake_cents";
         break;
       }
-      if (spent.dayNanocents >= limits.dayCents * NANOCENTS_PER_CENT) {
+      if (spent.dayNanocents >= dayCents * NANOCENTS_PER_CENT) {
         reason = "day_cents";
         break;
       }
@@ -422,13 +437,22 @@ export async function wakeDesk(
     // try did not come back is not counted.
     counts.left = Math.max(0, open.length - (counts.done + counts.skipped + counts.failed + unanswered));
     // The agent's questions: stale ones close; reason lines only while armed and under the caps.
+    // A wake that read no spend (no open work) reads it here, so the day cap holds for reasons too.
     if (store.asks) {
       try {
-        await store.asks({
-          nowIso: clock().toISOString(),
-          deadlineMs,
-          reasons: armed && reason !== "wake_cents" && reason !== "day_cents",
-        });
+        let reasons = armed && reason !== "wake_cents" && reason !== "day_cents";
+        if (reasons) {
+          try {
+            const spent = await store.spend({ wakeStartIso, nowIso: clock().toISOString() });
+            reasons =
+              spent.wakeNanocents < limits.wakeCents * NANOCENTS_PER_CENT &&
+              spent.dayNanocents < dayCents * NANOCENTS_PER_CENT;
+          } catch {
+            // Spend not known: no reason lines this wake; stale questions still close.
+            reasons = false;
+          }
+        }
+        await store.asks({ nowIso: clock().toISOString(), deadlineMs, reasons });
       } catch (err) {
         log(`desk asks tenant=${session.tenantId} wake=${wakeId} failed=${errorName(err)}`);
       }
