@@ -71,8 +71,15 @@ export type MockRefusal =
 
 export type MockResult = { ok: true; externalId: string; at: Instant } | { ok: false; category: MockRefusal };
 
-export type MockWho = "admin" | "staff" | "judge";
-export const WHO_WORDS: Record<MockWho, string> = { admin: "Dispatch desk (admin)", staff: "Dispatch desk", judge: "Demo visitor" };
+// "coworker": LedgerLine writing a stop it moved on the driver's paperwork back to the sample board
+// (src/lib/mock-tms/paperwork.ts).
+export type MockWho = "admin" | "staff" | "judge" | "coworker";
+export const WHO_WORDS: Record<MockWho, string> = {
+  admin: "Dispatch desk (admin)",
+  staff: "Dispatch desk",
+  judge: "Demo visitor",
+  coworker: "LedgerLine (driver paperwork)",
+};
 
 const ts = (column: string) => `to_char(${column} AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"')`;
 

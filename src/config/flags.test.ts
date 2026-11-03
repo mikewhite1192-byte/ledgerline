@@ -165,6 +165,8 @@ const KEPT_OFF = [
   // Read only, but it changes where sign-in lands and adds a panel on Home: the owner turns it on in
   // its own PR.
   "signInTour.enabled",
+  // One model read per tap and a load moved on the sample board: the owner turns it on in its own PR.
+  "driverPaperwork.enabled",
 ] as const;
 
 // The on/off switches in flags.ts, by path: every top-level boolean and every boolean inside a
@@ -420,6 +422,14 @@ describe("flags", () => {
     expect(LOCAL_OFF_ONLY as readonly string[]).toContain("signInTour.enabled");
   });
 
+  it("ships the driver's phone off, with a start date and a daily cap, off for the local demo run", () => {
+    expect(flags.driverPaperwork).toEqual({ enabled: false, startDate: "2026-11-03", perDay: 30 });
+    expect(isLocalDate(flags.driverPaperwork.startDate)).toBe(true);
+    expect(Number.isSafeInteger(flags.driverPaperwork.perDay) && flags.driverPaperwork.perDay > 0).toBe(true);
+    // Listed ahead of its release, so the demo-path run keeps it off once it ships on.
+    expect(LOCAL_OFF_ONLY as readonly string[]).toContain("driverPaperwork.enabled");
+  });
+
   it("releases deficit recovery, with a start date, off for the local demo run", () => {
     expect(flags.deficitRecovery).toEqual({ enabled: true, startDate: "2026-11-02" });
     expect(isLocalDate(flags.deficitRecovery.startDate)).toBe(true);
@@ -558,6 +568,7 @@ describe("flags", () => {
       "autopilotRules.enabled",
       "activityFeed.enabled",
       "signInTour.enabled",
+      "driverPaperwork.enabled",
     ];
     const offOnly = LOCAL_OFF_ONLY as readonly string[];
     expect(KEPT_OFF.filter((k) => offOnly.includes(k))).toEqual(KEPT_OFF.filter((k) => armedAhead.includes(k)));

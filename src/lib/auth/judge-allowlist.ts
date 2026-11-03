@@ -6,10 +6,13 @@
 // A judge reads and proposes: it asks the agent and asks for one audit on a card. On a demo carrier
 // it may also move a load in the sample dispatch system (/tms-demo), the stand-in for the carrier's
 // own system, which the desk then reads like any other, and create a load there, which also writes
-// one planned load of ours with no money (capped, cleared by the reset). It never approves,
-// rejects, pays, posts, sends, drafts to a driver, arms a driver, connects a ledger, resets the
-// demo, clears a spend alert, uploads a file (a voice note, a document or a dock clip) or runs a
-// step that follows an upload. The money paths refuse a judge again on their own (approvalFrom and
+// one planned load of ours with no money (capped, cleared by the reset), and tap "Driver sends
+// paperwork" there, which renders the driver's sample paper for one of our loads, has the model read
+// it (a visit turn and the visit's spend pay for it, capped per day) and lets code move that load
+// by the paperwork rules and complete the stop on the sample board. It never approves, rejects,
+// pays, posts, sends, drafts to a driver, arms a driver, connects a ledger, resets the demo, clears
+// a spend alert, uploads a file of its own (a voice note, a document or a dock clip) or runs a step
+// that follows its own upload. The money paths refuse a judge again on their own (approvalFrom and
 // readMember take admin and staff only).
 
 // Route keys are "<METHOD> <path under src/app>"; action keys are "<file>#<exported name>".
@@ -32,6 +35,8 @@ export const JUDGE_ALLOWED: Readonly<Record<string, string>> = {
     "writes only the sample dispatch system's rows on a demo carrier, never a card or money",
   "src/app/tms-demo/actions.ts#createLoadAction":
     "writes the sample system's rows and one planned load with no money on a demo carrier, capped",
+  "src/app/tms-demo/actions.ts#sendPaperworkAction":
+    "renders the driver's sample paperwork for one demo-carrier load and reads it; a judge's visit pays the read; code moves the load and writes only the sample board",
 };
 
 // Write handlers no carrier login reaches: each takes its own credential, never pc_session.

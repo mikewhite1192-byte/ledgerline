@@ -8,6 +8,7 @@ import { DbError } from "@/lib/db";
 import { formatInstant, formatLocalDate, zoneName } from "@/lib/format/dates";
 import { formatCents } from "@/lib/format/money";
 import { ourLoadIdOf } from "@/lib/mock-tms/new-load";
+import { ourPaperStatusOf } from "@/lib/mock-tms/paperwork";
 import { readMockLoad, STATUS_CHOICES, type MockLoadView } from "@/lib/mock-tms/store";
 import { demoCarrierOf } from "@/lib/seed/reset";
 import { ForbiddenError, withRequestTenant } from "@/lib/tenant/context";
@@ -15,8 +16,12 @@ import { localClockOf } from "@/lib/tms/clocks";
 import { SYNTHETIC_LABELS } from "@/lib/tms/status";
 import { hookWords } from "./hook-words";
 import { AssignDriverForm, CompleteStopForm, SetStatusForm } from "./load-actions";
+import { DriverPaperworkCard } from "./paperwork-form";
 
 export const dynamic = "force-dynamic";
+// A driver's paperwork tap waits for one model read (src/lib/documents/service.ts budgets the
+// request at 27 of the hosting server's 30 seconds, as POST /api/documents does).
+export const maxDuration = 30;
 
 const STATUS_OPTIONS = STATUS_CHOICES.map((code) => ({ value: code, label: SYNTHETIC_LABELS[code] }));
 
@@ -48,16 +53,20 @@ export default async function MockLoadPage({ params }: { params: Promise<{ ref: 
   let view: MockLoadView | null = null;
   // LedgerLine's own load with this number, linked only while the new load form is on.
   let ourId: string | null = null;
+  // LedgerLine's own load status, read only while the driver's phone is on.
+  let ourStatus: string | null = null;
   let problem: "forbidden" | "unreadable" | null = null;
   try {
-    const got = await withRequestTenant<{ read: MockLoadView | null; ours: string | null }>(async (q) => {
-      if (!(await demoCarrierOf(q))) return { read: null, ours: null };
+    const got = await withRequestTenant<{ read: MockLoadView | null; ours: string | null; status: string | null }>(async (q) => {
+      if (!(await demoCarrierOf(q))) return { read: null, ours: null, status: null };
       const read = await readMockLoad(q, reference);
       const ours = read !== null && flags.mockTms.newLoad === true ? await ourLoadIdOf(q, reference) : null;
-      return { read, ours };
+      const status = read !== null && flags.driverPaperwork.enabled === true ? await ourPaperStatusOf(q, reference) : null;
+      return { read, ours, status };
     });
     view = got.read;
     ourId = got.ours;
+    ourStatus = got.status;
   } catch (err) {
     if (err instanceof ForbiddenError) problem = "forbidden";
     else if (err instanceof DbError) problem = "unreadable";
@@ -138,6 +147,10 @@ export default async function MockLoadPage({ params }: { params: Promise<{ ref: 
           <SetStatusForm reference={load.reference} current={load.statusLabel} choices={STATUS_OPTIONS} />
         </CardBody>
       </Card>
+
+      {flags.driverPaperwork.enabled === true && ourStatus !== null ? (
+        <DriverPaperworkCard reference={load.reference} status={ourStatus} />
+      ) : null}
 
       <Card>
         <CardHeader>

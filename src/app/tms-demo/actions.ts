@@ -4,9 +4,11 @@ import { revalidatePath } from "next/cache";
 import { redirect } from "next/navigation";
 import { flags } from "@/config/flags";
 import { readRole } from "@/lib/auth/role";
+import { requireSession } from "@/lib/auth/session";
 import { DbError } from "@/lib/db";
 import { sendMockHook, type HookResult } from "@/lib/mock-tms/hook";
 import { createMockLoad, draftOf, NewLoadUndone, parseNewLoad, type NewLoadDraft, type NewLoadRefusal } from "@/lib/mock-tms/new-load";
+import { sendDriverPaperwork, type PaperworkRefusal, type PaperworkResult } from "@/lib/mock-tms/paperwork";
 import { applyMockAction, recordHookResult, type MockAction, type MockRefusal } from "@/lib/mock-tms/store";
 import { demoCarrierOf } from "@/lib/seed/reset";
 import { ForbiddenError, withRequestTenant } from "@/lib/tenant/context";
@@ -23,6 +25,12 @@ import { ForbiddenError, withRequestTenant } from "@/lib/tenant/context";
 // "New load" (createLoadAction, flags.mockTms.newLoad) is the one exception to "never our loads": it
 // writes the sample system's load and our planned load with the same number in one transaction
 // (src/lib/mock-tms/new-load.ts), still no card and no money, on a demo carrier only, capped.
+//
+// "Driver sends paperwork" (sendPaperworkAction, flags.driverPaperwork) renders the driver's paper
+// for one of our loads and sends it through the document pipeline (src/lib/mock-tms/paperwork.ts):
+// the model reads it, code moves our load by the paperwork rules and, only then, completes the same
+// stop on the sample board. No money, no webhook call, a demo carrier only, capped per day; a
+// demo visitor's tap counts one turn of the visit.
 
 export type MockActionCategory = MockRefusal | "disabled" | "forbidden" | "not_demo" | "bad_request" | "unreadable" | "unknown" | "failed";
 
@@ -156,4 +164,26 @@ export async function createLoadAction(_prev: NewLoadState, form: FormData): Pro
   }
   // Outside the try: the redirect is thrown, and nothing above may catch it.
   redirect(`/tms-demo/loads/${encodeURIComponent(reference)}`);
+}
+
+export type PaperworkCategory = PaperworkRefusal | Failure | "bad_request";
+
+export type PaperworkState = Exclude<PaperworkResult, { kind: "refused" }> | { kind: "refused"; category: PaperworkCategory } | null;
+
+export async function sendPaperworkAction(_prev: PaperworkState, form: FormData): Promise<PaperworkState> {
+  // The switches, re-read here and again inside: the page's own check is not enough.
+  if (flags.driverPaperwork.enabled !== true || flags.mockTms.enabled !== true) return { kind: "refused", category: "disabled" };
+  const reference = text(form, "reference");
+  const stage = text(form, "stage");
+  if (reference === null || (stage !== "pickup" && stage !== "delivery")) return { kind: "refused", category: "bad_request" };
+  try {
+    const session = await requireSession();
+    return await sendDriverPaperwork(session, { reference, stage });
+  } catch (err) {
+    const category = failureOf(err, "driver paperwork");
+    if (category === null) throw err;
+    return { kind: "refused", category };
+  } finally {
+    revalidatePath("/tms-demo", "layout");
+  }
 }
