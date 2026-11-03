@@ -265,7 +265,7 @@ export async function runAudit(
   // unknown tool) is no evidence and is stored as unknown; a failure (a tool error, or the evidence
   // deadline under load) is not a refusal and gives the lease back. The same database as the
   // store, so an injected one is used end to end.
-  const tool = deps.callTool ?? ((c, call) => callTool(c, call, { db: deps.db }));
+  const tool = deps.callTool ?? ((c, call) => callTool(c, call, { db: deps.db, clock: () => clock().getTime() }));
   let outcome: GatewayOutcome;
   try {
     outcome = await tool(ctx, {

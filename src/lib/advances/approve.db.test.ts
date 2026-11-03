@@ -1386,8 +1386,18 @@ describe("the advance flow", () => {
       expect(await flowAdvances()).toEqual([]);
       expect(await ledger()).toEqual([]);
       expect(mock.sendCount).toBe(0);
-      // The last day itself is still a working day: with it set to today, the approval pays.
-      await setLastDay("2026-11-02");
+      // The last day itself is still a working day: with it set to today, the approval pays. The
+      // reserve's guarded update asks again on the money action's created_at, which the database
+      // stamps with its own clock, not this test's; so the last day is the fixed clock's day, or
+      // the database's carrier-local today when that is later.
+      await admin.withTenant(A.tenantId, (q) =>
+        q.execute(
+          `UPDATE drivers d SET active_to = GREATEST(CAST($2 AS date), CAST((now() AT TIME ZONE t.timezone) AS date))
+             FROM tenants t
+            WHERE t.id = d.tenant_id AND d.tenant_id = current_tenant_id() AND d.id = CAST($1 AS uuid)`,
+          [A.driverId, "2026-11-02"],
+        ),
+      );
       expect(await approve(id)).toMatchObject({ ok: true, status: "done" });
       expect(mock.sendCount).toBe(1);
     });
