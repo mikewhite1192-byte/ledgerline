@@ -150,6 +150,9 @@ const RELEASED_ON = [
   // Released by the owner (D-103, 2026-11-03): the simple Home and the five-word menu. Presentation
   // only; it changes no number and moves no money.
   "simpleShape.enabled",
+  // Released by the owner (D-098, D-103, 2026-11-03): the driver's phone on the sample board. One
+  // model read per tap, and it moves a load on the sample board only, never money.
+  "driverPaperwork.enabled",
 ] as const;
 
 // What stays off, each waiting on a missing piece or an outside send the owner has not released.
@@ -168,8 +171,6 @@ const KEPT_OFF = [
   // Read only, but it changes where sign-in lands and adds a panel on Home: the owner turns it on in
   // its own PR.
   "signInTour.enabled",
-  // One model read per tap and a load moved on the sample board: the owner turns it on in its own PR.
-  "driverPaperwork.enabled",
 ] as const;
 
 // The on/off switches in flags.ts, by path: every top-level boolean and every boolean inside a
@@ -425,8 +426,8 @@ describe("flags", () => {
     expect(LOCAL_OFF_ONLY as readonly string[]).toContain("signInTour.enabled");
   });
 
-  it("ships the driver's phone off, with a start date and a daily cap, off for the local demo run", () => {
-    expect(flags.driverPaperwork).toEqual({ enabled: false, startDate: "2026-11-03", perDay: 30 });
+  it("ships the driver's phone on, with a start date and a daily cap, off for the local demo run", () => {
+    expect(flags.driverPaperwork).toEqual({ enabled: true, startDate: "2026-11-03", perDay: 30 });
     expect(isLocalDate(flags.driverPaperwork.startDate)).toBe(true);
     expect(Number.isSafeInteger(flags.driverPaperwork.perDay) && flags.driverPaperwork.perDay > 0).toBe(true);
     // Listed ahead of its release, so the demo-path run keeps it off once it ships on.
@@ -761,7 +762,7 @@ describe("flags", () => {
       maxBytes: 700_000,
       maxPdfPages: 3,
       readMaxCostCents: 8,
-      perTenantPerDay: 20,
+      perTenantPerDay: 60,
     });
     for (const v of Object.values(flags.documentLimits)) {
       expect(Number.isSafeInteger(v) && v > 0).toBe(true);
