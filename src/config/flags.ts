@@ -1052,7 +1052,7 @@ export const flags: Flags = {
   approverRole: { adminAboveCents: 200_000 },
   documentsEnabled: true,
   documentCrop: true,
-  documentLimits: { maxBytes: 700_000, maxPdfPages: 3, readMaxCostCents: 8, perTenantPerDay: 20 },
+  documentLimits: { maxBytes: 700_000, maxPdfPages: 3, readMaxCostCents: 8, perTenantPerDay: 60 },
   documentMarkupEnabled: true,
   markupLimits: { editMaxCostCents: 2, checkMaxCostCents: 4, perTenantPerDay: 10, maxBytes: 700_000 },
   advancesEnabled: true,
@@ -1309,8 +1309,8 @@ export const flags: Flags = {
   activityFeed: { enabled: true, pollSeconds: 15, pageSize: 50 },
   // Off until the owner turns it on in its own PR. Read only.
   signInTour: { enabled: false },
-  // Off until the owner turns it on in its own PR (D-098). One model read per tap; moves no money.
-  driverPaperwork: { enabled: false, startDate: "2026-11-03", perDay: 30 },
+  // Released by the owner (D-098, D-103, 2026-11-03). One model read per tap; moves no money.
+  driverPaperwork: { enabled: true, startDate: "2026-11-03", perDay: 30 },
   // Released by the owner (D-103, 2026-11-03). Presentation only.
   simpleShape: { enabled: true },
 };

@@ -241,6 +241,8 @@ const fakeQ = {
     if (/^SELECT count\(\*\) AS n\s+FROM turns t\s+JOIN conversations c/.test(sql)) return [{ n: 0 }];
     // Settings > Demo's dispatch fault panel: a synthetic connection with every fault off.
     if (/FROM tms_connections/.test(sql)) return [{ system: "synthetic", faults: "{}" }];
+    // The sample board's load page, with the driver's phone on: our own load's status.
+    if (/^SELECT status FROM loads WHERE/.test(sql)) return [{ status: "in_transit" }];
     throw new Error(`unexpected read: ${sql.slice(0, 80)}`);
   },
 } as unknown as Queryable;
