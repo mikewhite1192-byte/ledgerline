@@ -10,4 +10,6 @@ export const accounting = {
   label: "QuickBooks",
   icon: <BookOpen aria-hidden />,
   shown: () => flags.accountingEnabled === true,
+  section: "settings",
+  sectionOrder: 30,
 } as const satisfies MenuItem;

@@ -9,4 +9,6 @@ export const drivers = {
   label: "Drivers",
   icon: <Users aria-hidden />,
   shown: () => true,
+  section: "drivers",
+  sectionOrder: 10,
 } as const satisfies MenuItem;

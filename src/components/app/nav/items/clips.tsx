@@ -10,4 +10,6 @@ export const clips = {
   label: "Dock clips",
   icon: <Video aria-hidden />,
   shown: () => flags.clipsEnabled === true,
+  section: "drivers",
+  sectionOrder: 40,
 } as const satisfies MenuItem;

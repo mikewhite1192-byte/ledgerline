@@ -10,4 +10,6 @@ export const rates = {
   label: "Fuel and tax rates",
   icon: <Fuel aria-hidden />,
   shown: () => flags.groundedRatesEnabled === true,
+  section: "settings",
+  sectionOrder: 40,
 } as const satisfies MenuItem;

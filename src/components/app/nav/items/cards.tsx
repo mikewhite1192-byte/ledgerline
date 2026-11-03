@@ -10,4 +10,6 @@ export const cards = {
   label: "Card check",
   icon: <CreditCard aria-hidden />,
   shown: () => flags.cardRecon.enabled === true,
+  section: "pay",
+  sectionOrder: 60,
 } as const satisfies MenuItem;

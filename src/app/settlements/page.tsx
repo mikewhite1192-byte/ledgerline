@@ -43,7 +43,11 @@ export default async function SettlementsPage({
     view = await withRequestTenant(async (q, session): Promise<View> => {
       const shell = await readShell(q, session);
       if (!flags.settlementsEnabled) return { shell, open: null };
-      return { shell, open: await readSettlementsView(q, typeof asked === "string" ? asked : null) };
+      // With no week asked, the page opens on the newest week that has paystubs.
+      return {
+        shell,
+        open: await readSettlementsView(q, typeof asked === "string" ? asked : null, { newestWithStubs: true }),
+      };
     });
   } catch (err) {
     if (err instanceof ForbiddenError) problem = "forbidden";

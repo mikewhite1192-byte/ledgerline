@@ -10,4 +10,6 @@ export const profitBrief = {
   label: "Profit brief",
   icon: <TrendingUp aria-hidden />,
   shown: () => flags.profitBriefEnabled === true,
+  section: "billing",
+  sectionOrder: 50,
 } as const satisfies MenuItem;

@@ -1,11 +1,12 @@
 import Link from "next/link";
 import type { ReactNode } from "react";
 import { cn } from "@/lib/cn";
-import type { MenuArea } from "./nav/menu-item";
+import type { MenuArea, MenuSection } from "./nav/menu-item";
 
 // `group` is the job the item belongs to ("Pay", "Money in"). Items of one group sit together.
 // `area` is the sidebar tab it shows under ("primary" sits above the tabs); a list with no areas
-// (the /design specimen) shows as one list with no tabs.
+// (the /design specimen) shows as one list with no tabs. `section`, `sectionOrder` and
+// `sectionLabel` place it in the simple shape's five-word menu (see nav/menu-item.ts).
 export type NavItem = {
   href: string;
   label: string;
@@ -13,6 +14,9 @@ export type NavItem = {
   current?: boolean;
   group?: string;
   area?: MenuArea | "primary";
+  section?: MenuSection;
+  sectionOrder?: number;
+  sectionLabel?: string;
 };
 
 // Consecutive items with the same group become one run; an item with no group is a run of its own

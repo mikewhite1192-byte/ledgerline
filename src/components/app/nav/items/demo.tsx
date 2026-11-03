@@ -10,4 +10,6 @@ export const demo = {
   label: "Demo",
   icon: <RotateCcw aria-hidden />,
   shown: () => flags.demoResetEnabled === true,
+  section: "settings",
+  sectionOrder: 70,
 } as const satisfies MenuItem;

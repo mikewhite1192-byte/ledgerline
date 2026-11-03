@@ -6,7 +6,7 @@ import { afterEach, describe, expect, it } from "vitest";
 import { flags } from "@/config/flags";
 import { appNav, NAV_HREFS, type NavKey } from "./app-nav";
 import * as registry from "./nav/items";
-import { MENU_AREAS, MENU_GROUPS } from "./nav/menu-item";
+import { MENU_AREAS, MENU_GROUPS, MENU_SECTIONS } from "./nav/menu-item";
 import { NavList } from "./nav-list";
 import { HOW_PAY_WORKS } from "./signed-in-page";
 
@@ -39,7 +39,9 @@ const savedCardRecon = flags.cardRecon.enabled;
 const savedFactoring = flags.factoring.enabled;
 const savedMoneyCodes = flags.moneyCodes.enabled;
 const savedActivityFeed = flags.activityFeed.enabled;
+const savedSimple = flags.simpleShape.enabled;
 afterEach(() => {
+  flags.simpleShape.enabled = savedSimple;
   for (const s of SWITCHES) flags[s] = saved[s];
   flags.cardRecon.enabled = savedCardRecon;
   flags.factoring.enabled = savedFactoring;
@@ -140,6 +142,15 @@ describe("appNav", () => {
     expect(appNav("none").map((i) => i.href)).toContain("/factoring");
   });
 
+  it("lists the Settings page only under the simple shape, where it is the fifth word's own page", () => {
+    setAll(true);
+    flags.simpleShape.enabled = false;
+    expect(appNav("none").map((i) => i.href)).not.toContain("/settings");
+    flags.simpleShape.enabled = true;
+    const item = appNav("/settings").find((i) => i.href === "/settings");
+    expect(item && [item.section, item.sectionOrder, item.current]).toEqual(["settings", 0, true]);
+  });
+
   it("marks no item current on a page with no item", () => {
     setAll(true);
     expect(appNav("none").some((i) => i.current)).toBe(false);
@@ -215,8 +226,64 @@ describe("the menu registry", () => {
         "Profit brief",
         "QuickBooks",
         "Quarter review",
+        "Settings",
       ].sort(),
     );
+  });
+
+  // The simple shape's five words (design-simple-shape.md section 2): every item sits under one,
+  // in the design's order, with the renamed pages under their new names.
+  it("and a section, every item placed once, in order", () => {
+    for (const item of items) {
+      expect(MENU_SECTIONS, item.href).toContain(item.section);
+      expect(Number.isInteger(item.sectionOrder) && item.sectionOrder >= 0, item.href).toBe(true);
+    }
+    const places = items.map((i) => `${i.section}:${i.sectionOrder}`);
+    expect(new Set(places).size).toBe(places.length);
+    const under = (section: string) =>
+      items
+        .filter((i) => i.section === section)
+        .sort((a, b) => a.sectionOrder - b.sectionOrder)
+        .map((i) => [i.href, ("sectionLabel" in i ? i.sectionLabel : undefined) ?? i.label]);
+    expect(under("home")).toEqual([
+      ["/", "Home"],
+      ["/activity", "Live feed"],
+    ]);
+    expect(under("pay")).toEqual([
+      ["/settlements", "Paystubs"],
+      ["/sweep", "Pay check"],
+      ["/advances", "Advances"],
+      ["/driver-notes", "Driver notes"],
+      ["/money-codes", "Money codes"],
+      ["/cards", "Card check"],
+      ["/cash", "Friday's cash"],
+    ]);
+    expect(under("billing")).toEqual([
+      ["/invoices", "Invoices"],
+      ["/collections", "Collections"],
+      ["/customer-payments/new", "Payments"],
+      ["/factoring", "Factoring"],
+      ["/profit", "Profit brief"],
+      ["/quarter", "Quarter review"],
+    ]);
+    expect(under("drivers")).toEqual([
+      ["/drivers", "Drivers"],
+      ["/documents", "Documents"],
+      ["/voice-notes", "Voice notes"],
+      ["/clips", "Dock clips"],
+    ]);
+    expect(under("settings")).toEqual([
+      ["/settings", "Settings"],
+      ["/settings/pay-rules", "Pay rules"],
+      ["/settings/accounting", "QuickBooks"],
+      ["/settings/rates", "Fuel and tax rates"],
+      ["/memory", "Memory"],
+      ["/portal-runs", "Portal runs"],
+      ["/settings/demo", "Demo"],
+      ["/models", "Models and spend"],
+    ]);
+    // Only Home and Settings are a section's own page.
+    expect(items.filter((i) => i.sectionOrder === 0).map((i) => i.href).sort()).toEqual(["/", "/settings"]);
   });
 });
 
@@ -295,7 +362,9 @@ describe("every signed-in page is reachable", () => {
   };
 
   it("finds the routes it guards", () => {
-    expect(routes).toEqual(expect.arrayContaining(["/", "/models", "/settings/accounting", "/settings/demo", "/advances/new"]));
+    expect(routes).toEqual(
+      expect.arrayContaining(["/", "/models", "/settings", "/settings/accounting", "/settings/demo", "/advances/new"]),
+    );
   });
 
   // The help link sits under the menu on every signed-in page (SignedInPage, and Home's shell).

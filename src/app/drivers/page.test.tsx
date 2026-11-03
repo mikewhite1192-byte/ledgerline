@@ -30,10 +30,14 @@ const show = async () => render(await DriversPage({ searchParams: Promise.resolv
 
 const savedDriverAdmin = flags.driverAdmin.enabled;
 const savedAdvances = flags.advancesEnabled;
+const savedSimple = flags.simpleShape.enabled;
+const savedBoard = flags.mockTms.enabled;
 
 afterEach(() => {
   flags.driverAdmin.enabled = savedDriverAdmin;
   flags.advancesEnabled = savedAdvances;
+  flags.simpleShape.enabled = savedSimple;
+  flags.mockTms.enabled = savedBoard;
   mocks.withRequestTenant.mockReset();
   cleanup();
 });
@@ -114,5 +118,51 @@ describe("/drivers Add driver link", () => {
     await show();
     expect(screen.getByText("Rosa Delgado")).toBeTruthy();
     expect(addLink()).toBeNull();
+  });
+});
+
+// The sample dispatch board is linked from the Drivers header for a demo carrier only, under the
+// simple shape, while the board is on (the board page checks the carrier again itself).
+describe("/drivers Dispatch board link", () => {
+  const SESSION: Session = { sub: "sub-test", email: "", tenantId: "11111111-1111-4111-8111-111111111111" };
+  const DEMO = { id: SESSION.tenantId, slug: "blue-ridge", name: "Blue Ridge Freight Lines", timezone: "America/New_York" };
+  const OTHER = { id: SESSION.tenantId, slug: "example", name: "Example Freight", timezone: "America/Chicago" };
+  function signedIn(tenant: typeof DEMO) {
+    const q = {
+      async query<T>(sql: string): Promise<T[]> {
+        if (/FROM tenants/.test(sql)) return [tenant] as T[];
+        if (/FROM memberships/.test(sql)) return [{ email: "ops@example.test", role: "staff" }] as T[];
+        throw new Error(`unexpected read: ${sql}`);
+      },
+      async execute() {
+        throw new Error("the page writes nothing");
+      },
+    } as Queryable;
+    mocks.withRequestTenant.mockImplementation((fn: (q: Queryable, s: Session) => unknown) => fn(q, SESSION));
+  }
+  const boardLink = () => screen.queryByRole("link", { name: "Dispatch board" });
+
+  it("links a demo carrier to the board under the simple shape", async () => {
+    flags.simpleShape.enabled = true;
+    flags.mockTms.enabled = true;
+    signedIn(DEMO);
+    await show();
+    expect(boardLink()?.getAttribute("href")).toBe("/tms-demo");
+  });
+
+  it("leaves it out for any other carrier, with the board off, and with the simple shape off", async () => {
+    for (const [simple, board, tenant] of [
+      [true, true, OTHER],
+      [true, false, DEMO],
+      [false, true, DEMO],
+    ] as const) {
+      flags.simpleShape.enabled = simple;
+      flags.mockTms.enabled = board;
+      signedIn(tenant);
+      await show();
+      expect(screen.getByText("Rosa Delgado")).toBeTruthy();
+      expect(boardLink(), `${simple} ${board} ${tenant.slug}`).toBeNull();
+      cleanup();
+    }
   });
 });

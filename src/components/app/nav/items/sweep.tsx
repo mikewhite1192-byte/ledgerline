@@ -10,4 +10,7 @@ export const sweep = {
   label: "Pay sweep",
   icon: <ScanSearch aria-hidden />,
   shown: () => flags.sweepEnabled === true,
+  section: "pay",
+  sectionOrder: 20,
+  sectionLabel: "Pay check",
 } as const satisfies MenuItem;

@@ -10,4 +10,6 @@ export const payRules = {
   label: "Pay rules",
   icon: <SlidersHorizontal aria-hidden />,
   shown: () => flags.rulesByTalkingEnabled === true,
+  section: "settings",
+  sectionOrder: 10,
 } as const satisfies MenuItem;

@@ -9,4 +9,6 @@ export const models = {
   label: "Models and spend",
   icon: <Cpu aria-hidden />,
   shown: () => true,
+  section: "settings",
+  sectionOrder: 80,
 } as const satisfies MenuItem;

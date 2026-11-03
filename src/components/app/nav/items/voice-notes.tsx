@@ -10,4 +10,6 @@ export const voiceNotes = {
   label: "Voice notes",
   icon: <AudioLines aria-hidden />,
   shown: () => flags.voiceIntakeEnabled === true,
+  section: "drivers",
+  sectionOrder: 30,
 } as const satisfies MenuItem;

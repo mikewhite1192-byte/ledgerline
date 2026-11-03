@@ -10,4 +10,6 @@ export const driverNotes = {
   label: "Driver notes",
   icon: <NotebookPen aria-hidden />,
   shown: () => flags.driverNotesEnabled === true,
+  section: "pay",
+  sectionOrder: 40,
 } as const satisfies MenuItem;

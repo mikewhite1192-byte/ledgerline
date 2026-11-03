@@ -10,4 +10,6 @@ export const invoices = {
   label: "Invoices",
   icon: <FileText aria-hidden />,
   shown: () => flags.invoicesEnabled === true,
+  section: "billing",
+  sectionOrder: 10,
 } as const satisfies MenuItem;

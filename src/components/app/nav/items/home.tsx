@@ -9,4 +9,6 @@ export const home = {
   label: "Home",
   icon: <House aria-hidden />,
   shown: () => true,
+  section: "home",
+  sectionOrder: 0,
 } as const satisfies MenuItem;

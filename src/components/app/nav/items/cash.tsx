@@ -10,4 +10,7 @@ export const cash = {
   label: "Cash",
   icon: <Banknote aria-hidden />,
   shown: () => flags.cashFridayEnabled === true,
+  section: "pay",
+  sectionOrder: 70,
+  sectionLabel: "Friday's cash",
 } as const satisfies MenuItem;

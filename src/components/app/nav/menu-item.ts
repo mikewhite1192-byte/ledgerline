@@ -11,10 +11,27 @@ export const MENU_AREAS = ["pay", "billing", "books"] as const;
 export type MenuArea = (typeof MENU_AREAS)[number];
 export const AREA_LABELS: Readonly<Record<MenuArea, string>> = { pay: "Pay", billing: "Billing", books: "Books" };
 
+// The simple shape's five words (flags.simpleShape), in the order they show, with their names. Each
+// is one row in the menu; the open one lists its pages under it.
+export const MENU_SECTIONS = ["home", "pay", "billing", "drivers", "settings"] as const;
+export type MenuSection = (typeof MENU_SECTIONS)[number];
+export const SECTION_LABELS: Readonly<Record<MenuSection, string>> = {
+  home: "Home",
+  pay: "Pay",
+  billing: "Billing",
+  drivers: "Drivers",
+  settings: "Settings",
+};
+
 // One menu item, defined in its own file under ./items. `order` places it within its group, spaced
 // by ten so a new item fits between two without renumbering. `area` is the tab it shows under;
 // "primary" sits above the tabs on every page (Home). `shown` is read on every render, so an item
 // behind a switch shows only while its switch is on.
+//
+// Under the simple shape: `section` is the one of the five words it sits under, and `sectionOrder`
+// places it there (0 is the section's own page, the row itself, never listed under it; the first
+// listed page opens the section when it has no page of its own). `sectionLabel` is the page's name
+// under the simple shape where it differs from `label`.
 export type MenuItem = {
   group: MenuGroup;
   area: MenuArea | "primary";
@@ -23,4 +40,7 @@ export type MenuItem = {
   label: string;
   icon: ReactNode;
   shown: () => boolean;
+  section: MenuSection;
+  sectionOrder: number;
+  sectionLabel?: string;
 };

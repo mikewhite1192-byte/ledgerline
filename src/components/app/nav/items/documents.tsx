@@ -10,4 +10,6 @@ export const documents = {
   label: "Documents",
   icon: <FileText aria-hidden />,
   shown: () => flags.documentsEnabled === true,
+  section: "drivers",
+  sectionOrder: 20,
 } as const satisfies MenuItem;

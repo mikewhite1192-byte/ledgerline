@@ -7,6 +7,7 @@ import { RecordLink } from "@/components/invoices/cells";
 import { Badge } from "@/components/ui/badge";
 import { buttonVariants } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
+import { flags } from "@/config/flags";
 import { advancesOn } from "@/lib/advances/switches";
 import { cn } from "@/lib/cn";
 import { DbError } from "@/lib/db";
@@ -38,13 +39,22 @@ import {
   type Filters,
 } from "@/lib/drivers/list";
 import { driverAdminOn } from "@/lib/drivers/switch";
+import { demoCarrierOf } from "@/lib/seed/reset";
 import { ForbiddenError, withRequestTenant } from "@/lib/tenant/context";
 import { carrierToday, readShell, type ShellTenant } from "@/lib/tenant/shell";
 import { addDays } from "@/lib/time/local-date";
 
 export const dynamic = "force-dynamic";
 
-type View = { shell: ShellTenant; rows: DriverInsight[]; leaders: DriverLeaders; carded: Set<string> };
+type View = {
+  shell: ShellTenant;
+  rows: DriverInsight[];
+  leaders: DriverLeaders;
+  carded: Set<string>;
+  // The sample dispatch board's link: only for a demo carrier, under the simple shape, while the
+  // board is on (the board page checks the same carrier itself).
+  board: boolean;
+};
 
 // Every driver on file with what they earned, hauled and owe over the last 28, 90 or 365 days of
 // the carrier's own dates (the driver insights report's numbers), filtered and sorted by links,
@@ -65,7 +75,9 @@ export default async function DriversPage({
       const input = await readDriverInsightInput(q, window);
       const carded = await readCardedDrivers(q);
       const insights = driverInsightsOf(input, window, today, { everyDriver: true });
-      return { shell, rows: insights.rows, leaders: insights.leaders, carded };
+      const board =
+        flags.simpleShape.enabled === true && flags.mockTms.enabled === true && (await demoCarrierOf(q)) !== null;
+      return { shell, rows: insights.rows, leaders: insights.leaders, carded, board };
     });
   } catch (err) {
     if (err instanceof ForbiddenError) problem = "forbidden";
@@ -109,10 +121,19 @@ export default async function DriversPage({
         title="Drivers"
         description="Every driver on file with what they earned, hauled and still owe. Ask the agent who earned or owes the most."
         actions={
-          canAdd ? (
-            <Link href="/drivers/new" className={buttonVariants({ variant: "primary", size: "sm" })}>
-              Add driver
-            </Link>
+          canAdd || view.board ? (
+            <>
+              {view.board ? (
+                <Link href="/tms-demo" className={buttonVariants({ variant: "outline", size: "sm" })}>
+                  Dispatch board
+                </Link>
+              ) : null}
+              {canAdd ? (
+                <Link href="/drivers/new" className={buttonVariants({ variant: "primary", size: "sm" })}>
+                  Add driver
+                </Link>
+              ) : null}
+            </>
           ) : undefined
         }
       />

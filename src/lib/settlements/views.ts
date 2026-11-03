@@ -32,11 +32,45 @@ export type SettlementsView = {
   exemptDrivers: { id: string; code: string; name: string }[];
 };
 
-export async function readSettlementsView(q: Queryable, asked: string | null): Promise<SettlementsView> {
+// Which pay week a view shows: the asked one when it is listed; else, for the Settlements page
+// (withStubs passed, read only when no listed week was asked), the newest listed week that has
+// paystubs, so a new empty week does not hide last week's paystubs; else the newest open week,
+// else the newest. Pure.
+export function pickPeriod(
+  periods: readonly PeriodOption[],
+  want: string | null,
+  withStubs: ReadonlySet<string> | null,
+): PeriodOption | null {
+  const asked = want ? periods.find((p) => p.id.toLowerCase() === want) : undefined;
+  if (asked) return asked;
+  const stubbed = withStubs ? periods.find((p) => withStubs.has(p.id.toLowerCase())) : undefined;
+  return stubbed ?? periods.find((p) => p.status === "open") ?? periods[0] ?? null;
+}
+
+// Which of the listed pay weeks have at least one paystub, by id in lower case. Only the listed ids
+// are read, so the work stays bounded by the list, not the carrier's whole history.
+async function readPeriodsWithStubs(q: Queryable, ids: readonly string[]): Promise<Set<string>> {
+  const rows = await q.query<{ period_id: string }>(
+    `SELECT DISTINCT CAST(period_id AS text) AS period_id FROM settlements
+      WHERE tenant_id = current_tenant_id() AND period_id = ANY(CAST($1 AS uuid[]))`,
+    [`{${ids.join(",")}}`],
+  );
+  return new Set(rows.map((r) => String(r.period_id).toLowerCase()));
+}
+
+// `newestWithStubs` is the Settlements page's own choice for a visit with no listed week asked (see
+// pickPeriod); Home and Needs you keep reading the open week.
+export async function readSettlementsView(
+  q: Queryable,
+  asked: string | null,
+  opts: { newestWithStubs?: boolean } = {},
+): Promise<SettlementsView> {
   const periods = await readPeriods(q);
   const want = asked && isUuid(asked) ? asked.toLowerCase() : null;
-  const period =
-    periods.find((p) => p.id === want) ?? periods.find((p) => p.status === "open") ?? periods[0] ?? null;
+  const listed = want !== null && periods.some((p) => p.id.toLowerCase() === want);
+  const withStubs =
+    opts.newestWithStubs === true && !listed && periods.length > 0 ? await readPeriodsWithStubs(q, periods.map((p) => p.id)) : null;
+  const period = pickPeriod(periods, want, withStubs);
   const exempt = await q.query<{ id: string; code: string; first_name: string; last_name: string }>(
     `SELECT id, code, first_name, last_name FROM drivers
       WHERE tenant_id = current_tenant_id() AND own_insurance ORDER BY code`,
