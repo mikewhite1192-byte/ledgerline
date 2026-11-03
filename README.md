@@ -1,4 +1,4 @@
-# LedgerLine
+# LedgerLine: the AI back office for trucking carriers
 
 An AI operator for a trucking carrier's money desk. It takes driver advance requests, invoices
 delivered loads, runs weekly settlements and payouts, and records every step in QuickBooks Online.
@@ -8,6 +8,10 @@ the engine executes.
 
 Built from scratch for the Meta Global AI Developer Hackathon (Oct 26 to Nov 4, 2026), Indie track,
 "Build for Your World" theme.
+
+Live at https://ledgerline.thewolfpackco.com. Runs with no outside account: press "Try the demo
+carrier" on the sign-in page there, or run `npm run e2e` locally (a local Postgres only), where
+the models answer from a recording. See [Try it](#try-it).
 
 ## Trucking pay in one week
 

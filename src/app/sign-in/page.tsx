@@ -56,7 +56,10 @@ export default async function SignIn({
         className="absolute inset-0 -z-10 bg-linear-to-b from-background/75 via-background/25 to-background/10"
       />
       <div className="grid w-full max-w-[400px] gap-6">
-        <Wordmark size="lg" className="justify-self-center" />
+        <div className="grid justify-items-center gap-2">
+          <Wordmark size="lg" />
+          <p className="text-small text-foreground-2">The AI back office for trucking carriers</p>
+        </div>
         <Card className="grid gap-5 p-6 sm:p-8">
           <div className="grid gap-1">
             <h1 className="text-h2 text-foreground">Sign in</h1>
