@@ -165,8 +165,16 @@ export function DidToday({ sweep, intake, shown, done, today, timezone }: DidTod
 }
 
 // The order rows are cut to three in: money a person pays out first, then this chat's cards, then
-// billing, then the escalated asks.
-const PRIORITY: readonly NeedsYouRow["key"][] = ["paystubs", "advances", "cards", "invoice_cards", "past_due", "escalated"];
+// billing, then the escalated asks, then a record QuickBooks would not take.
+const PRIORITY: readonly NeedsYouRow["key"][] = [
+  "paystubs",
+  "advances",
+  "cards",
+  "invoice_cards",
+  "past_due",
+  "escalated",
+  "books",
+];
 
 const ROW_WORDS: Readonly<Record<NeedsYouRow["key"], [string, string]>> = {
   paystubs: ["paystub to approve", "paystubs to approve"],
@@ -175,6 +183,7 @@ const ROW_WORDS: Readonly<Record<NeedsYouRow["key"], [string, string]>> = {
   invoice_cards: ["invoice to approve", "invoices to approve"],
   past_due: ["invoice past due", "invoices past due"],
   escalated: ["request from your chat needs you", "requests from your chat need you"],
+  books: ["record QuickBooks did not take", "records QuickBooks did not take"],
 };
 
 function rowWords(r: NeedsYouRow): string {
