@@ -15,6 +15,7 @@ import { writeDigest, type CompleteFn } from "../digest/write";
 import { handOffMessage, sortMessage } from "../inbound/pipeline";
 import { moveFromDocument, moveFromMessage, moveFromTmsEvent, type MessageTable, type MoveOutcome } from "../loads/movement";
 import { advanceCardCheck, startCardCheck, statementVerdict } from "../recon/run";
+import { MIN_WONDER_MS } from "../sweep/fanout/run";
 import { advanceSweep, startSweep } from "../sweep/run";
 import { assertMembership } from "../tenant/context";
 import { prepareVoiceNote } from "../voice/pipeline";
@@ -42,6 +43,9 @@ export type Handler = {
   // How long one call may take at most. A piece of work starts only as a wake's first, or when this
   // much is left before the deadline, so no call outlives the route.
   needsMs: number;
+  // needsMs holds for a wake's first piece of work too: work that with less time only spends a
+  // carry and makes no progress (the sweep) waits for a wake that has it.
+  firstNeedsMs?: true;
   run: (session: Session, event: OpenEvent, ctx: HandlerContext) => Promise<HandlerOutcome>;
 };
 
@@ -186,9 +190,12 @@ export function deskHandlers(deps: HandlerDeps = {}): Handlers {
 
   // The pay sweep for the carrier's day: start (the schedule trigger returns the day's earlier run),
   // then advance until the deadline; still open, carried on by the next wake with its run id.
+  // needsMs: the second opinion's model calls start only with MIN_WONDER_MS left, so a wake with
+  // less would spend a carry for no progress; it holds for a wake's first piece too.
   const sweep: Handler = {
     switchOn: () => flags.sweepEnabled === true,
-    needsMs: 8_000,
+    needsMs: MIN_WONDER_MS,
+    firstNeedsMs: true,
     async run(session, event, ctx) {
       let runId = event.state === "carried" ? event.runId : null;
       if (!runId) {

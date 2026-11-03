@@ -3,7 +3,8 @@ import { flags } from "../../config/flags";
 import { NANOCENTS_PER_CENT } from "../ai/prices";
 import type { Session } from "../auth/claims";
 import type { DiscoverInput } from "./discover";
-import type { Handler, HandlerOutcome, Handlers } from "./handlers";
+import { MIN_WONDER_MS } from "../sweep/fanout/run";
+import { deskHandlers, type Handler, type HandlerOutcome, type Handlers } from "./handlers";
 import { DESK_SOURCES, eventKey, type DeskSource } from "./keys";
 import type { Line, OpenEvent } from "./log";
 import { MAX_CARRIES, wakeDesk, type DeskStore } from "./loop";
@@ -543,6 +544,60 @@ describe("wakeDesk", () => {
     expect(run).toHaveBeenCalledTimes(1);
     expect(out).toMatchObject({ ok: true, status: "more", reason: "deadline" });
     expect(out.ok && out.counts.left).toBe(1);
+  });
+
+  it("starts a first piece whose handler holds it to needsMs only with that much left, and a wake too short spends no carry", async () => {
+    const key = "sweep:2026-11-02";
+    const at = new Date(START - 3_600_000).toISOString();
+    const base = { wakeId: uuid(1), at, eventKey: key, source: "sweep" as const, subjectId: null, by: "schedule" as const };
+    store.lines.push({ ...base, id: uuid(2), kind: "seen", detail: {} });
+    store.lines.push({ ...base, id: uuid(3), kind: "claimed", detail: {} });
+    for (let i = 0; i < MAX_CARRIES - 1; i++) {
+      store.lines.push({ ...base, id: uuid(10 + i), kind: "carried", detail: { runId: uuid(4444) } });
+    }
+    ids = 100;
+    // The dispatch walk eats 6 s of the 20 s slice: 14 s are left, short of the sweep's 15 s.
+    let syncMs = 6_000;
+    store.sync = async () => {
+      now += syncMs;
+    };
+    const run = vi.fn<Run>(async () => done());
+    const handlers = handlersWith(run, { sweep: { needsMs: 15_000, firstNeedsMs: true } });
+    for (let n = 0; n < 3; n++) {
+      now += 60_000;
+      const out = await wake(handlers, uuid(700 + n));
+      expect(out).toMatchObject({ ok: true, status: "done", reason: "deadline" });
+      expect(out.ok && out.counts.left).toBe(1);
+    }
+    expect(run).not.toHaveBeenCalled();
+    expect(ofKind("carried")).toHaveLength(MAX_CARRIES - 1);
+    expect(ofKind("failed")).toEqual([]);
+
+    // A wake with the time runs it, carried on with its run as before.
+    syncMs = 1_000;
+    now += 60_000;
+    const out = await wake(handlers, uuid(800));
+    expect(run).toHaveBeenCalledTimes(1);
+    expect(run.mock.calls[0][1]).toMatchObject({ state: "carried", runId: uuid(4444), carries: MAX_CARRIES - 1 });
+    expect(out).toMatchObject({ ok: true, status: "done", reason: "no_work" });
+    expect(ofKind("done")).toHaveLength(1);
+  });
+
+  it("holds only the real sweep's first piece to its needsMs, the second opinion's minimum", () => {
+    const real = deskHandlers();
+    expect(real.sweep).toMatchObject({ needsMs: MIN_WONDER_MS, firstNeedsMs: true });
+    expect(DESK_SOURCES.filter((source) => real[source].firstNeedsMs === true)).toEqual(["sweep"]);
+  });
+
+  it("still starts a wake's first piece with less than its needsMs when its handler does not hold it", async () => {
+    store.pending = [{ eventKey: cardKey(1), source: "card_transaction" }];
+    store.sync = async () => {
+      now += 6_000;
+    };
+    const run = vi.fn<Run>(async () => done());
+    const out = await wake(handlersWith(run, { card_transaction: { needsMs: 25_000 } }));
+    expect(run).toHaveBeenCalledTimes(1);
+    expect(out).toMatchObject({ ok: true, status: "done", reason: "no_work" });
   });
 
   it("runs the agent's questions pass before sleeping: reasons only while armed and under the caps", async () => {

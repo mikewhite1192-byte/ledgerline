@@ -224,8 +224,8 @@ describe("checkUpload", () => {
       maxCostCents: 2,
       timeoutMs: 20_000,
     });
-    expect(PREPARE_CALL).toEqual({ purpose: "voice_note_prepare", maxCostCents: 3, timeoutMs: 15_000, maxOutputTokens: 600 });
-    expect(REPLY_CALL).toEqual({ purpose: "voice_note_reply", maxCostCents: 2, timeoutMs: 12_000, maxOutputTokens: 400 });
+    expect(PREPARE_CALL).toEqual({ purpose: "voice_note_prepare", maxCostCents: 3, timeoutMs: 15_000, maxOutputTokens: 2000 });
+    expect(REPLY_CALL).toEqual({ purpose: "voice_note_reply", maxCostCents: 2, timeoutMs: 12_000, maxOutputTokens: 1600 });
     expect(STEP_BUDGET_MS + MIN_CALL_MS).toBeLessThanOrEqual(30_000);
   });
 });

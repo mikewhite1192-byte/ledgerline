@@ -26,9 +26,10 @@ export const MIN_CALL_MS = 4_000;
 const MAX_CALL_MS = 60_000;
 // Reasoning and the answer share this cap. Measured on muse-spark-1.3 at low effort (2026-10-27):
 // the answering call spent 650 to 700 tokens on reasoning alone, so a 700 cap cut every answer
-// off. 2,000 leaves room for an eight-issue answer, and its reserve (about 1.6 cents with a full
-// set of read results) still fits callCents.
-const MAX_OUTPUT_TOKENS = 2_000;
+// off. 3,000 leaves room for an eight-issue answer with reasoning to spare. Its reserve is about
+// 1.3 cents, so callCents (5) leaves about 59 KB for the request with its read results, and each
+// call's cap is also held to what the driver has left (driverCents).
+const MAX_OUTPUT_TOKENS = 3_000;
 
 export type CheckStatus = "done" | "unparsed" | "timed_out" | "budget" | "error";
 
@@ -64,7 +65,7 @@ export type ChildInput = {
   brief: string | null;
   limits: FanoutLimits;
   startedAt: number;
-  // Nothing new starts after this (the slice's own deadline or the child's 15 s, whichever is first).
+  // Nothing new starts after this (the slice's own deadline or the child's childTimeoutMs, whichever is first).
   deadlineAt: number;
 };
 

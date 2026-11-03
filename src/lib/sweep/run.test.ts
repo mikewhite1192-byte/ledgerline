@@ -26,6 +26,12 @@ describe("the sweep's draft lease", () => {
     expect(STOP_BEFORE_MS).toBeLessThan(flags.sweepLimits.sliceMs);
   });
 
+  it("ends inside the advance route's limit: the whole slice, the explanation and the last writes", () => {
+    // The settle and status writes after the explanation (run.ts) get this much.
+    const WRITE_MARGIN_MS = 2_000;
+    expect(flags.sweepLimits.sliceMs + EXPLAIN_TIMEOUT_MS + WRITE_MARGIN_MS).toBeLessThanOrEqual(advanceLimitS * 1000);
+  });
+
   it("outlasts every route that carries a slice, so no step outlives it while its request is alive", () => {
     for (const limit of [startLimitS, advanceLimitS, internalLimitS]) {
       expect(limit * 1000).toBeLessThan(DRAFT_LEASE_S * 1000);

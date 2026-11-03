@@ -54,8 +54,8 @@ describe("reminderRequest", () => {
     expect(REMINDER_PURPOSE).toBe("collections_draft");
     expect(REMINDER_FORMAT.strict).toBe(true);
     expect(REMINDER_FORMAT.schema).toMatchObject({ additionalProperties: false, required: ["subject", "body"] });
-    expect(flags.collectionsLimits.maxDraftCents).toBeLessThanOrEqual(2);
-    expect(flags.collectionsLimits.maxOutputTokens).toBeLessThanOrEqual(500);
+    expect(flags.collectionsLimits.maxDraftCents).toBeLessThanOrEqual(3);
+    expect(flags.collectionsLimits.maxOutputTokens).toBeLessThanOrEqual(1600);
   });
 
   it("sends the rules as the system message and only the pack's facts as the user message", () => {

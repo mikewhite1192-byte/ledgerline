@@ -110,7 +110,7 @@ describe("writeReason", () => {
     expect(request).toMatchObject({
       purpose: "ask_reason",
       maxCostCents: 2,
-      maxOutputTokens: 80,
+      maxOutputTokens: 1200,
       traceId: CANDIDATE.traceId,
     });
     const facts = JSON.parse(String(request.messages?.at(-1)?.content));

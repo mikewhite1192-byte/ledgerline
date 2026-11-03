@@ -3471,7 +3471,7 @@ describe("no internal word on the quarter review, in every state", () => {
       fireEvent.click(screen.getByRole("button", { name: "Write the quarter review" }));
     });
     expect(screen.getByRole("button", { name: "Write the review" })).toBeTruthy();
-    expect(container.textContent).toMatch(/costs at most \$0\.30/);
+    expect(container.textContent).toMatch(/costs at most \$0\.40/);
     expect(scan(container)).toEqual([]);
   });
 

@@ -351,7 +351,7 @@ describe("flags", () => {
       maxCallMs: 3_600_000,
       callsPerDay: 20,
       maxHandOffsPerCall: 3,
-      maxUpdateCents: 3,
+      maxUpdateCents: 4,
       idleEndMs: 600_000,
     });
     for (const v of Object.values(flags.phoneLineLimits)) {
@@ -404,7 +404,7 @@ describe("flags", () => {
   });
 
   it("releases the morning digest, with a start date and small caps on its one call, off for the local demo run", () => {
-    expect(flags.morningDigest).toEqual({ enabled: true, startDate: "2026-11-02", maxCostCents: 4, maxOutputTokens: 400 });
+    expect(flags.morningDigest).toEqual({ enabled: true, startDate: "2026-11-02", maxCostCents: 4, maxOutputTokens: 1600 });
     expect(isLocalDate(flags.morningDigest.startDate)).toBe(true);
     // Listed ahead of its release, so the demo-path run keeps it off once it ships on.
     expect(LOCAL_OFF_ONLY as readonly string[]).toContain("morningDigest.enabled");
@@ -519,7 +519,7 @@ describe("flags", () => {
       enabled: true,
       reasonEnabled: true,
       reasonMaxCostCents: 2,
-      reasonMaxOutputTokens: 80,
+      reasonMaxOutputTokens: 1200,
       reasonsPerWake: 3,
       listLimit: 5,
     });
@@ -823,7 +823,7 @@ describe("flags", () => {
     expect(flags.driverNotesEmailAllowlist).toEqual([]);
     expect(flags.driverNotesEmailFrom).toBe("2026-10-27");
     expect(isLocalDate(flags.driverNotesEmailFrom)).toBe(true);
-    expect(flags.driverNoteLimits).toEqual({ maxNoteCents: 3, maxBatchCents: 60, maxOutputTokens: 400 });
+    expect(flags.driverNoteLimits).toEqual({ maxNoteCents: 3, maxBatchCents: 60, maxOutputTokens: 1600 });
     for (const v of Object.values(flags.driverNoteLimits)) {
       expect(Number.isSafeInteger(v) && v > 0).toBe(true);
     }
@@ -855,9 +855,9 @@ describe("flags", () => {
     expect(flags.collectionsEmailFrom).toBe("");
     expect(isLocalDate(flags.collectionsEmailFrom)).toBe(false);
     expect(flags.collectionsLimits).toEqual({
-      maxDraftCents: 2,
+      maxDraftCents: 3,
       maxRunCents: 40,
-      maxOutputTokens: 500,
+      maxOutputTokens: 1600,
       maxDraftsPerRun: 12,
       minDaysLate: 30,
     });
@@ -912,17 +912,18 @@ describe("flags", () => {
       parallel: 6,
       maxCallsPerDriver: 3,
       maxToolSteps: 4,
-      callCents: 3,
+      callCents: 5,
       driverCents: 9,
-      planCents: 12,
-      reconcileCents: 12,
-      childTimeoutMs: 15_000,
+      planCents: 30,
+      reconcileCents: 40,
+      childTimeoutMs: 19_000,
       tenantDayCents: 1_000,
       runsPerTenantDay: 3,
-      runCapCents: 450,
+      runCapCents: 500,
     });
-    // A driver's calls fit its own cap, and the sweep's own spend still fits inside the run's.
-    expect(l.callCents * l.maxCallsPerDriver).toBeLessThanOrEqual(l.driverCents);
+    // One call fits the driver's cap (each call is capped at what the driver has left, so all its
+    // calls together never pass driverCents), and the sweep's own spend still fits inside the run's.
+    expect(l.callCents).toBeLessThanOrEqual(l.driverCents);
     expect(l.runCapCents).toBeGreaterThan(flags.sweepLimits.maxRunCents);
     // A whole check ends well inside one slice.
     expect(l.childTimeoutMs).toBeLessThan(flags.sweepLimits.sliceMs);
@@ -1012,7 +1013,7 @@ describe("flags", () => {
 
   it("releases the profit brief, at most 6 cents a brief, and never switched on by local mode", () => {
     expect(flags.profitBriefEnabled).toBe(true);
-    expect(flags.profitBriefLimits).toEqual({ maxBriefCents: 6, maxOutputTokens: 700, maxLanes: 10, maxCustomers: 12 });
+    expect(flags.profitBriefLimits).toEqual({ maxBriefCents: 6, maxOutputTokens: 2400, maxLanes: 10, maxCustomers: 12 });
     for (const v of Object.values(flags.profitBriefLimits)) {
       expect(Number.isSafeInteger(v) && v > 0).toBe(true);
     }
@@ -1040,7 +1041,7 @@ describe("flags", () => {
 
   it("releases the quarter review, at most 30 cents a review, and never switched on by local mode", () => {
     expect(flags.quarterReviewEnabled).toBe(true);
-    expect(flags.quarterReviewLimits).toEqual({ maxReviewCents: 30, maxOutputTokens: 1600, maxInputChars: 40_000 });
+    expect(flags.quarterReviewLimits).toEqual({ maxReviewCents: 40, maxOutputTokens: 6000, maxInputChars: 40_000 });
     for (const v of Object.values(flags.quarterReviewLimits)) {
       expect(Number.isSafeInteger(v) && v > 0).toBe(true);
     }

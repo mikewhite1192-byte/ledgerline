@@ -351,8 +351,15 @@ describe("the sweep's second opinion", () => {
 
   it("leases a check a dead slice left once more, and never a third time", async () => {
     const runId = await start();
-    // Up to the checks: too little of the slice is left to start one, so the slice ends there.
-    const s = await advanceSweep(SESSION, runId, NOW.getTime() + 12_000, deps());
+    // Up to the checks: the ordering call takes 5 s of a 16 s slice, so too little is left to start
+    // a check and the slice ends there. The clock stays 5 s on for the rest of the run.
+    let at = NOW.getTime();
+    const slowPlan = vi.fn(async (target: string, req: AiRequest) => {
+      if (req.purpose === "fanout_plan") at += 5_000;
+      return model(target, req);
+    });
+    const d = deps({ clock: () => new Date(at), complete: slowPlan as unknown as SweepDeps["complete"] });
+    const s = await advanceSweep(SESSION, runId, NOW.getTime() + 16_000, d);
     expect(s).toMatchObject({ ok: true, phase: "check" });
     const rows = await checks(runId);
     expect(rows.every((c) => c.status === "queued")).toBe(true);
@@ -370,7 +377,7 @@ describe("the sweep's second opinion", () => {
         [runId, rows[1].driver_id, randomUUID(), lapsed],
       );
     });
-    await runToEnd(runId);
+    await runToEnd(runId, d);
     const after = await checks(runId);
     expect(after.find((c) => c.driver_id === rows[0].driver_id)).toMatchObject({ status: "done", attempts: 2 });
     expect(after.find((c) => c.driver_id === rows[1].driver_id)).toMatchObject({ status: "error", attempts: 2 });

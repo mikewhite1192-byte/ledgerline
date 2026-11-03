@@ -52,8 +52,8 @@ export function transcribeOptions(): Omit<TranscribeRequest, "wav" | "traceId"> 
   };
 }
 
-export const PREPARE_CALL = { purpose: "voice_note_prepare", maxCostCents: 3, timeoutMs: 15_000, maxOutputTokens: 600 } as const;
-export const REPLY_CALL = { purpose: "voice_note_reply", maxCostCents: 2, timeoutMs: 12_000, maxOutputTokens: 400 } as const;
+export const PREPARE_CALL = { purpose: "voice_note_prepare", maxCostCents: 3, timeoutMs: 15_000, maxOutputTokens: 2000 } as const;
+export const REPLY_CALL = { purpose: "voice_note_reply", maxCostCents: 2, timeoutMs: 12_000, maxOutputTokens: 1600 } as const;
 
 // Each request stops starting new model calls this long after it began, and needs at least
 // MIN_CALL_MS left to start one.

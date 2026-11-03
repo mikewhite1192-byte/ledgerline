@@ -119,7 +119,7 @@ const RELEASE_SQL = `UPDATE desk_loops
 
 // The dispatch walk stops this long before the wake's deadline, so it takes at most half of the
 // 20 second slice (flags.deskLoop.limits.sliceMs) and leaves the other half to the handlers, whose
-// common kinds need 5 to 8 seconds each (needsMs in handlers.ts).
+// common kinds need 5 to 15 seconds each (needsMs in handlers.ts).
 export const TMS_SYNC_MARGIN_MS = 10_000;
 
 // clock: the wake's own clock, so the walk's deadline reads the same time as the wake's.
@@ -372,8 +372,10 @@ export async function wakeDesk(
         counts.skipped += 1;
         continue;
       }
-      // Only the wake's first piece of work may need more than what is left of the slice.
-      if (started > 0 && deadlineMs - now < handler.needsMs) {
+      // Only the wake's first piece of work may need more than what is left of the slice, and not
+      // one whose handler holds its first piece to needsMs too. Stopping here writes no line for the
+      // piece, so it spends no carry (carries count carried lines) and no try.
+      if ((started > 0 || handler.firstNeedsMs === true) && deadlineMs - now < handler.needsMs) {
         reason = "deadline";
         break;
       }

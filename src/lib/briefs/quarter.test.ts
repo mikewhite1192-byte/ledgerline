@@ -223,8 +223,8 @@ describe("the review's model request", () => {
     expect(r).toMatchObject({
       purpose: QUARTER_PURPOSE,
       reasoningEffort: "medium",
-      maxOutputTokens: 1_600,
-      maxCostCents: 30,
+      maxOutputTokens: 6_000,
+      maxCostCents: 40,
       timeoutMs: QUARTER_TIMEOUT_MS,
       traceId: "trace-q",
       format: QUARTER_FORMAT,
@@ -693,7 +693,7 @@ describe("the review in Contributor mode", () => {
     expect(fetchFn).toHaveBeenCalledTimes(1);
     const body = JSON.parse(String(fetchFn.mock.calls[0][1]?.body));
     expect(body.model).toBe("muse-wonder-1.0");
-    expect(body.max_output_tokens).toBe(1_600);
+    expect(body.max_output_tokens).toBe(6_000);
     expect(body.reasoning).toEqual({ effort: "medium" });
     expect(body.text.format).toMatchObject({ type: "json_schema", name: "quarter_review", strict: true });
     expect(seen.reserved).toBeGreaterThan(0);

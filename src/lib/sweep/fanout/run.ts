@@ -70,9 +70,12 @@ export type FanoutCtx = {
 };
 
 // A Wonder call may run this far past the slice's deadline (the route's 30 s limit and the run's
-// 40 s lease both cover it), and is only started with this much of the slice left.
+// 40 s lease both cover it), and is only started with this much of the slice left, so it always
+// gets at least 20 s. Started with 10 s left, ordering calls ran out of time at about 17 s with
+// their outcome unknown (production, 2026-11-03). A slice with less left (often the one that ran
+// find) leaves the call to the next slice, which has its whole time.
 const MODEL_OVERRUN_MS = 5_000;
-export const MIN_WONDER_MS = 10_000;
+export const MIN_WONDER_MS = 15_000;
 const WONDER_TIMEOUT_MS = 25_000;
 // A check row's lease: longer than any child can run (childTimeoutMs plus the overrun), so a row
 // whose lease lapsed belongs to a slice that died.
@@ -83,11 +86,14 @@ const SLICE_SLACK_MS = 6_000;
 const MAX_ATTEMPTS = 2;
 // Reasoning and the answer share these caps. Measured on muse-wonder-1.0 at medium effort
 // (2026-10-27): a two-driver plan spent 1,720 of 2,400 output tokens on reasoning and was cut off
-// before its JSON closed. Each cap is sized so its reserve (output at the Wonder rate plus the
-// input) still fits planCents and reconcileCents for a full roster; a bigger request is refused
-// too_expensive before anything is sent, and the run goes on without that call.
-const PLAN_OUTPUT_TOKENS = 4_800;
-const RECONCILE_OUTPUT_TOKENS = 4_000;
+// before its JSON closed. A full roster's plan is a long answer (about 100 tokens a driver), so it
+// runs at low effort, which spends less of its time on reasoning, with the wrapper's largest cap;
+// the comparison's answer is short, so it keeps medium effort. Each cap is sized so its reserve
+// (output at the Wonder rate plus the input) still fits planCents and reconcileCents for a full
+// roster; a bigger request is refused too_expensive before anything is sent, and the run goes on
+// without that call.
+export const PLAN_CALL = { maxOutputTokens: 8_192, reasoningEffort: "low" } as const;
+export const RECONCILE_CALL = { maxOutputTokens: 6_000, reasoningEffort: "medium" } as const;
 
 // The wrapper refused these before anything was sent: the call cost nothing.
 const REFUSED_BEFORE_SENDING: ReadonlySet<string> = new Set([
@@ -221,7 +227,15 @@ async function callWonder(
   fx: FanoutCtx,
   turn: { turnId: string; opened: OpenedTurn },
   label: string,
-  request: { purpose: string; system: string; user: string; maxOutputTokens: number; maxCostCents: number; format: AiFormat },
+  request: {
+    purpose: string;
+    system: string;
+    user: string;
+    maxOutputTokens: number;
+    reasoningEffort: "low" | "medium";
+    maxCostCents: number;
+    format: AiFormat;
+  },
 ): Promise<WonderCall> {
   const steps = fx.deps.steps(fx.service);
   const step = await steps.startStep(turn.turnId, { kind: "model", label });
@@ -236,7 +250,7 @@ async function callWonder(
           { role: "user", content: request.user },
         ],
         format: request.format,
-        reasoningEffort: "medium",
+        reasoningEffort: request.reasoningEffort,
         maxOutputTokens: request.maxOutputTokens,
         maxCostCents: request.maxCostCents,
         timeoutMs: Math.max(1, Math.min(WONDER_TIMEOUT_MS, Math.floor(remaining))),
@@ -397,7 +411,8 @@ export async function planPhase(fx: FanoutCtx): Promise<"plan" | "check" | "draf
         purpose: "fanout_plan",
         system: PLAN_PROMPT,
         user: planInput(roster, week),
-        maxOutputTokens: PLAN_OUTPUT_TOKENS,
+        maxOutputTokens: PLAN_CALL.maxOutputTokens,
+        reasoningEffort: PLAN_CALL.reasoningEffort,
         maxCostCents: l.planCents,
         format: PLAN_FORMAT,
       })
@@ -848,7 +863,8 @@ export async function reconcilePhase(fx: FanoutCtx): Promise<"reconcile" | "draf
           start.engine.filter((f) => checked.has(f.driverId)),
           start.checks.filter((c) => c.status === "done"),
         ),
-        maxOutputTokens: RECONCILE_OUTPUT_TOKENS,
+        maxOutputTokens: RECONCILE_CALL.maxOutputTokens,
+        reasoningEffort: RECONCILE_CALL.reasoningEffort,
         maxCostCents: l.reconcileCents,
         format: RECONCILE_FORMAT,
       })
