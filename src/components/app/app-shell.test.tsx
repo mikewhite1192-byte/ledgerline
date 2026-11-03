@@ -28,6 +28,10 @@ function memoryStorage(): Storage {
 const savedAgent = flags.agentEnabled;
 const savedFocus = flags.agentFocusEnabled;
 const savedSimple = flags.simpleShape.enabled;
+// Written for the full shell; the simple shape's tests turn its switch on.
+beforeEach(() => {
+  flags.simpleShape.enabled = false;
+});
 afterEach(() => {
   flags.agentEnabled = savedAgent;
   flags.agentFocusEnabled = savedFocus;

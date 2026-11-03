@@ -147,6 +147,9 @@ const RELEASED_ON = [
   // Released by the owner (D-071, D-097, 2026-11-03): the live feed of every money step. It reads
   // only and moves no money.
   "activityFeed.enabled",
+  // Released by the owner (D-103, 2026-11-03): the simple Home and the five-word menu. Presentation
+  // only; it changes no number and moves no money.
+  "simpleShape.enabled",
 ] as const;
 
 // What stays off, each waiting on a missing piece or an outside send the owner has not released.
@@ -167,8 +170,6 @@ const KEPT_OFF = [
   "signInTour.enabled",
   // One model read per tap and a load moved on the sample board: the owner turns it on in its own PR.
   "driverPaperwork.enabled",
-  // Presentation only, but it changes what Home shows: the owner turns it on in its own PR.
-  "simpleShape.enabled",
 ] as const;
 
 // The on/off switches in flags.ts, by path: every top-level boolean and every boolean inside a
@@ -432,8 +433,8 @@ describe("flags", () => {
     expect(LOCAL_OFF_ONLY as readonly string[]).toContain("driverPaperwork.enabled");
   });
 
-  it("ships the simple shape off, off for the local demo run", () => {
-    expect(flags.simpleShape).toEqual({ enabled: false });
+  it("ships the simple shape on, off for the local demo run", () => {
+    expect(flags.simpleShape).toEqual({ enabled: true });
     // Listed ahead of its release, so the demo-path run keeps it off once it ships on.
     expect(LOCAL_OFF_ONLY as readonly string[]).toContain("simpleShape.enabled");
   });

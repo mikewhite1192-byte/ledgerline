@@ -1311,8 +1311,8 @@ export const flags: Flags = {
   signInTour: { enabled: false },
   // Off until the owner turns it on in its own PR (D-098). One model read per tap; moves no money.
   driverPaperwork: { enabled: false, startDate: "2026-11-03", perDay: 30 },
-  // Off until the owner turns it on in its own PR. Presentation only.
-  simpleShape: { enabled: false },
+  // Released by the owner (D-103, 2026-11-03). Presentation only.
+  simpleShape: { enabled: true },
 };
 
 applyLocalOverrides(flags);

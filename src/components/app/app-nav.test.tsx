@@ -2,7 +2,7 @@
 import { readdirSync, readFileSync } from "node:fs";
 import path from "node:path";
 import { cleanup, render, screen } from "@testing-library/react";
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { flags } from "@/config/flags";
 import { appNav, NAV_HREFS, type NavKey } from "./app-nav";
 import * as registry from "./nav/items";
@@ -40,6 +40,10 @@ const savedFactoring = flags.factoring.enabled;
 const savedMoneyCodes = flags.moneyCodes.enabled;
 const savedActivityFeed = flags.activityFeed.enabled;
 const savedSimple = flags.simpleShape.enabled;
+// Written for the full menu; the five-word menu's tests turn its switch on.
+beforeEach(() => {
+  flags.simpleShape.enabled = false;
+});
 afterEach(() => {
   flags.simpleShape.enabled = savedSimple;
   for (const s of SWITCHES) flags[s] = saved[s];
