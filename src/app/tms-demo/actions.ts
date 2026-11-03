@@ -1,12 +1,14 @@
 "use server";
 
 import { revalidatePath } from "next/cache";
-import { redirect } from "next/navigation";
+import { redirect, unstable_rethrow } from "next/navigation";
 import { flags } from "@/config/flags";
 import { readRole } from "@/lib/auth/role";
+import { requireSession } from "@/lib/auth/session";
 import { DbError } from "@/lib/db";
 import { sendMockHook, type HookResult } from "@/lib/mock-tms/hook";
 import { createMockLoad, draftOf, NewLoadUndone, parseNewLoad, type NewLoadDraft, type NewLoadRefusal } from "@/lib/mock-tms/new-load";
+import { sendDriverPaperwork, type PaperworkRefusal, type PaperworkResult } from "@/lib/mock-tms/paperwork";
 import { applyMockAction, recordHookResult, type MockAction, type MockRefusal } from "@/lib/mock-tms/store";
 import { demoCarrierOf } from "@/lib/seed/reset";
 import { ForbiddenError, withRequestTenant } from "@/lib/tenant/context";
@@ -20,9 +22,18 @@ import { ForbiddenError, withRequestTenant } from "@/lib/tenant/context";
 // switch is re-checked first; a carrier that is not a demo carrier, or not on the sample system, is
 // refused. Categories only, never a database message.
 //
-// "New load" (createLoadAction, flags.mockTms.newLoad) is the one exception to "never our loads": it
-// writes the sample system's load and our planned load with the same number in one transaction
-// (src/lib/mock-tms/new-load.ts), still no card and no money, on a demo carrier only, capped.
+// Two buttons are exceptions, and say what they write. "New load" (createLoadAction,
+// flags.mockTms.newLoad) writes the sample system's load and our planned load with the same number
+// in one transaction (src/lib/mock-tms/new-load.ts), still no card and no money, on a demo carrier
+// only, capped.
+//
+// "Driver sends paperwork" (sendPaperworkAction, flags.driverPaperwork) renders the driver's paper
+// for one of our loads and sends it through the document pipeline (src/lib/mock-tms/paperwork.ts):
+// the model reads it, code moves our load by the paperwork rules and, only then, completes the same
+// stop on the sample board. A paper the rules cannot count leaves a zero-amount move card for a
+// person instead. No money, no webhook call, a demo carrier only, capped per day; a demo visitor's
+// tap counts one turn of the visit. Any fault it did not name (a PDF library that failed to load,
+// say) answers "failed", never the server's own words.
 
 export type MockActionCategory = MockRefusal | "disabled" | "forbidden" | "not_demo" | "bad_request" | "unreadable" | "unknown" | "failed";
 
@@ -156,4 +167,29 @@ export async function createLoadAction(_prev: NewLoadState, form: FormData): Pro
   }
   // Outside the try: the redirect is thrown, and nothing above may catch it.
   redirect(`/tms-demo/loads/${encodeURIComponent(reference)}`);
+}
+
+export type PaperworkCategory = PaperworkRefusal | Failure | "bad_request";
+
+export type PaperworkState = Exclude<PaperworkResult, { kind: "refused" }> | { kind: "refused"; category: PaperworkCategory } | null;
+
+export async function sendPaperworkAction(_prev: PaperworkState, form: FormData): Promise<PaperworkState> {
+  // The switches, re-read here and again inside: the page's own check is not enough.
+  if (flags.driverPaperwork.enabled !== true || flags.mockTms.enabled !== true) return { kind: "refused", category: "disabled" };
+  const reference = text(form, "reference");
+  const stage = text(form, "stage");
+  if (reference === null || (stage !== "pickup" && stage !== "delivery")) return { kind: "refused", category: "bad_request" };
+  try {
+    const session = await requireSession();
+    return await sendDriverPaperwork(session, { reference, stage });
+  } catch (err) {
+    // The sign-in redirect and the framework's own signals go on as they came.
+    unstable_rethrow(err);
+    const category = failureOf(err, "driver paperwork");
+    if (category !== null) return { kind: "refused", category };
+    console.error(`mock tms driver paperwork: failed error=${err instanceof Error ? err.name : "unknown"}`);
+    return { kind: "refused", category: "failed" };
+  } finally {
+    revalidatePath("/tms-demo", "layout");
+  }
 }

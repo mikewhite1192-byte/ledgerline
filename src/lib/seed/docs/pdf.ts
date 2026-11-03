@@ -86,13 +86,20 @@ function draw(doc: PDFKit.PDFDocument, content: PdfContent): void {
 
 export async function renderPdf(entry: PdfDoc): Promise<Buffer> {
   const content = pdfContent(entry);
+  return renderPdfContent(content, { title: `${content.title} ${entry.expect.loadNumber} (SAMPLE)` });
+}
+
+// The same page from content already built (the driver's sample paperwork on the sample dispatch
+// board, src/lib/mock-tms/paperwork.ts, uses it too): the same fixed dates, fonts and no
+// compression, so the same content and title give the same bytes.
+export async function renderPdfContent(content: PdfContent, info: { title: string }): Promise<Buffer> {
   const doc = new PDFDocument({
     size: "LETTER",
     margins: { top: 72, bottom: 72, left: LEFT, right: LEFT },
     bufferPages: true,
     compress: false,
     info: {
-      Title: `${content.title} ${entry.expect.loadNumber} (SAMPLE)`,
+      Title: info.title,
       Subject: PDF_FOOTER,
       CreationDate: CREATED,
       ModDate: CREATED,

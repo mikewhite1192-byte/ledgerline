@@ -986,6 +986,16 @@ export type Flags = {
   // of its own, nothing written. Off, sign-in lands on / as before, and there is no panel and no
   // "Show me around" shortcut.
   signInTour: { enabled: boolean };
+  // The driver's phone on the sample dispatch board's load page (src/lib/mock-tms/paperwork.ts):
+  // one button renders a fixed sample bill of lading (pickup) or proof of delivery (delivery) for
+  // one of a demo carrier's loads, with no model, and sends it through the document read like any
+  // upload. Code, never the model, then moves the load when the read names its whole load number
+  // (src/lib/loads/movement.ts, which asks loadMovement and its start date itself) and writes the
+  // stop to the sample board only (never a real dispatch system, never money). startDate
+  // (YYYY-MM-DD, the carrier's zone): no tap before it. perDay: taps that make a new document,
+  // per carrier per local day. A demo visitor's tap spends one of the visit's turns and the read
+  // spends the visit's model budget.
+  driverPaperwork: { enabled: boolean; startDate: string; perDay: number };
   // The simple shape of Home (src/components/home/simple-home.tsx): three blocks only, what the
   // coworker finished today, at most three things that need a person, and an ask box. It reuses the
   // reads Home already makes and changes no number. Off, Home renders as before.
@@ -1299,6 +1309,8 @@ export const flags: Flags = {
   activityFeed: { enabled: true, pollSeconds: 15, pageSize: 50 },
   // Off until the owner turns it on in its own PR. Read only.
   signInTour: { enabled: false },
+  // Off until the owner turns it on in its own PR (D-098). One model read per tap; moves no money.
+  driverPaperwork: { enabled: false, startDate: "2026-11-03", perDay: 30 },
   // Off until the owner turns it on in its own PR. Presentation only.
   simpleShape: { enabled: false },
 };
