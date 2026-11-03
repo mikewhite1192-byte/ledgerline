@@ -7,8 +7,10 @@ import { defineTool, type GatewayRef } from "../../types";
 import { idField } from "../../validate";
 import { OPERATOR } from "../shared";
 
-// The most late invoices one call returns; the rest are counted, never listed.
-export const COLLECTIONS_TOOL_MAX = 20;
+// The most late invoices one call returns; the rest are counted, never listed. Twenty rows ran past
+// the gateway's result cap (MAX_RESULT_CHARS), which cut two more and added a second, smaller
+// count beside total; twelve fit whole, so total and omitted are the only counts the model sees.
+export const COLLECTIONS_TOOL_MAX = 12;
 
 export const getCollections = defineTool({
   name: "get_collections",

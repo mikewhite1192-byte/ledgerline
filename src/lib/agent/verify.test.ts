@@ -79,6 +79,10 @@ describe("answerVerification", () => {
     });
   });
 
+  it("shows no pill on a stopped answer with no card", () => {
+    expect(answerVerification({ status: "partial", proposals: [], withheldFigures: 0 }, true)).toBeNull();
+  });
+
   it("is Verified when every card is", () => {
     expect(answerVerification({ status: "partial", proposals: [pass, pass], withheldFigures: 0 }, true)).toMatchObject({
       state: "verified",

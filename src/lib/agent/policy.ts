@@ -37,6 +37,13 @@ export const OPERATOR_PROMPT = [
   "  this same turn (a person approves it before anything changes), and say in a sentence or two",
   "  what you found.",
   "- Keep answers short: a direct answer first, then at most a few plain lines of why.",
+  "- Write plain sentences for a person: no dashes as punctuation, dates as a month and day (Nov 3),",
+  "  and never a field name or code from a tool result (stage 90, tone firm, reminder none): say",
+  "  what it means instead (the 90-day reminder stage, no reminder drafted yet).",
+  "- A count you state is the tool's own total, not the rows it listed; if it listed fewer, say how",
+  "  many it listed. Never promise rows you do not show.",
+  "- \"What did you do\" means the answers under Earlier in this conversation: say what each looked",
+  "  up and found, in a line each. Nothing is paid or sent by an answer.",
 ].join("\n");
 
 // The rule added to the operator prompt when tool search is on (flags.agentToolSearch), so a turn
@@ -123,6 +130,9 @@ export const CASH_PROMPT = [
 export const COLLECTIONS_RULE = [
   "- For who needs a payment reminder, call get_collections. Reminders are drafted, approved and",
   "  sent only on the Collections page; never write one in chat or say one was sent.",
+  "- get_collections' total is the Collections page's count of invoices 30 or more days past due;",
+  "  say it that way (Home's past due count also has invoices under 30 days late). rows are only",
+  "  the most overdue: name them as the most overdue, never as all of them.",
 ].join("\n");
 
 // Added to the prompt only while propose_money_code is offered (flags.moneyCodes.enabled), so a
@@ -167,8 +177,8 @@ export const CHECKLIST_RULE = [
   "  \"Propose the advance\" to do, beside the read; next set_checklist with \"Find the driver\"",
   "  done and \"Propose the advance\" doing, beside the propose call; then the answer. Never call",
   "  set_checklist alone or with your final answer: items still doing when you answer are marked",
-  "  done for you, and an item you never marked doing shows as not finished. A one-tool answer",
-  "  needs no checklist.",
+  "  done for you, and an item you never marked doing shows as not finished. If you send only one",
+  "  call in a response, send the read, never set_checklist. A one-tool answer needs no checklist.",
 ].join("\n");
 
 export const CHECKLIST_TOOL = "set_checklist";
@@ -252,6 +262,27 @@ export const ESCALATION_CALL = {
 
 // A model call stops this long before the turn's clock runs out, so the turn can still finish.
 export const CALL_MARGIN_MS = 1_500;
+
+// The least time a Muse Spark call is sent with. The operator's answered calls took 1.7 to 9
+// seconds in production; one sent with a second left only timed out, and a timeout keeps its
+// whole reservation against the cap (src/lib/ai/spend.ts). Under this the turn stops with what it
+// found instead of sending a call that cannot answer.
+export const MIN_MODEL_CALL_MS = 4_000;
+
+// Under this much time for the next call, there is no room for another tool round and then an
+// answer, so the call is asked for the answer itself (ANSWER_NOW_NOTE) and any tool call it makes
+// anyway is not run. A full answer took 4 to 7 seconds in production.
+export const ANSWER_NOW_MS = 10_000;
+
+export const ANSWER_NOW_NOTE =
+  "Time is nearly up. Do not call any tool. Answer the person now from the tool results above, " +
+  "in a few plain lines, and say plainly what you could not check.";
+
+// Told back with a checklist sent alone in a response: that response read nothing, and each one
+// costs the turn a model call on its clock.
+export const CHECKLIST_ALONE_NOTE =
+  "Saved. Your next response calls the tool for the item marked doing, or answers. Do not send " +
+  "set_checklist alone again.";
 
 // Schema failures on one tool before the loop escalates, and the failure that ends the turn.
 export const ESCALATE_AFTER_INVALID = 2;

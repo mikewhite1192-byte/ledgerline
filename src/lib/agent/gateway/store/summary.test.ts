@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { STATE_HEADER } from "../../policy";
-import { assembleSummary, proposalLine, VOICE_NOTE_TEXT, voiceNoteLines } from "./summary";
+import { assembleSummary, priorLine, proposalLine, VOICE_NOTE_TEXT, voiceNoteLines } from "./summary";
 
 describe("assembleSummary", () => {
   it("keeps the sections in order under the header and skips empty ones", () => {
@@ -118,5 +118,15 @@ describe("a card's line in the state summary", () => {
     for (const auditor_concerns of [null, undefined, "[]", "not json", '{"a":1}', '["Pay it now"]']) {
       expect(proposalLine({ ...card, auditor_concerns }, money, true)).toBe(today);
     }
+  });
+});
+
+describe("priorLine", () => {
+  it("names the tools an earlier answer read, codes only, so what it did can be said", () => {
+    expect(priorLine({ seq: 2, summary: "26 invoices are 30 or more days past due.", tools: "get_collections" })).toBe(
+      "- Read get_collections; answered: 26 invoices are 30 or more days past due.",
+    );
+    expect(priorLine({ seq: 1, summary: "Hello.", tools: null })).toBe("- Hello.");
+    expect(priorLine({ seq: 1, summary: "Hi.", tools: "get_loads Bad-Name get_driver" })).toBe("- Read get_loads, get_driver; answered: Hi.");
   });
 });

@@ -64,7 +64,23 @@ function wholeLinesOfLast(sections: readonly SummarySection[], cap: number): str
 
 const DOW = ["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"];
 
-type PriorRow = { seq: number; summary: string };
+type PriorRow = { seq: number; summary: string; tools?: string | null };
+
+// The tools an earlier answer read, by their registry names (codes only), at most four; the
+// checklist is not a read.
+const TOOL_CODE = /^[a-z_]{2,40}$/;
+function readTools(raw: string | null | undefined): string[] {
+  if (!raw) return [];
+  return raw.split(" ").filter((t) => TOOL_CODE.test(t)).slice(0, 4);
+}
+
+// One earlier answer's line: what it read (so "what did you do" has the lookups to say), then
+// its own first words.
+export function priorLine(t: PriorRow): string {
+  const tools = readTools(t.tools);
+  const said = cut(t.summary, 120);
+  return tools.length > 0 ? `- Read ${tools.join(", ")}; answered: ${said}` : `- ${said}`;
+}
 type ProposalRow = {
   id: string;
   kind: string;
@@ -241,15 +257,20 @@ export async function buildStateSummary(
   }
 
   const prior = await q.query<PriorRow>(
-    `SELECT seq, summary FROM turns
-      WHERE conversation_id = CAST($1 AS uuid) AND status <> 'running' AND summary <> ''
-      ORDER BY seq DESC LIMIT 5`,
+    `SELECT t.seq, t.summary,
+            (SELECT string_agg(DISTINCT s.detail->>'tool', ' ')
+               FROM turn_steps s
+              WHERE s.turn_id = t.id AND s.kind = 'tool' AND s.state = 'done'
+                AND s.detail->>'tool' <> 'set_checklist') AS tools
+       FROM turns t
+      WHERE t.conversation_id = CAST($1 AS uuid) AND t.status <> 'running' AND t.summary <> ''
+      ORDER BY t.seq DESC LIMIT 5`,
     [conversationId],
   );
   sections.push({
     title: "Earlier in this conversation",
-    lines: prior.reverse().map((t) => `- ${cut(t.summary, 120)}`),
-    maxChars: 5 * 124 + 40,
+    lines: prior.reverse().map(priorLine),
+    maxChars: 5 * 300 + 40,
   });
 
   const proposals = await q.query<ProposalRow>(

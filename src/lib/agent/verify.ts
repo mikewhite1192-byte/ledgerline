@@ -72,8 +72,8 @@ export const ANSWER_REASONS = {
   cards: "Not every request below is verified yet.",
 } as const;
 
-// The answer's header. Only for an answer that finished (done or partial) and was read with its
-// steps' counts: Verified when every finished model step recorded zero withheld figures (every
+// The answer's header. Only for an answer that finished (done, or partial with a card) and was
+// read with its steps' counts: Verified when every finished model step recorded zero withheld figures (every
 // figure came from a record or from the person's own question) and every card in the turn is
 // Verified; a plain answer with no card reads Verified with its own help. An unknown count is not
 // verified.
@@ -82,6 +82,9 @@ export function answerVerification(
   auditorOn: boolean,
 ): AnswerVerification | null {
   if (turn.status !== "done" && turn.status !== "partial") return null;
+  // A stopped answer with no card is a stop line and what was found so far, not an answer to
+  // call verified (production showed the pill over "I stopped after 0 steps").
+  if (turn.status === "partial" && turn.proposals.length === 0) return null;
   if (turn.withheldFigures === undefined) return null;
   const unverified = (reason: string): AnswerVerification => ({
     state: "unverified",

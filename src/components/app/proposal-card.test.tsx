@@ -739,7 +739,7 @@ describe("ProposalCard in plain words", () => {
   it("says Checked twice once when both checks agree, with no pill and no badge", () => {
     plainCard({ audit: { state: "pass" }, verification: verified });
     expect(screen.getByText("Checked twice")).toBeTruthy();
-    expect(screen.getByText("Your pay rules and a second check agree.")).toBeTruthy();
+    expect(screen.getByText("Your pay rules and a second check of this card agree.")).toBeTruthy();
     expect(screen.queryByText("Verified")).toBeNull();
     expect(screen.queryByText("Second check passed")).toBeNull();
     expect(button("Approve $200.00")).toBeTruthy();
