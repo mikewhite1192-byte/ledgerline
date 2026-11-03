@@ -64,7 +64,11 @@ export async function readAutopilotFacts(q: Queryable, now: Date): Promise<Autop
   const saved = new Map(picture.rules.map((r) => [r.kind, r]));
   const auto = picture.kinds
     .filter((k) => k.mode === "auto" && k.armed && k.allowedAuto)
-    .map((k) => ({ kind: k.kind, maxCents: saved.get(k.kind)?.maxCents ?? k.ceiling?.maxCents ?? 0 }));
+    .flatMap((k) => {
+      // A limit we cannot name is left out, never shown as $0.00.
+      const maxCents = saved.get(k.kind)?.maxCents ?? k.ceiling?.maxCents;
+      return maxCents === undefined || maxCents === null ? [] : [{ kind: k.kind, maxCents }];
+    });
   return {
     on: flags.autopilot.enabled === true && flags.autopilot.armed === true,
     paused: picture.pause.paused,

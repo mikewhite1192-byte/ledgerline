@@ -151,7 +151,7 @@ describe("tourSteps", () => {
     expect(steps.map((s) => s.id)).toEqual(["working", "waiting", "pay_week", "autopilot", "board", "ask"]);
     const unread = steps.flatMap((s) => s.lines.filter((l) => l.unread).map((l) => l.text));
     expect(unread).toEqual([
-      "Could not read this morning's line from the agent.",
+      "Could not read the agent's latest morning line.",
       "Could not read when the desk last checked in.",
       "Could not read everything that is waiting right now.",
       "Could not read this week's paystubs.",

@@ -66,7 +66,7 @@ const line = (text: string): TourLine => ({ text });
 function working(i: TourInput): TourStep {
   const lines: TourLine[] = [];
   const { digest, desk } = i.facts;
-  if (!digest.ok) lines.push(unread("Could not read this morning's line from the agent."));
+  if (!digest.ok) lines.push(unread("Could not read the agent's latest morning line."));
   else if (digest.value !== null) lines.push(line(digest.value));
   if (!desk.ok) lines.push(unread("Could not read when the desk last checked in."));
   else if (desk.value.checkedAt === null) lines.push(line("The desk has not checked in yet."));

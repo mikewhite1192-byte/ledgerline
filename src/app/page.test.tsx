@@ -492,7 +492,7 @@ describe("home, the sign-in walkthrough", () => {
       render(await Home({ searchParams: Promise.resolve({ welcome: "1" }) }));
       const panel = walkthrough()!;
       expect(within(panel).getAllByRole("status").map((s) => s.textContent)).toEqual([
-        "Could not read this morning's line from the agent.",
+        "Could not read the agent's latest morning line.",
         "Could not read when the desk last checked in.",
       ]);
       expect(region("Today")).toBeTruthy();
