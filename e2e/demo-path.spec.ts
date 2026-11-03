@@ -37,6 +37,13 @@ const ADVANCE_QUESTION = "Propose a $100.00 advance for Monique Vasquez (BR-D07)
 // Local answers replay word for word as recorded on the fixture's recordedOn, whatever the run's date.
 const TURN_TIMEOUT = 30_000;
 
+// Where sign-in lands: Home, or Home with the sign-in walkthrough (?welcome=1) while its switch is on.
+// The whole address is compared, never a part of it.
+function isHome(url: URL, baseURL: string | undefined): boolean {
+  const home = new URL("/", baseURL).toString();
+  return url.toString() === home || url.toString() === `${home}?welcome=1`;
+}
+
 // judgeAccess and demoReset are read like the others; the deployed run stays on the admin login,
 // so no step waits on them.
 type Features = { agent: boolean; auditor: boolean; reports: boolean; judgeAccess: boolean; demoReset: boolean };
@@ -140,7 +147,7 @@ test("the demo path: sign in, ask, trace, a proposal card, the models page, sign
     );
     await secretStep({ deployed: DEPLOYED, message: "sign in did not reach the carrier's home", leave }, async () => {
       await page.getByRole("button", { name: "Sign in" }).click();
-      await expect(page).toHaveURL(new URL("/", baseURL).toString());
+      await expect(page).toHaveURL((url) => isHome(url, baseURL));
     });
     await expect(page.getByText(E2E_CARRIER.name).first()).toBeVisible();
   });
