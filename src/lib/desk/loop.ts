@@ -119,7 +119,7 @@ const RELEASE_SQL = `UPDATE desk_loops
 
 // The dispatch walk stops this long before the wake's deadline, so it takes at most half of the
 // 20 second slice (flags.deskLoop.limits.sliceMs) and leaves the other half to the handlers, whose
-// common kinds need 5 to 8 seconds each (needsMs in handlers.ts).
+// common kinds need 5 to 15 seconds each (needsMs in handlers.ts).
 export const TMS_SYNC_MARGIN_MS = 10_000;
 
 // clock: the wake's own clock, so the walk's deadline reads the same time as the wake's.

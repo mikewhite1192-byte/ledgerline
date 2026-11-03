@@ -15,6 +15,7 @@ import { writeDigest, type CompleteFn } from "../digest/write";
 import { handOffMessage, sortMessage } from "../inbound/pipeline";
 import { moveFromDocument, moveFromMessage, moveFromTmsEvent, type MessageTable, type MoveOutcome } from "../loads/movement";
 import { advanceCardCheck, startCardCheck, statementVerdict } from "../recon/run";
+import { MIN_WONDER_MS } from "../sweep/fanout/run";
 import { advanceSweep, startSweep } from "../sweep/run";
 import { assertMembership } from "../tenant/context";
 import { prepareVoiceNote } from "../voice/pipeline";
@@ -186,9 +187,11 @@ export function deskHandlers(deps: HandlerDeps = {}): Handlers {
 
   // The pay sweep for the carrier's day: start (the schedule trigger returns the day's earlier run),
   // then advance until the deadline; still open, carried on by the next wake with its run id.
+  // needsMs: the second opinion's model calls start only with MIN_WONDER_MS left, so a wake with
+  // less would spend a carry for no progress.
   const sweep: Handler = {
     switchOn: () => flags.sweepEnabled === true,
-    needsMs: 8_000,
+    needsMs: MIN_WONDER_MS,
     async run(session, event, ctx) {
       let runId = event.state === "carried" ? event.runId : null;
       if (!runId) {

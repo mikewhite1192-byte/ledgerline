@@ -908,7 +908,7 @@ describe("flags", () => {
       planCents: 30,
       reconcileCents: 40,
       childTimeoutMs: 19_000,
-      tenantDayCents: 1_500,
+      tenantDayCents: 1_000,
       runsPerTenantDay: 3,
       runCapCents: 500,
     });

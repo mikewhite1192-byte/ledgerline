@@ -64,7 +64,7 @@ export type ChildInput = {
   brief: string | null;
   limits: FanoutLimits;
   startedAt: number;
-  // Nothing new starts after this (the slice's own deadline or the child's 15 s, whichever is first).
+  // Nothing new starts after this (the slice's own deadline or the child's childTimeoutMs, whichever is first).
   deadlineAt: number;
 };
 
