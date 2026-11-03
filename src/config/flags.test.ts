@@ -144,6 +144,9 @@ const RELEASED_ON = [
   // Released by the owner (D-071, D-094, 2026-11-02): the owner sets the autopilot rules and the
   // pause from the app. It changes only the owner's rules and their record, and moves no money.
   "autopilotRules.enabled",
+  // Released by the owner (D-071, D-097, 2026-11-03): the live feed of every money step. It reads
+  // only and moves no money.
+  "activityFeed.enabled",
 ] as const;
 
 // What stays off, each waiting on a missing piece or an outside send the owner has not released.
@@ -159,8 +162,6 @@ const KEPT_OFF = [
   "factoring.requirePacket",
   // The eval script spends model cents on the developer's ledger; the owner turns it on in its own PR.
   "evalRun.enabled",
-  // Read only, but a new page, menu item and Home card: the owner turns it on in its own PR.
-  "activityFeed.enabled",
 ] as const;
 
 // The on/off switches in flags.ts, by path: every top-level boolean and every boolean inside a
@@ -404,8 +405,8 @@ describe("flags", () => {
     expect(LOCAL_OFF_ONLY as readonly string[]).toContain("morningDigest.enabled");
   });
 
-  it("ships the live feed off, refreshing every 15 seconds, 50 lines a page, off for the local demo run", () => {
-    expect(flags.activityFeed).toEqual({ enabled: false, pollSeconds: 15, pageSize: 50 });
+  it("ships the live feed on, refreshing every 15 seconds, 50 lines a page, off for the local demo run", () => {
+    expect(flags.activityFeed).toEqual({ enabled: true, pollSeconds: 15, pageSize: 50 });
     // Listed ahead of its release, so the demo-path run keeps it off once it ships on.
     expect(LOCAL_OFF_ONLY as readonly string[]).toContain("activityFeed.enabled");
   });

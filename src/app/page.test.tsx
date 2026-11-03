@@ -141,6 +141,8 @@ beforeEach(() => {
   for (const k of SWITCHES) flags[k] = true;
   for (const k of OFF) flags[k] = false;
   flags.verification = { ...savedVerification, enabled: false };
+  // The live feed card has its own test below, which turns it on.
+  flags.activityFeed.enabled = false;
   mocks.withRequestTenant.mockImplementation((fn: (q: Queryable, s: Session) => unknown) => fn(q, SESSION));
   mocks.readNextWeekStart.mockImplementation(async (_q: Queryable, now: Date) =>
     nextWeekStart(now, "America/New_York", 1),
