@@ -17,8 +17,8 @@ import { isLocalDate, type LocalDate } from "../time/local-date";
 import { postRecordExpense, recordReconcileHooks } from "./records";
 
 // The books step (D-104): every money movement records to the QuickBooks sandbox by itself. Each
-// desk wake runs it first, under the carrier's service login, inside a time budget taken from the
-// front of the wake's slice. It posts what is still missing, oldest first: a paid paystub's bill
+// armed desk wake runs it first, under the carrier's service login, inside a time budget taken from
+// the front of the wake's slice. It posts what is still missing, oldest first: a paid paystub's bill
 // and bill payment, a paid advance's expense, an issued money code and a released escrow balance
 // (each behind its kinds switch), an invoice the queue made, and a payment a person recorded once
 // every invoice it pays is in QuickBooks. A definite failure is tried again as the next attempt

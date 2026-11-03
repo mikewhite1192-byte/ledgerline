@@ -235,7 +235,6 @@ describe("Home's books row (D-104)", () => {
   const stuck = (over: Partial<BooksStuckRow> = {}): BooksStuckRow => ({
     kind: "advance_expense",
     subjectId: SUB,
-    counterpartyId: DRIVER,
     state: "failed",
     attempt: 3,
     failureCategory: "validation",
@@ -266,13 +265,14 @@ describe("Home's books row (D-104)", () => {
   });
 
   it("links each kind to the page that shows it", () => {
-    const at = (kind: BooksStuckRow["kind"]) => booksHref({ kind, subjectId: SUB, counterpartyId: DRIVER });
+    const at = (kind: BooksStuckRow["kind"]) => booksHref({ kind, subjectId: SUB });
     expect(at("settlement_bill")).toBe(`/records/settlements/${SUB}`);
     expect(at("settlement_bill_payment")).toBe(`/records/settlements/${SUB}`);
     expect(at("invoice")).toBe(`/records/invoices/${SUB}`);
     expect(at("customer_payment")).toBe(`/records/customer_payments/${SUB}`);
     expect(at("money_code_expense")).toBe(`/money-codes/${SUB}`);
-    expect(at("escrow_release_expense")).toBe(`/records/drivers/${DRIVER}`);
+    // No page shows an escrow release's post, so Home links none.
+    expect(at("escrow_release_expense")).toBeNull();
     expect(at("advance_payout")).toBeNull();
   });
 
@@ -285,7 +285,6 @@ describe("Home's books row (D-104)", () => {
           {
             kind: "settlement_bill",
             subject_id: SUB,
-            counterparty_id: DRIVER,
             state: "failed",
             attempt: "3",
             failure_category: "validation",

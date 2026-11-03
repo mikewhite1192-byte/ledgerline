@@ -1013,21 +1013,23 @@ export type Flags = {
   // Presentation only; /models keeps every figure. Off, the trace and the card render as before.
   plainTrace: { enabled: boolean };
   // Books by themselves (D-104, src/lib/books/pending.ts): every money movement records to the
-  // QuickBooks sandbox with no button. Each desk wake (POST /api/internal/desk) first runs one
-  // bounded step under the carrier's service login: it posts what is still missing (a paid
-  // paystub's bill and bill payment, a paid advance's expense, a queue-made invoice, a payment a
-  // person recorded, and, each behind its own kinds switch, an issued money code and a released
-  // escrow balance), retries a definite failure as the next attempt after a ten-minute wait, then
-  // reads back what is still unknown. Each send reserves its ledger row first, through the same
-  // executor and adapter as before, so accountingEnabled and the adapter's own checks still hold.
-  // Only records dated on or after startDate (YYYY-MM-DD, the carrier's zone) are posted; older
-  // history goes through the backfill script, never the step. perWake: at most this many records a
-  // wake. wakeBudgetMs: the step's share of the wake's time, taken from the front of the same
-  // slice, so the desk keeps the rest. maxAttempts: after this many definite failures a record
-  // stops retrying and reads "Needs a person" on its page and in Home's Needs you. kinds: the
-  // money codes and escrow posts (moneyCodes, escrow), and the money-in records still to come
-  // (pullbacks, factoring), each off until the owner turns it on. Off, nothing new posts and the
-  // record pages say a record is not in QuickBooks yet; the old buttons are gone either way.
+  // QuickBooks sandbox with no button. Each armed desk wake (POST /api/internal/desk; an unarmed
+  // wake runs nothing) first runs one bounded step under the carrier's service login: it posts what
+  // is still missing (a paid paystub's bill and bill payment, a paid advance's expense, a
+  // queue-made invoice, a payment a person recorded, and, each behind its own kinds switch, an
+  // issued money code and a released escrow balance), retries a definite failure as the next
+  // attempt after a ten-minute wait, then reads back what is still unknown. Each send reserves its
+  // ledger row first, through the same executor and adapter as before, so accountingEnabled and the
+  // adapter's own checks still hold. Only records dated on or after startDate (YYYY-MM-DD, the
+  // carrier's zone) are posted; older history goes through the backfill script, never the step.
+  // perWake: at most this many records a wake. wakeBudgetMs: the step's share of the wake's time,
+  // taken from the front of the same slice, so the desk keeps the rest; it leaves room past the
+  // step's 3-second floor (BOOKS_MIN_LEFT_MS) for perWake posts and one read-back. maxAttempts:
+  // after this many definite failures a record stops retrying and reads "Needs a person" on its
+  // page and in Home's Needs you. kinds: the money codes and escrow posts (moneyCodes, escrow), and
+  // the money-in records still to come (pullbacks, factoring), each off until the owner turns it
+  // on. Off, nothing new posts and the record pages say a record is not in QuickBooks yet; the old
+  // buttons are gone either way.
   books: {
     enabled: boolean;
     startDate: string;
@@ -1360,7 +1362,7 @@ export const flags: Flags = {
     enabled: false,
     startDate: "2026-11-04",
     perWake: 3,
-    wakeBudgetMs: 4_000,
+    wakeBudgetMs: 9_000,
     maxAttempts: 3,
     kinds: { moneyCodes: false, escrow: false, pullbacks: false, factoring: false },
   },

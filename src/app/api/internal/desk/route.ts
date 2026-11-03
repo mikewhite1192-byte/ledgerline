@@ -14,8 +14,9 @@ import { failed, objectBody, refused, reply } from "../../sweeps/reply";
 // wakeId? }. One call is one slice of the carrier's desk loop; the answer's status says "more"
 // while work is left. It never reads a person's session: the key is the only way in, and every
 // write runs as the carrier's sweep login (0018), which can draft but never approve. The switch is
-// read before the key, so a switched-off loop never reads Secrets Manager. Before the wake, the
-// books step posts what is still missing in QuickBooks (src/lib/books/pending.ts).
+// read before the key, so a switched-off loop never reads Secrets Manager. Before an armed wake,
+// the books step posts what is still missing in QuickBooks (src/lib/books/pending.ts); a wake that
+// is not armed runs nothing, the books step included.
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
 export const maxDuration = 30;
@@ -54,20 +55,23 @@ export async function POST(request: Request) {
     if (!session) return refused("not_found");
     // The wake's deadline is fixed first; the books step (D-104) takes its share from the front of
     // the same slice, so the desk never runs past it. The step checks its own switch, counts and
-    // logs itself, and a failure there never stops the wake.
+    // logs itself, and a failure there never stops the wake. Only on an armed loop: unarmed, the
+    // wake writes "would hand on" lines and nothing posts.
     const deadlineMs = Date.now() + flags.deskLoop.limits.sliceMs;
-    try {
-      await postPendingBooks(
-        session,
-        {
-          deadlineMs: Math.min(Date.now() + flags.books.wakeBudgetMs, deadlineMs),
-          maxItems: flags.books.perWake,
-          since: flags.books.startDate,
-        },
-        { db },
-      );
-    } catch (err) {
-      console.error("books step did not finish:", err instanceof Error ? err.name : "unknown");
+    if (flags.deskLoop.armed === true) {
+      try {
+        await postPendingBooks(
+          session,
+          {
+            deadlineMs: Math.min(Date.now() + flags.books.wakeBudgetMs, deadlineMs),
+            maxItems: flags.books.perWake,
+            since: flags.books.startDate,
+          },
+          { db },
+        );
+      } catch (err) {
+        console.error("books step did not finish:", err instanceof Error ? err.name : "unknown");
+      }
     }
     const result = await wakeDesk(session, { wakeId, by: "schedule", deadlineMs }, { db });
     if (!result.ok) {

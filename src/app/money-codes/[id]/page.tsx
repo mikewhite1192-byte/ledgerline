@@ -13,7 +13,7 @@ import { Card, CardBody, CardDescription, CardHeader, CardTitle } from "@/compon
 import { InlineAlert } from "@/components/ui/inline-alert";
 import { flags } from "@/config/flags";
 import { outsideTail } from "@/lib/advances/read";
-import { booksStatus, latestByKind } from "@/lib/books/status";
+import { atOrAfterBooksStart, booksStatus, latestByKind } from "@/lib/books/status";
 import { formatInstant } from "@/lib/format/dates";
 import { readMoneyCode, type MoneyCodeDetail } from "@/lib/money-codes/read";
 import { moneyCodesOn } from "@/lib/money-codes/switches";
@@ -109,10 +109,13 @@ export default async function MoneyCodePage({ params }: { params: Promise<{ id: 
     createdAt: a.createdAt,
     settledAt: a.settledAt,
   }));
-  // Where the issued code stands in QuickBooks (D-104): shown once its kind posts by itself, or
-  // once a post was made.
+  // Where the issued code stands in QuickBooks (D-104): shown once its kind posts by itself (a code
+  // issued on or after the books start date), or once a post was made.
   const bookRows = detail.books ?? [];
-  const booksOn = flags.books.enabled === true && flags.books.kinds.moneyCodes === true;
+  const booksOn =
+    flags.books.enabled === true &&
+    flags.books.kinds.moneyCodes === true &&
+    atOrAfterBooksStart(code.issuedAt, zone, flags.books.startDate);
   const books =
     code.status === "issued" && (booksOn || bookRows.length > 0)
       ? booksStatus(bookRows, ["money_code_expense"], {

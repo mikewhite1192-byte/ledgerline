@@ -44,6 +44,7 @@ vi.mock("@/lib/sweep/internal-key", async (importOriginal) => ({
 }));
 
 const saved = flags.deskLoop.enabled;
+const savedArmed = flags.deskLoop.armed;
 
 function post(path: string, body: unknown, headers: Record<string, string> = {}) {
   return new Request(`https://app.example${path}`, {
@@ -55,6 +56,7 @@ function post(path: string, body: unknown, headers: Record<string, string> = {})
 
 beforeEach(() => {
   flags.deskLoop.enabled = true;
+  flags.deskLoop.armed = true;
   mocks.getSession.mockResolvedValue(SESSION);
   mocks.serviceSession.mockResolvedValue(SERVICE);
   mocks.internalKey.mockResolvedValue(KEY);
@@ -68,6 +70,7 @@ beforeEach(() => {
 
 afterEach(() => {
   flags.deskLoop.enabled = saved;
+  flags.deskLoop.armed = savedArmed;
   vi.clearAllMocks();
   vi.restoreAllMocks();
 });
@@ -127,6 +130,13 @@ describe("POST /api/internal/desk", () => {
     flags.deskLoop.enabled = false;
     await call({ action: "wake", tenantId: TENANT, wakeId: WAKE });
     expect(mocks.postPendingBooks).not.toHaveBeenCalled();
+  });
+
+  it("runs no books step on a wake that is not armed, and still wakes the desk", async () => {
+    flags.deskLoop.armed = false;
+    expect((await call({ action: "wake", tenantId: TENANT, wakeId: WAKE })).status).toBe(200);
+    expect(mocks.postPendingBooks).not.toHaveBeenCalled();
+    expect(mocks.wakeDesk).toHaveBeenCalledTimes(1);
   });
 
   it("names a fresh wake when the kicker sends none, and answers busy and more as 200", async () => {

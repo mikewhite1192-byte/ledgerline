@@ -169,7 +169,6 @@ export function pastDueRow(rows: readonly InvoiceListRow[]): NeedsYouRow | null 
 export type BooksStuckRow = {
   kind: MoneyActionKind;
   subjectId: string;
-  counterpartyId: string;
   state: "failed" | "unknown";
   attempt: number;
   failureCategory: string | null;
@@ -180,9 +179,9 @@ export type BooksStuckRow = {
 // How many stuck records the read returns at most.
 export const BOOKS_LIMIT = 50;
 
-// Where a stuck record is shown, by its ledger kind. An escrow release has no page of its own: its
-// driver's page lists it.
-export function booksHref(r: Pick<BooksStuckRow, "kind" | "subjectId" | "counterpartyId">): string | null {
+// Where a stuck record is shown, by its ledger kind. No page shows an escrow release or its post
+// yet, so one is not linked or counted here (its kind stays off, books.kinds.escrow).
+export function booksHref(r: Pick<BooksStuckRow, "kind" | "subjectId">): string | null {
   switch (r.kind) {
     case "settlement_bill":
     case "settlement_bill_payment":
@@ -195,8 +194,6 @@ export function booksHref(r: Pick<BooksStuckRow, "kind" | "subjectId" | "counter
       return `/records/customer_payments/${r.subjectId}`;
     case "money_code_expense":
       return `/money-codes/${r.subjectId}`;
-    case "escrow_release_expense":
-      return `/records/drivers/${r.counterpartyId}`;
     default:
       return null;
   }
@@ -229,7 +226,6 @@ export function booksRow(
 type StuckRead = {
   kind: string;
   subject_id: string;
-  counterparty_id: string;
   state: string;
   attempt: number | string;
   failure_category: string | null;
@@ -241,13 +237,13 @@ type StuckRead = {
 async function readBooks(q: Queryable, maxAttempts: number): Promise<NeedsYouRow | null> {
   const rows = await q.query<StuckRead>(
     `WITH latest AS (
-       SELECT DISTINCT ON (kind, subject_id) kind, subject_id, counterparty_id, state, attempt,
-              failure_category, check_count, amount_cents, created_at
+       SELECT DISTINCT ON (kind, subject_id) kind, subject_id, state, attempt, failure_category,
+              check_count, amount_cents, created_at
          FROM money_actions
         WHERE tenant_id = current_tenant_id() AND channel = 'accounting'
         ORDER BY kind, subject_id, attempt DESC, created_at DESC
      )
-     SELECT kind, subject_id, counterparty_id, state, attempt, failure_category, check_count, amount_cents
+     SELECT kind, subject_id, state, attempt, failure_category, check_count, amount_cents
        FROM latest
       WHERE (state = 'failed' AND (failure_category = 'amount_mismatch' OR attempt >= $1))
          OR (state = 'unknown' AND check_count >= $2)
@@ -259,7 +255,6 @@ async function readBooks(q: Queryable, maxAttempts: number): Promise<NeedsYouRow
     rows.map((r) => ({
       kind: r.kind as MoneyActionKind,
       subjectId: r.subject_id,
-      counterpartyId: r.counterparty_id,
       state: r.state === "unknown" ? "unknown" : "failed",
       attempt: Number(r.attempt),
       failureCategory: r.failure_category,

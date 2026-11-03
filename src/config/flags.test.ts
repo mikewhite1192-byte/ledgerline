@@ -474,13 +474,16 @@ describe("flags", () => {
       enabled: false,
       startDate: "2026-11-04",
       perWake: 3,
-      wakeBudgetMs: 4_000,
+      wakeBudgetMs: 9_000,
       maxAttempts: 3,
       kinds: { moneyCodes: false, escrow: false, pullbacks: false, factoring: false },
     });
     expect(isLocalDate(flags.books.startDate)).toBe(true);
     // The step's share stays well inside the desk's slice, so the wake keeps most of its time.
     expect(flags.books.wakeBudgetMs).toBeLessThan(flags.deskLoop.limits.sliceMs / 2);
+    // And past the step's own 3-second floor (BOOKS_MIN_LEFT_MS) by more than that floor again, so
+    // a wake has time for its posts and a read-back.
+    expect(flags.books.wakeBudgetMs).toBeGreaterThan(2 * 3_000);
     expect(LOCAL_OFF_ONLY as readonly string[]).toContain("books.enabled");
   });
 

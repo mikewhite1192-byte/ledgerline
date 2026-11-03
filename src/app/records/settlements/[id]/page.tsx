@@ -16,7 +16,7 @@ import { Badge } from "@/components/ui/badge";
 import { InlineAlert } from "@/components/ui/inline-alert";
 import { readEngineProposalViews } from "@/lib/agent/gateway/store";
 import { outsideTail } from "@/lib/advances/read";
-import { booksStatus, latestByKind } from "@/lib/books/status";
+import { atOrAfterBooksStart, booksStatus, latestByKind } from "@/lib/books/status";
 import type { Queryable } from "@/lib/db";
 import { formatInstant } from "@/lib/format/dates";
 import { codeToWords } from "@/lib/format/labels";
@@ -63,12 +63,12 @@ export default async function SettlementRecord({ params }: { params: Promise<{ i
   const s = view.settlement;
   const tz = page.shell.timezone;
   const payout = view.latest.settlement_payout;
-  // A paid paystub's bill and its payment post to QuickBooks by themselves (D-104): the page only
-  // says where they stand.
+  // A paid paystub's bill and its payment post to QuickBooks by themselves (D-104), when paid on or
+  // after the books start date: the page only says where they stand.
   const books =
     s.status === "paid" && s.netCents > 0
       ? booksStatus(view.legs, ["settlement_bill", "settlement_bill_payment"], {
-          on: flags.books.enabled,
+          on: flags.books.enabled && atOrAfterBooksStart(s.paidAt, tz, flags.books.startDate),
           maxAttempts: flags.books.maxAttempts,
           tail: outsideTail(latestByKind(view.legs, "settlement_bill")?.outsideId ?? null),
         })

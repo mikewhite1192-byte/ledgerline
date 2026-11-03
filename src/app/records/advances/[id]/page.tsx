@@ -19,7 +19,7 @@ import { decisionNoteSentence, refusalSentence } from "@/lib/advances/reasons";
 import { sourceWords } from "@/lib/advances/request";
 import { takebackReasonWords } from "@/lib/advances/takeback-words";
 import { advancesOn } from "@/lib/advances/switches";
-import { booksStatus, latestByKind } from "@/lib/books/status";
+import { atOrAfterBooksStart, booksStatus, latestByKind } from "@/lib/books/status";
 import { pullbackOn } from "@/lib/pullbacks/switches";
 import { PULL_APPROVE_NOTICES } from "@/lib/pullbacks/words";
 import { formatInstant, formatLocalDate } from "@/lib/format/dates";
@@ -141,10 +141,13 @@ export default async function AdvanceRecordPage({ params }: { params: Promise<{ 
       />
       <RecordActionButtons advanceId={advance.id} actions={actions} />
       {advance.status === "paid" ? (
-        // A paid advance's expense posts to QuickBooks by itself (D-104); this says where it stands.
+        // A paid advance's expense posts to QuickBooks by itself (D-104), when paid on or after the
+        // books start date; this says where it stands.
         <BooksStatusLine
           line={booksStatus(ledger, ["advance_expense"], {
-            on: flags.books.enabled,
+            on:
+              flags.books.enabled &&
+              atOrAfterBooksStart(advance.paidAt, shell.timezone, flags.books.startDate),
             maxAttempts: flags.books.maxAttempts,
             tail: latestByKind(ledger, "advance_expense")?.outsideTail ?? null,
           })}

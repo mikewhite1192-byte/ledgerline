@@ -1,6 +1,14 @@
 import { describe, expect, it } from "vitest";
 import { MAX_CHECKS } from "../money/types";
-import { booksStatus, latestByKind, needsPerson, needsPersonReason, type BooksRow } from "./status";
+import {
+  atOrAfterBooksStart,
+  booksStatus,
+  latestByKind,
+  needsPerson,
+  needsPersonReason,
+  onOrAfterBooksStart,
+  type BooksRow,
+} from "./status";
 
 // The QuickBooks line a record page shows, from its ledger rows alone (D-104).
 
@@ -68,5 +76,17 @@ describe("books status line", () => {
       "QuickBooks did not take it after 3 tries",
     );
     expect(needsPerson(row({ state: "failed", failureCategory: "timeout", attempt: 2 }), 3)).toBe(false);
+  });
+
+  it("says the step reaches a record only from the books start date, in the carrier's zone", () => {
+    expect(onOrAfterBooksStart("2026-11-04", "2026-11-04")).toBe(true);
+    expect(onOrAfterBooksStart("2026-11-03", "2026-11-04")).toBe(false);
+    expect(onOrAfterBooksStart(null, "2026-11-04")).toBe(false);
+    expect(onOrAfterBooksStart("2026-11-4", "2026-11-04")).toBe(false);
+    // 03:30 UTC on Nov 4 is still Nov 3 in Chicago.
+    expect(atOrAfterBooksStart("2026-11-04T03:30:00.000Z", "America/Chicago", "2026-11-04")).toBe(false);
+    expect(atOrAfterBooksStart("2026-11-04T07:00:00.000Z", "America/Chicago", "2026-11-04")).toBe(true);
+    expect(atOrAfterBooksStart(null, "America/Chicago", "2026-11-04")).toBe(false);
+    expect(atOrAfterBooksStart("not a time", "America/Chicago", "2026-11-04")).toBe(false);
   });
 });

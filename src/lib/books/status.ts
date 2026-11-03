@@ -1,4 +1,5 @@
 import { MAX_CHECKS, type MoneyAction, type MoneyActionKind } from "../money/types";
+import { isLocalDate, localDateOf } from "../time/local-date";
 
 // Where one record stands in QuickBooks, in plain words, from its ledger rows alone (D-104). The
 // books step posts every money movement by itself and tries again after a failure; a person is
@@ -44,6 +45,24 @@ export function needsPerson(a: BooksRow, maxAttempts: number): boolean {
 export function needsPersonReason(a: BooksRow, maxAttempts: number): string {
   if (a.state === "unknown") return "we could not confirm it in QuickBooks";
   return REASONS[a.failureCategory ?? ""] ?? `QuickBooks did not take it after ${maxAttempts} tries`;
+}
+
+// Whether the books step reaches a record of this date: it posts nothing dated before
+// books.startDate (only the backfill does), so a record page says "Posting by itself" only from
+// then on. day: the record's own date (an invoice's issue day, a payment's day received); at: an
+// instant, read as a date in the carrier's zone, as the step reads it. A date that cannot be read
+// counts as before.
+export function onOrAfterBooksStart(day: string | null, startDate: string): boolean {
+  return isLocalDate(day) && day >= startDate;
+}
+
+export function atOrAfterBooksStart(at: string | null, zone: string, startDate: string): boolean {
+  if (at === null) return false;
+  try {
+    return onOrAfterBooksStart(localDateOf(at, zone), startDate);
+  } catch {
+    return false;
+  }
 }
 
 // kinds: the record's books kinds in order (a paystub's bill, then its payment). inBooks: the

@@ -13,7 +13,7 @@ import { ReviewCard } from "@/components/invoices/review-card";
 import { readFactoredLine } from "@/lib/factoring/read";
 import { factoringOn } from "@/lib/factoring/switches";
 import { dayOf, requestStatusWords } from "@/lib/factoring/words";
-import { booksStatus } from "@/lib/books/status";
+import { booksStatus, onOrAfterBooksStart } from "@/lib/books/status";
 import { datedBeforeInvoicesStart } from "@/lib/invoices/post";
 import { flags } from "@/config/flags";
 import { invoiceRecordActions, readInvoiceRecordPage } from "@/lib/invoices/record-page";
@@ -45,7 +45,8 @@ export default async function InvoiceRecord({ params }: { params: Promise<{ id: 
   const review = page.record.review;
   const actions = invoiceRecordActions(page.record);
   const factored = page.record.factored;
-  // "Posting by itself" only for an invoice the step posts; older ones wait for the backfill.
+  // "Posting by itself" only for an invoice the step posts (dated on or after both start dates);
+  // older ones wait for the backfill.
   const booksText = booksStatus(
     inv.ledger.map((r) => ({ ...r, kind: "invoice" as const })),
     ["invoice"],
@@ -54,7 +55,8 @@ export default async function InvoiceRecord({ params }: { params: Promise<{ id: 
         flags.books.enabled &&
         page.record.queueMade &&
         inv.status !== "void" &&
-        !datedBeforeInvoicesStart(inv.issuedOn),
+        !datedBeforeInvoicesStart(inv.issuedOn) &&
+        onOrAfterBooksStart(inv.issuedOn, flags.books.startDate),
       maxAttempts: flags.books.maxAttempts,
       inBooks: inv.qboTail !== null,
       tail: inv.qboTail,

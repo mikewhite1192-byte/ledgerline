@@ -8,7 +8,7 @@ import { Card, CardBody } from "@/components/ui/card";
 import { Day, Facts, RecordLink } from "@/components/invoices/cells";
 import { CheckButton } from "@/components/invoices/check-button";
 import { LedgerTable } from "@/components/invoices/ledger-table";
-import { booksStatus } from "@/lib/books/status";
+import { booksStatus, onOrAfterBooksStart } from "@/lib/books/status";
 import { readPaymentRecord } from "@/lib/invoices/views";
 import { readRecordPage } from "../../read-record";
 
@@ -38,7 +38,11 @@ export default async function PaymentRecord({ params }: { params: Promise<{ id: 
     p.ledger.map((r) => ({ ...r, kind: "customer_payment" as const })),
     ["customer_payment"],
     {
-      on: flags.books.enabled && p.source === "ui" && p.invoicesPosted,
+      on:
+        flags.books.enabled &&
+        p.source === "ui" &&
+        p.invoicesPosted &&
+        onOrAfterBooksStart(p.receivedOn, flags.books.startDate),
       maxAttempts: flags.books.maxAttempts,
       inBooks: p.qboTail !== null,
       tail: p.qboTail,
