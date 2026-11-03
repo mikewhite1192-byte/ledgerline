@@ -35,6 +35,7 @@ const mocks = vi.hoisted(() => ({
   readInvoiceList: vi.fn(),
   readCashHome: vi.fn(),
   readPaystubAsk: vi.fn(),
+  readFeed: vi.fn(),
 }));
 
 vi.mock("@/lib/tenant/context", async (importOriginal) => ({
@@ -75,6 +76,10 @@ vi.mock("@/components/agent/agent-launcher", () => ({
       <p data-testid="suggestions">{suggestions.map((x) => x.id).join(" ")}</p>
     </>
   ),
+}));
+vi.mock("@/lib/feed/read", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("@/lib/feed/read")>()),
+  readFeed: mocks.readFeed,
 }));
 vi.mock("./ai-proof-form", () => ({ AiProofForm: () => null }));
 // Home's own reads have their own database tests; here only what the page does with what they return.
@@ -127,6 +132,7 @@ const WEEKS = [
   { start: "2026-11-02", end: "2026-11-08", inCents: 0, outCents: 98_765 },
 ];
 const savedVerification = flags.verification;
+const savedFeed = flags.activityFeed.enabled;
 
 beforeEach(() => {
   // Tuesday Nov 10, 2026, after the week of Nov 9 has begun.
@@ -154,6 +160,7 @@ afterEach(() => {
   vi.useRealTimers();
   for (const k of [...SWITCHES, ...OFF]) flags[k] = saved[k];
   flags.verification = savedVerification;
+  flags.activityFeed.enabled = savedFeed;
   vi.clearAllMocks();
 });
 
@@ -371,5 +378,48 @@ describe("home's order and cards", () => {
     expect(screen.getByRole("heading", { name: "This pay week" })).toBeTruthy();
     const shortcuts = within(screen.getByRole("list", { name: "Shortcuts" })).getAllByRole("link");
     expect(shortcuts.map((l) => l.textContent)).not.toContain("Run payday");
+    expect(screen.queryByRole("region", { name: "Live feed" })).toBeNull();
+    expect(mocks.readFeed).not.toHaveBeenCalled();
+  });
+
+  it("shows the live feed's newest lines in the carrier's zone while it is on, and says so when they cannot be read", async () => {
+    flags.activityFeed.enabled = true;
+    mocks.readFeed.mockResolvedValue({
+      rows: [
+        {
+          key: "desk:0f0e0d0c-0b0a-4908-8706-050403020100",
+          at: "2026-11-10T14:00:00.000000Z",
+          event: "desk_claimed",
+          actor: "desk",
+          cents: null,
+          direction: null,
+          title: null,
+          kind: "card_transaction",
+          code: null,
+          reason: null,
+          count: null,
+          limitCents: null,
+          dayLimitCents: null,
+          until: null,
+          channel: null,
+          system: null,
+          once: false,
+          record: null,
+        },
+      ],
+      next: null,
+    });
+    render(await Home({ searchParams: Promise.resolve({}) }));
+    expect(mocks.readFeed).toHaveBeenCalledWith(expect.anything(), { limit: 3 });
+    const feed = region("Live feed");
+    expect(within(feed).getByText("Desk picked up a card transaction")).toBeTruthy();
+    expect(within(feed).getByText("Nov 10, 2026, 9:00 AM EST")).toBeTruthy();
+    expect(within(feed).getByRole("link", { name: "Open the live feed" }).getAttribute("href")).toBe("/activity");
+    cleanup();
+
+    mocks.readFeed.mockRejectedValue(new DbError("timeout"));
+    render(await Home({ searchParams: Promise.resolve({}) }));
+    expect(within(region("Live feed")).getByText("Could not read the feed. Nothing changed.")).toBeTruthy();
+    expect(region("Today")).toBeTruthy();
   });
 });

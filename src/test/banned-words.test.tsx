@@ -69,6 +69,7 @@ import {
 } from "@/lib/collections/words";
 import type { BreakView } from "@/lib/data/card-recon";
 import { DbError, type Queryable } from "@/lib/db";
+import type { FeedRow } from "@/lib/feed/read";
 import type { InvoiceReviewView } from "@/lib/invoices/review-read";
 import * as factoringWords from "@/lib/factoring/words";
 import { TERMS } from "@/lib/format/terms";
@@ -554,6 +555,11 @@ vi.mock("@/lib/records/views", async (importOriginal) => ({
   readExtraChargeLoadId: async () => get("extraChargeLoadId"),
 }));
 vi.mock("@/lib/help/hero-link", () => ({ readHeroLink: async () => get("heroLink") }));
+vi.mock("@/lib/feed/read", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("@/lib/feed/read")>()),
+  readFeed: async () => get("feed"),
+  readFeedHeader: async () => get("feedHeader"),
+}));
 
 function defaults(): Record<string, unknown> {
   return {
@@ -682,6 +688,60 @@ async function autopilotPage(role: "admin" | "staff" = "admin"): Promise<ReactNo
   } finally {
     flags.autopilotRules = savedSwitch;
     q.query = real;
+  }
+}
+
+// The live feed with its switch on: a line of each kind, in words.
+const FEED_ID = "0f0e0d0c-0b0a-4908-8706-050403020100";
+const feedRow = (minute: number, over: Partial<FeedRow>): FeedRow => ({
+  key: `proposal:${FEED_ID}:${String.fromCharCode(97 + minute)}`,
+  at: `2026-11-02T16:${String(minute).padStart(2, "0")}:00.000000Z`,
+  event: "proposal_proposed",
+  actor: "agent",
+  cents: null,
+  direction: null,
+  title: null,
+  kind: null,
+  code: null,
+  reason: null,
+  count: null,
+  limitCents: null,
+  dayLimitCents: null,
+  until: null,
+  channel: null,
+  system: null,
+  once: false,
+  record: null,
+  ...over,
+});
+const FEED_ROWS: FeedRow[] = [
+  feedRow(20, { event: "batch_finished", actor: "admin", kind: "settlements", count: 4, code: "partial" }),
+  feedRow(19, { event: "batch_started", actor: "admin", kind: "settlements", count: 4, cents: 812_345 }),
+  feedRow(18, { event: "autopilot_rule", actor: "admin", kind: "advance_payout", code: "auto", limitCents: 20_000, dayLimitCents: 100_000 }),
+  feedRow(17, { event: "autopilot_pause", actor: "admin", until: "2026-11-02T20:00:00Z" }),
+  feedRow(16, { event: "autopilot_resume", actor: "staff" }),
+  feedRow(15, { event: "money_settled", actor: "autopilot", kind: "advance_payout", code: "failed", reason: "declined", cents: 12_500, channel: "payment", system: "fuel_card_sim" }),
+  feedRow(14, { event: "money_settled", actor: "admin", kind: "invoice", code: "confirmed", once: true, cents: 90_000, channel: "accounting", system: "qbo_sandbox" }),
+  feedRow(13, { event: "money_sent", actor: "admin", kind: "card_pullback", code: "unknown", cents: 4_000, channel: "payment", system: "fuel_card_sim" }),
+  feedRow(12, { event: "proposal_decided", actor: "autopilot", code: "approved", title: "Advance for Dana Reyes", cents: 12_500, direction: "out", limitCents: 50_000, record: { table: "advances", id: FEED_ID } }),
+  feedRow(11, { event: "proposal_decided", actor: "judge", code: "rejected", title: "Advance for Dana Reyes" }),
+  feedRow(10, { event: "proposal_audited", code: "concerns", title: "Advance for Dana Reyes" }),
+  feedRow(9, { title: "Advance for Dana Reyes", cents: 12_500, direction: "out", code: "ask", reason: "over_item_limit" }),
+  feedRow(8, { event: "desk_skipped", actor: "desk", kind: "autopilot", code: "paused" }),
+  feedRow(7, { event: "desk_failed", actor: "desk", kind: "audit", code: "threw" }),
+  feedRow(6, { event: "desk_done", actor: "desk", kind: "inbound_message", code: "drafted" }),
+  feedRow(5, { event: "desk_claimed", actor: "desk", kind: "card_transaction" }),
+  feedRow(4, { event: "desk_sleep", actor: "desk", count: 3 }),
+];
+
+// The live feed page with its switch on.
+async function feedPage(search: Record<string, string> = {}): Promise<ReactNode> {
+  const savedFeed = { ...flags.activityFeed };
+  flags.activityFeed = { ...savedFeed, enabled: true };
+  try {
+    return await (await import("@/app/activity/page")).default({ searchParams: Promise.resolve(search) });
+  } finally {
+    flags.activityFeed = savedFeed;
   }
 }
 
@@ -966,6 +1026,38 @@ const HAND_PICK_CASES: [string, HandPick][] = [
 
 // Every page that renders, keyed by its file under src/app, with each state worth reading.
 const PAGES: PageCase[] = [
+  {
+    file: "activity/page.tsx",
+    variants: [
+      {
+        name: "every kind of line",
+        setup: () => {
+          state.fx.feed = { rows: FEED_ROWS, next: { at: FEED_ROWS[16].at, key: FEED_ROWS[16].key } };
+          state.fx.feedHeader = { deskCheckedAt: "2026-11-02T16:30:00.000000Z", paused: true };
+        },
+        load: () => feedPage(),
+        shows: ["Autopilot approved Advance for Dana Reyes", "The autopilot is paused.", "Older"],
+      },
+      {
+        name: "nothing yet",
+        setup: () => {
+          state.fx.feed = { rows: [], next: null };
+          state.fx.feedHeader = { deskCheckedAt: null, paused: false };
+        },
+        load: () => feedPage(),
+        shows: ["Nothing has happened with money yet.", "The desk has not checked in yet."],
+      },
+      {
+        name: "an older page",
+        setup: () => {
+          state.fx.feed = { rows: FEED_ROWS.slice(10), next: null };
+          state.fx.feedHeader = { deskCheckedAt: null, paused: false };
+        },
+        load: () => feedPage({ before: `${FEED_ROWS[9].at}|${FEED_ROWS[9].key}` }),
+        shows: "Newest",
+      },
+    ],
+  },
   {
     file: "cards/page.tsx",
     variants: CARD_PAGE_CASES.map(([name, fixtures]) => ({

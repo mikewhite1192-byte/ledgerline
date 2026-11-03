@@ -159,6 +159,8 @@ const KEPT_OFF = [
   "factoring.requirePacket",
   // The eval script spends model cents on the developer's ledger; the owner turns it on in its own PR.
   "evalRun.enabled",
+  // Read only, but a new page, menu item and Home card: the owner turns it on in its own PR.
+  "activityFeed.enabled",
 ] as const;
 
 // The on/off switches in flags.ts, by path: every top-level boolean and every boolean inside a
@@ -402,6 +404,12 @@ describe("flags", () => {
     expect(LOCAL_OFF_ONLY as readonly string[]).toContain("morningDigest.enabled");
   });
 
+  it("ships the live feed off, refreshing every 15 seconds, 50 lines a page, off for the local demo run", () => {
+    expect(flags.activityFeed).toEqual({ enabled: false, pollSeconds: 15, pageSize: 50 });
+    // Listed ahead of its release, so the demo-path run keeps it off once it ships on.
+    expect(LOCAL_OFF_ONLY as readonly string[]).toContain("activityFeed.enabled");
+  });
+
   it("releases deficit recovery, with a start date, off for the local demo run", () => {
     expect(flags.deficitRecovery).toEqual({ enabled: true, startDate: "2026-11-02" });
     expect(isLocalDate(flags.deficitRecovery.startDate)).toBe(true);
@@ -538,6 +546,7 @@ describe("flags", () => {
       "mockTms.newLoad",
       "payWeekRoll.enabled",
       "autopilotRules.enabled",
+      "activityFeed.enabled",
     ];
     const offOnly = LOCAL_OFF_ONLY as readonly string[];
     expect(KEPT_OFF.filter((k) => offOnly.includes(k))).toEqual(KEPT_OFF.filter((k) => armedAhead.includes(k)));

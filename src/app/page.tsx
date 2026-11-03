@@ -19,6 +19,7 @@ import { FridayPay } from "@/components/cash/friday-pay";
 import { Greeting, type Shortcut } from "@/components/home/greeting";
 import { HomeCard, Unavailable } from "@/components/home/home-card";
 import { CashFlowCard, OwedCard } from "@/components/home/money-cards";
+import { FeedCard } from "@/components/feed/feed-card";
 import { PaydayCard } from "@/components/home/payday-card";
 import { TodayCard } from "@/components/home/today-card";
 import { NewHereLine } from "@/components/help/how-pay-works";
@@ -45,6 +46,8 @@ import { readMoneyFlow, type FlowWeek } from "@/lib/home/money-flow";
 import { cardsRow, readNeedsYou, type NeedsYouRow, type NeedsYouView } from "@/lib/home/needs-you";
 import { readTodayIntake, type TodayIntake } from "@/lib/home/today";
 import { readInvoiceList } from "@/lib/invoices/views";
+import { readFeed } from "@/lib/feed/read";
+import { feedLines, type FeedLine } from "@/lib/feed/words";
 import { readNextWeekStart } from "@/lib/pay-rules/read";
 import { codeToWords, modelCallStatusLabel } from "@/lib/format/labels";
 import { readPaystubAsk } from "@/lib/settlements/list";
@@ -175,7 +178,7 @@ export default async function Home({
         flags.cashFridayEnabled ? loaded("cash home", () => readCashHome(carrier.session)) : null,
         // Home's cards, each in its own carrier transaction and only while its page is on, so one
         // failed read shows that card as unavailable and leaves the rest of the page alone.
-        readCards(carrierToday(carrier.timezone, now)),
+        readCards(carrierToday(carrier.timezone, now), carrier.timezone),
       ])
     : null;
 
@@ -269,6 +272,7 @@ export default async function Home({
           />
           <NeedsYou view={needsYou} />
         </div>
+        {cards.feed ? <FeedCard feed={cards.feed} /> : null}
         <NewHereLine />
         {/* Then payday: this pay week's paystubs, Friday's pay run and the drivers on file. */}
         <section aria-labelledby="pay-week-title" className="grid gap-3">
@@ -328,12 +332,16 @@ type Cards = {
   payday: Loaded<Payday> | null;
   flow: Loaded<FlowWeek[]> | null;
   owed: Loaded<Owed> | null;
+  feed: Loaded<FeedLine[]> | null;
 };
 
+// The live feed card's newest lines.
+const FEED_CARD_LINES = 3;
+
 // null is a card whose page is switched off, so it is not shown at all.
-async function readCards(today: LocalDate): Promise<Cards> {
+async function readCards(today: LocalDate, timezone: string): Promise<Cards> {
   const intakeOn = flags.documentsEnabled || flags.voiceIntakeEnabled || flags.inboxEnabled;
-  const [intake, payday, flow, owed] = await Promise.all([
+  const [intake, payday, flow, owed, feed] = await Promise.all([
     intakeOn ? loaded("intake", () => withRequestTenant((q) => readTodayIntake(q, today))) : null,
     flags.settlementsEnabled
       ? loaded("payday", () => withRequestTenant(async (q) => paydayOf(await readSettlementsView(q, null))))
@@ -344,8 +352,13 @@ async function readCards(today: LocalDate): Promise<Cards> {
     flags.invoicesEnabled
       ? loaded("owed", () => withRequestTenant(async (q) => owedOf(await readInvoiceList(q, today))))
       : null,
+    flags.activityFeed.enabled
+      ? loaded("feed", () =>
+          withRequestTenant(async (q) => feedLines((await readFeed(q, { limit: FEED_CARD_LINES })).rows, timezone)),
+        )
+      : null,
   ]);
-  return { intake, payday, flow, owed };
+  return { intake, payday, flow, owed, feed };
 }
 
 // The agent's recent turns, for a reload to show the same thread. A failed read shows an empty

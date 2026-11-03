@@ -215,6 +215,16 @@ system. Each handler re-checks its own switch. Cards it drafts wait for a person
 policy above. Outside sends stay off (driver note and collections email show "would send" lines),
 and so does the broker portal runner.
 
+## Live feed
+
+One page, `/activity`, lists every step the agent, the desk, the autopilot and people take with
+money, newest first: drafts, second checks, approvals and rejections, payouts and QuickBooks
+sandbox posts with their outcomes, autopilot pauses and rule changes, and batch approvals. Home
+shows its newest three lines. It is read only: it reads the records those steps already leave and
+writes nothing. An open page refreshes every 15 seconds while its tab is visible. Each line names
+who acted by role (Admin, Staff, Demo visitor, Autopilot, Agent, Desk) and never shows ids, logins,
+notes or error text. The feed has its own switch and stays off until it is turned on.
+
 ## Recovering money
 
 The agent proposes, the rules engine sizes every amount in integer cents, a named person approves
