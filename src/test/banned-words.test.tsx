@@ -830,14 +830,18 @@ beforeEach(() => {
   state.session = null;
   // The pages are checked in the full shape; the simple variants turn its switch on.
   flags.simpleShape = { enabled: false };
+  // The sign-in page is checked as it renders with a shared demo carrier.
+  flags.visitCopies = { ...flags.visitCopies, enabled: false };
 });
 const savedSimpleShape = { ...flags.simpleShape };
 const savedPlainTrace = { ...flags.plainTrace };
+const savedVisitCopies = { ...flags.visitCopies };
 afterEach(() => {
   cleanup();
   vi.useRealTimers();
   flags.simpleShape = { ...savedSimpleShape };
   flags.plainTrace = { ...savedPlainTrace };
+  flags.visitCopies = { ...savedVisitCopies };
 });
 
 // The Cash page and Home's Friday card read the carrier's today; these variants pin it (only Date is

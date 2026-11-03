@@ -129,6 +129,8 @@ beforeEach(() => {
   });
   resetJudgeSignIns();
   flags.judgeAccess.enabled = true;
+  // These tests are for the shared demo carrier; the copy tests below turn copies on.
+  flags.visitCopies.enabled = false;
   info = vi.spyOn(console, "info").mockImplementation(() => {});
   error = vi.spyOn(console, "error").mockImplementation(() => {});
 });
