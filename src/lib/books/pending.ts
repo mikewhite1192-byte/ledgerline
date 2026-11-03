@@ -393,7 +393,9 @@ async function runBooks(session: Session, opts: BooksOptions, deps: BooksDeps, m
       reconciled = await reconcileMoneyActions(
         db,
         session,
-        { hooks: booksReconcileHooks(db, tenantId, deps.money ?? {}, accounting) },
+        // One row a wake: its timeout is figured once from the time left, so more rows could
+        // run past the step's budget.
+        { limit: 1, hooks: booksReconcileHooks(db, tenantId, deps.money ?? {}, accounting) },
         {
           ...deps.money,
           accounting,
