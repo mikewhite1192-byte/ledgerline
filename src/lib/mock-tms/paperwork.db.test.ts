@@ -423,6 +423,27 @@ describe("driver sends paperwork", () => {
     expect(await turnsOf(live)).toBe(1);
   });
 
+  it("counts a visit copy's taps against its visit's turns too, though its login is not a judge", async () => {
+    const f = await carrier();
+    const l = await load(f);
+    // A visit's copy runs as a member of its own carrier, with the copy's visit row as
+    // demoSessionId (src/lib/auth/session.ts).
+    const used = await visitOf(f, f.session, flags.judgeAccess.turnsPerSession);
+    const refusedRead = reader(reading(l.reference, "pickup", PICKUP_STOP));
+    expect(await tap({ ...f.session, demoSessionId: used }, l.reference, "pickup", refusedRead)).toEqual({
+      kind: "refused",
+      category: "visit_used",
+    });
+    expect(refusedRead).not.toHaveBeenCalled();
+    expect(await documentsOf(f)).toEqual([]);
+    expect(await visitTurns(f, used)).toBe(flags.judgeAccess.turnsPerSession);
+
+    const live = await visitOf(f, f.session, 0);
+    const out = await tap({ ...f.session, demoSessionId: live }, l.reference, "pickup", reader(reading(l.reference, "pickup", PICKUP_STOP)));
+    expect(out).toMatchObject({ kind: "moved", to: "in_transit", board: "moved" });
+    expect(await visitTurns(f, live)).toBe(1);
+  });
+
   it("reads a stalled paper again on a later tap, and a tap while its read may still run costs no turn", async () => {
     const f = await carrier();
     const l = await load(f);

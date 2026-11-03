@@ -1,6 +1,6 @@
 import { flags } from "../../config/flags";
 import type { Session } from "../auth/claims";
-import { chargeVisit, settleVisit } from "../auth/demo-visit";
+import { atHome, chargeVisit, settleVisit } from "../auth/demo-visit";
 import { DbError, type Queryable, type TenantDb } from "../db";
 import { ForbiddenError } from "../tenant/context";
 import {
@@ -106,7 +106,17 @@ export function overCap(spend: Spend, r: CapCheck): boolean {
 // under the same lock, the reservation is added to the visit, within the visit's cap and the day's
 // cap across every visit (src/lib/auth/demo-visit.ts). A judge with no visit, a visit that ended
 // or is over a cap gets AiError("cap") with no call row and no change to the global counter.
-// Admin and staff sessions have no visit and never meet this check.
+// Admin and staff sessions have no visit and never meet this check. A visit's copy
+// (session.visitTicketId) is charged on its own row and then, in this same transaction, on its
+// ticket in the demo carrier (session.visitHome), so every copy's spend counts toward the demo
+// carrier's day cap; a ticket that cannot take it refuses the call with nothing written, and a copy
+// session without its home is refused.
+//
+// Lock order, everywhere: the transaction tenant's tenants row first (FOR KEY SHARE, in the
+// membership read here and the call's read in settle), then ops.ai_spend. The purge of a visit's
+// copy (src/lib/visit-copy/purge.ts) holds that row FOR UPDATE from before it reads the copy's call
+// totals until it commits, so no reservation or settlement of the copy commits in between, and one
+// that waited finds the copy gone.
 export async function reserve(
   db: TenantDb,
   session: Session,
@@ -118,9 +128,11 @@ export async function reserve(
   const visitId = session.demoSessionId ?? null;
   type Verdict = JobVerdict | "visit_cap";
   const verdict = await db.withTenant(session.tenantId, async (q): Promise<Verdict> => {
-    // The membership check (src/lib/tenant/context.ts assertMembership) and the role in one read.
+    // The membership check (src/lib/tenant/context.ts assertMembership) and the role in one read,
+    // which takes the tenants row's lock first.
     const member = await q.query<{ ok: number; role?: unknown }>(
-      "SELECT 1 AS ok, role FROM memberships WHERE cognito_sub = $1",
+      `WITH t AS MATERIALIZED (SELECT id FROM tenants WHERE id = current_tenant_id() FOR KEY SHARE)
+       SELECT 1 AS ok, m.role FROM memberships m JOIN t ON t.id = m.tenant_id WHERE m.cognito_sub = $1`,
       [session.sub],
     );
     if (!session.sub || member.length !== 1) throw new ForbiddenError();
@@ -154,6 +166,23 @@ export async function reserve(
       });
       // Returned like the job's cap, so the alert the watch may have written stays.
       if (!charged) return "visit_cap";
+      if (session.visitTicketId !== undefined) {
+        const home = session.visitHome;
+        const ticketId = session.visitTicketId;
+        if (!home) throw new AiError("cap");
+        const mirrored = await atHome(q, home.tenantId, session.tenantId, () =>
+          chargeVisit(q, {
+            visitId: ticketId,
+            sub: home.sub,
+            nanocents: r.reserveNanocents,
+            limits: flags.judgeAccess,
+            at: r.at,
+          }),
+        );
+        // Thrown, so the copy's own charge rolls back with it. Nothing else is written by now: the
+        // watch writes its alert only on the job's cap, which returned above.
+        if (!mirrored) throw new AiError("cap");
+      }
     }
     const inserted = await q.execute(
       `INSERT INTO model_calls (id, tenant_id, target, provider, model, kind, purpose,
@@ -214,7 +243,10 @@ export type Settlement = { durationMs: number } & (
 // only for a row whose target is wonder. No membership check: the call already happened, and
 // refusing to record it would only leave its reservation counted. A demo visit's call (reserve
 // charged it to session.demoSessionId) moves the visit's amounts the same way; if the visit's row
-// cannot take it, nothing is settled and the call stays reserved everywhere (fail closed).
+// cannot take it, nothing is settled and the call stays reserved everywhere (fail closed). A visit's
+// copy settles its ticket in the demo carrier the same way, in this transaction. The call's read
+// takes the tenants row's lock first (the lock order on reserve): a settle that waited out the
+// purge of its copy finds no row and returns false, changing nothing.
 export async function settle(
   db: TenantDb,
   session: Session,
@@ -223,8 +255,9 @@ export async function settle(
 ): Promise<boolean> {
   return db.withTenant(session.tenantId, async (q) => {
     const [row] = await q.query<{ reserved_nanocents: number; target: string }>(
-      `SELECT reserved_nanocents, target FROM model_calls
-        WHERE id = CAST($1 AS uuid) AND status = 'reserved' FOR UPDATE`,
+      `WITH t AS MATERIALIZED (SELECT id FROM tenants WHERE id = current_tenant_id() FOR KEY SHARE)
+       SELECT c.reserved_nanocents, c.target FROM model_calls c JOIN t ON t.id = c.tenant_id
+        WHERE c.id = CAST($1 AS uuid) AND c.status = 'reserved' FOR UPDATE OF c`,
       [callId],
     );
     if (!row) return false;
@@ -274,6 +307,14 @@ export async function settle(
     const visitId = session.demoSessionId ?? null;
     if (visitId !== null && (release !== 0 || spent !== 0)) {
       await settleVisit(q, { visitId, releaseNanocents: release, spentNanocents: spent });
+      if (session.visitTicketId !== undefined) {
+        const home = session.visitHome;
+        const ticketId = session.visitTicketId;
+        if (!home) throw new DbError("unknown");
+        await atHome(q, home.tenantId, session.tenantId, () =>
+          settleVisit(q, { visitId: ticketId, releaseNanocents: release, spentNanocents: spent }),
+        );
+      }
     }
     return true;
   });

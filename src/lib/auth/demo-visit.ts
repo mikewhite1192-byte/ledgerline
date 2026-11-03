@@ -1,6 +1,7 @@
 import { createHash, randomBytes, randomUUID } from "node:crypto";
 import type { Flags } from "../../config/flags";
 import { DbError, type Queryable } from "../db";
+import { SET_TENANT_SQL } from "../db/types";
 import { isRole, type Role } from "../roles";
 import { isUuid } from "../uuid";
 
@@ -334,6 +335,19 @@ export async function settleVisit(
     [input.visitId, input.releaseNanocents, input.spentNanocents],
   );
   if (updated !== 1) throw new DbError("unknown");
+}
+
+// A visit's copy (flags.visitCopies) counts its spend on its own visit row in the copy and, in the
+// same transaction, on its ticket in the demo carrier (src/lib/ai/spend.ts), so the demo carrier's
+// day cap (chargeVisit, startVisit) holds across every visit and every copy. This runs fn with the
+// transaction's tenant set to home, then sets it back to the copy. A throw anywhere rolls the whole
+// transaction back, so a commit never runs with the tenant left on home.
+export async function atHome<T>(q: Queryable, home: string, copy: string, fn: () => Promise<T>): Promise<T> {
+  if (!isUuid(home) || !isUuid(copy) || home.toLowerCase() === copy.toLowerCase()) throw new DbError("unknown");
+  await q.query(SET_TENANT_SQL, [home]);
+  const out = await fn();
+  await q.query(SET_TENANT_SQL, [copy]);
+  return out;
 }
 
 export type TurnGate = "ok" | "visit_ended" | "visit_used";

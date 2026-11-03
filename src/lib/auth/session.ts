@@ -34,7 +34,8 @@ const NONE: Read = { session: null, visitEnded: false, preparing: null };
 //
 // While flags.visitCopies is on, a live judge visit that points at its own copy runs in the copy:
 // the session is the copy's tenant, as the copy's admin login visitSub(ticket), with the copy's
-// own visit row as demoSessionId and the ticket as visitTicketId. A copy not built yet gives no
+// own visit row as demoSessionId, the ticket as visitTicketId and the token's carrier and login as
+// visitHome (the copy's spend is counted on the ticket as well). A copy not built yet gives no
 // session (requireSession sends it to /preparing); a purged copy is an ended visit. With copies
 // on, a failed read is no session at all, so a visitor is never put back in the shared demo
 // carrier. A visit with no copy is the shared one, as before; with copies off the copy columns
@@ -63,6 +64,7 @@ async function readSession(): Promise<Read> {
           tenantId: read.copy.tenantId,
           demoSessionId: read.copy.sessionId,
           visitTicketId: ticketId,
+          visitHome: { tenantId: session.tenantId, sub: session.sub },
         },
         visitEnded: false,
         preparing: null,

@@ -336,7 +336,9 @@ async function ready(q: Queryable, session: Session, reference: string, stage: P
   const n = Number(sent[0]?.n);
   // Unknown is not zero.
   if (!Number.isSafeInteger(n) || n >= flags.driverPaperwork.perDay) return no("cap");
-  const judge = isJudge(role);
+  // A visit's copy runs as the copy's admin with the copy's visit row (src/lib/auth/session.ts):
+  // its taps count against the visit's turns the same as a judge's.
+  const judge = isJudge(role) || session.demoSessionId != null;
   if (judge && (session.demoSessionId == null || !flags.judgeAccess.enabled)) return no("visit_ended");
   return { ok: true, load, times: dates.times, judge };
 }

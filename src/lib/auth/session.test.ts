@@ -185,6 +185,7 @@ describe("a visit's own copy (flags.visitCopies)", () => {
       tenantId: COPY_TENANT,
       demoSessionId: COPY_SESSION,
       visitTicketId: VISIT,
+      visitHome: { tenantId: TENANT, sub: TOKEN_SESSION.sub },
     };
     await expect(getSession()).resolves.toEqual(expected);
     await expect(requireSession()).resolves.toEqual(expected);

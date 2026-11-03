@@ -4,8 +4,17 @@ import { isUuid } from "../uuid";
 // (the pc_demo cookie); a token alone never carries it. visitTicketId is set only for a visit
 // that runs in its own copy of the demo carrier (flags.visitCopies): the session is then the
 // copy's, as its admin "visit:<ticket id>", and visitTicketId names the visit's row in the demo
-// carrier it was copied from.
-export type Session = { sub: string; email: string; tenantId: string; demoSessionId?: string; visitTicketId?: string };
+// carrier it was copied from. visitHome is set with it: the demo carrier and the signed-in judge
+// that ticket belongs to, so the copy's model spend is counted on the ticket too (the demo
+// carrier's day cap across every visit, src/lib/ai/spend.ts).
+export type Session = {
+  sub: string;
+  email: string;
+  tenantId: string;
+  demoSessionId?: string;
+  visitTicketId?: string;
+  visitHome?: { tenantId: string; sub: string };
+};
 
 // The one login a visit's copy is run as (src/lib/visit-copy/build.ts writes its membership). It
 // is not a Cognito id, so nobody signs in as it: only getSession() hands it out.

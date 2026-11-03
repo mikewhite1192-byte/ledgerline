@@ -1,7 +1,8 @@
 import { randomUUID } from "node:crypto";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { flags } from "../../config/flags";
-import { reserve, settle, type Reservation } from "../ai/spend";
+import { reserve, settle, type Reservation, type Settlement } from "../ai/spend";
+import { AiError } from "../ai/types";
 import { visitSub, type Session } from "../auth/claims";
 import {
   chargeVisit,
@@ -25,7 +26,7 @@ import { DEMO_ANCHOR } from "../seed/anchor";
 import { demoCarrierOf, demoTemplateOf, heroNet } from "../seed/reset";
 import { countRows } from "../seed/summary";
 import { buildCopySlice, copyPlan, copySlug, templatePlan, type CopyTarget } from "./build";
-import { NotACopy, purgeCopy, purgeExpired } from "./purge";
+import { NotACopy, PURGED_TOTALS_SQL, purgeCopy, purgeExpired } from "./purge";
 import { VISIT_EMAIL } from "./visitor";
 
 // A visit's own copy of a demo carrier against a real, freshly migrated database, as the app's
@@ -147,7 +148,45 @@ const copySession = (t: Ticket): Session => ({
   tenantId: t.copy.copyTenantId,
   demoSessionId: t.copy.copySessionId,
   visitTicketId: t.id,
+  visitHome: { tenantId: HOME, sub: JUDGE },
 });
+
+// One model call's reservation, and its answer.
+const call = (reserveNanocents: number): Reservation => ({
+  callId: randomUUID(),
+  target: "spark",
+  provider: "meta",
+  model: "muse-spark-1.3",
+  kind: "text",
+  purpose: "proof",
+  reasoningEffort: "low",
+  traceId: null,
+  reserveNanocents,
+  capNanocents: Number.MAX_SAFE_INTEGER,
+  wonderCapNanocents: null,
+  jobCapNanocents: Number.MAX_SAFE_INTEGER,
+  at: new Date().toISOString(),
+});
+const ANSWER: Settlement = {
+  kind: "answered",
+  status: "ok",
+  usage: { input: 10, cached: 0, output: 20, reasoning: 0 },
+  units: null,
+  costNanocents: CENT / 4,
+  upstreamId: "resp_copy",
+  httpStatus: 200,
+  durationMs: 100,
+};
+
+type Amounts = { spent: string; reserved: string; turns: number };
+const visitRow = (tenantId: string, id: string) =>
+  app.withTenant(tenantId, (q) =>
+    q.query<Amounts>(
+      `SELECT CAST(spent_nanocents AS text) AS spent, CAST(reserved_nanocents AS text) AS reserved, turns
+         FROM demo_sessions WHERE id = CAST($1 AS uuid)`,
+      [id],
+    ),
+  );
 
 beforeAll(async () => {
   admin = createPgDb({ connectionString: adminUrl(), max: 2 });
@@ -319,7 +358,7 @@ describe("building a copy", () => {
 });
 
 describe("a copy's visit row", () => {
-  it("charges, settles and counts turns on the copy's own row, leaving the demo carrier's ticket alone", async () => {
+  it("charges, settles and counts turns on the copy's own row, and counts its spend on the demo carrier's ticket too", async () => {
     const s = copySession(A);
     const now = new Date().toISOString();
     const r: Reservation = {
@@ -374,10 +413,58 @@ describe("a copy's visit row", () => {
         [A.id],
       ),
     );
-    expect(ticket).toEqual([{ spent: "0", reserved: "0", turns: 0 }]);
+    // The call's spend is on the ticket as well (the direct charge and the turn are the copy's own).
+    expect(ticket).toEqual([{ spent: String(CENT / 4), reserved: "0", turns: 0 }]);
     // The model call is logged in the copy, under the copy's tenant.
     const calls = await app.withTenant(s.tenantId, (q) => q.query("SELECT id FROM model_calls"));
     expect(calls).toHaveLength(1);
+  });
+});
+
+describe("the demo carrier's day cap", () => {
+  it("counts every copy's spend toward it, so a copy cannot spend past it on its own cap", async () => {
+    const s = copySession(B);
+    // Another visit of the demo carrier today has spent 1.5 cents. With copy A's quarter cent on
+    // its ticket that is 1.75 of the 2-cent day: half a cent more fits copy B's own 1-cent cap but
+    // not the day's.
+    const busy = await app.withTenant(HOME, (q) =>
+      startVisit(q, { sub: JUDGE, ipHash: H1, reuseId: null, limits: LIMITS }),
+    );
+    if (!busy.ok) throw new Error("the visit did not start");
+    const spend = (nanocents: number) =>
+      admin.withTenant(HOME, (q) =>
+        q.execute("UPDATE demo_sessions SET spent_nanocents = CAST($2 AS bigint) WHERE id = CAST($1 AS uuid)", [
+          busy.id,
+          nanocents,
+        ]),
+      );
+    await spend((3 * CENT) / 2);
+    const refused = await reserve(app, s, call(CENT / 2)).then(
+      () => null,
+      (e: unknown) => e,
+    );
+    expect(refused).toBeInstanceOf(AiError);
+    expect((refused as AiError).category).toBe("cap");
+    // Nothing was written: not on the copy's row, its ticket or its call log.
+    expect(await visitRow(s.tenantId, s.demoSessionId!)).toEqual([{ spent: "0", reserved: "0", turns: 0 }]);
+    expect(await visitRow(HOME, B.id)).toEqual([{ spent: "0", reserved: "0", turns: 0 }]);
+    expect(await app.withTenant(s.tenantId, (q) => q.query("SELECT id FROM model_calls"))).toEqual([]);
+
+    // A copy session that does not name its demo carrier is refused, with nothing written.
+    const lost = await reserve(app, { ...s, visitHome: undefined }, call(1)).then(
+      () => null,
+      (e: unknown) => e,
+    );
+    expect(lost).toBeInstanceOf(AiError);
+    expect(await app.withTenant(s.tenantId, (q) => q.query("SELECT id FROM model_calls"))).toEqual([]);
+
+    // A new visit sees the copies' spend too: 1.75 cents on the other visit and copy A's quarter
+    // cent fill the day.
+    await spend((7 * CENT) / 4);
+    expect(
+      await app.withTenant(HOME, (q) => startVisit(q, { sub: JUDGE, ipHash: H1, reuseId: null, limits: LIMITS })),
+    ).toEqual({ ok: false, reason: "day_cap" });
+    await spend(0);
   });
 });
 
@@ -463,5 +550,73 @@ describe("the purge", () => {
     expect(await purgeExpired(app, HOME, { graceMinutes: 60, limit: 5 })).toEqual({ purged: 0, gone: 0, failed: 0 });
     // A copy already deleted is "gone" and only marks its ticket.
     expect(await purgeCopy(app, HOME, { visitId: A.id, copyTenantId: A.copy.copyTenantId })).toBe("gone");
+  }, 60_000);
+
+  it("holds off a settle of the copy's call until it commits, and the settle then changes nothing", async () => {
+    const s = copySession(B);
+    const r = call(CENT / 2);
+    await reserve(app, s, r);
+    expect(await visitRow(HOME, B.id)).toEqual([{ spent: "0", reserved: String(CENT / 2), turns: 0 }]);
+    const gapsBefore = await i4Gaps();
+    const before = await readCounters();
+
+    // The purge's own steps, held open after its lock (purgeCopy, step 1). The settle, on the
+    // pool's other connection, must wait on that lock. Without it the settle would commit here,
+    // between the purge's lock and its count, and never wait.
+    let go = () => {};
+    const gate = new Promise<void>((resolve) => (go = resolve));
+    let locked = () => {};
+    const holding = new Promise<void>((resolve) => (locked = resolve));
+    let holderPid = 0;
+    const purge = app.withTenant(B.copy.copyTenantId, async (q) => {
+      const rows = await q.query("SELECT demo_copy_of FROM tenants WHERE id = current_tenant_id() FOR UPDATE", []);
+      holderPid = (await q.query<{ pid: number }>("SELECT pg_backend_pid() AS pid"))[0].pid;
+      locked();
+      await gate;
+      if (rows.length !== 1) throw new Error("the copy's carrier row is missing");
+      if ((await q.execute(PURGED_TOTALS_SQL, [])) !== 1) throw new Error("the purged totals were not written");
+      await q.query(WIPE_MARK_SQL, []);
+      if ((await q.execute("DELETE FROM tenants WHERE id = current_tenant_id() AND demo_copy_of IS NOT NULL", [])) !== 1) {
+        throw new Error("the copy was not deleted");
+      }
+    });
+    // A purge that failed before its lock never holds the settle up.
+    void purge.catch(() => locked());
+    const pending: Promise<unknown>[] = [purge];
+    try {
+      await holding;
+      let done = false;
+      const settling = settle(app, s, r.callId, ANSWER).finally(() => {
+        done = true;
+      });
+      pending.push(settling);
+      let waiting = false;
+      for (let i = 0; i < 600 && !waiting; i += 1) {
+        const [row] = await admin.withoutTenant((q) =>
+          q.query<{ n: string }>("SELECT count(*) AS n FROM pg_stat_activity WHERE CAST($1 AS int) = ANY(pg_blocking_pids(pid))", [
+            holderPid,
+          ]),
+        );
+        waiting = Number(row.n) > 0;
+        if (!waiting) await new Promise((resolve) => setTimeout(resolve, 25));
+      }
+      expect(waiting).toBe(true);
+      expect(done).toBe(false);
+      go();
+      await purge;
+      expect(await settling).toBe(false);
+    } finally {
+      go();
+      await Promise.allSettled(pending);
+    }
+
+    // The call was reserved when the purge counted it, and stays reserved: purged as reserved, no
+    // settled call, nothing spent, and I4 even. The ticket keeps the reservation, as the counter does.
+    const after = await readCounters();
+    expect(BigInt(after.purged_reserved_nanocents) - BigInt(before.purged_reserved_nanocents)).toBe(BigInt(CENT / 2));
+    expect(after.purged_calls).toBe(before.purged_calls);
+    expect(after.purged_spent_nanocents).toBe(before.purged_spent_nanocents);
+    expect(await i4Gaps()).toEqual(gapsBefore);
+    expect(await visitRow(HOME, B.id)).toEqual([{ spent: "0", reserved: String(CENT / 2), turns: 0 }]);
   }, 60_000);
 });
