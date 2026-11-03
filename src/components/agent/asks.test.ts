@@ -137,6 +137,13 @@ describe("a reply's questions", () => {
     expect(asksOf("nope")).toEqual([]);
   });
 
+  it("keeps a morning digest, which names no proposal, and only with no proposal", () => {
+    const digest = ask({ kind: "digest", proposalId: null, proposalKind: null, text: "Morning digest. Needs you: nothing." });
+    expect(asksOf([digest])).toEqual([digest]);
+    expect(asksOf([{ ...digest, proposalId: P1 }, { ...digest, proposalKind: "advance_payout" }])).toEqual([]);
+    expect(asksOf([{ ...digest, kind: "told" }, { ...digest, kind: "ask" }])).toEqual([]);
+  });
+
   it("merges newest first, each id once with its latest copy", () => {
     const old = ask({ id: A1, shownAt: "2026-11-02T15:00:00.000Z" });
     const back = ask({ id: A1, shownAt: "2026-11-03T14:00:00.000Z" });
@@ -159,5 +166,6 @@ describe("the text Ask a question puts in the box", () => {
     expect(askDraft(ask({ text: "I drafted a weekly settlement for Dana Reyes, $900.00. Approve?", proposalKind: "settlement_approve" }))).toBe(
       "About a weekly settlement: ",
     );
+    expect(askDraft({ text: "Morning digest. Needs you: nothing.", proposalKind: null })).toBe("About the morning digest: ");
   });
 });

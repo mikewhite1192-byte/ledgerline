@@ -105,11 +105,18 @@ export async function insertRows(
   return inserted;
 }
 
+// Marks this transaction as the tenant's own wipe, so the settlements delete guard (0087) lets
+// the replace remove approved and paid settlements as the app role. Transaction-local, like the
+// tenant setting: it dies at commit or rollback.
+export const WIPE_MARK_SQL =
+  "SELECT set_config('app.tenant_wipe', CAST(current_tenant_id() AS text), true)";
+
 // Deletes the current tenant's rows from every tenant table, children first. Returns the rows
 // deleted per table. A table the app role never deletes from (APP_KEEPS_TABLES) gets no statement
 // and reports 0: the admin login clears it before the replace, and its rows go with their drivers.
 export async function deleteTenantRows(q: Queryable): Promise<Record<TenantTable, number>> {
   const out = {} as Record<TenantTable, number>;
+  await q.execute(WIPE_MARK_SQL);
   for (const table of [...TENANT_TABLES].reverse()) {
     if (APP_KEEPS_TABLES.has(table)) {
       out[table] = 0;

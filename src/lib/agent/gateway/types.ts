@@ -177,6 +177,7 @@ export const PROPOSAL_KINDS = [
   "load_move",
   "card_load_ruling",
   "card_pullback",
+  "deficit_book",
 ] as const;
 export type ProposalKind = (typeof PROPOSAL_KINDS)[number];
 

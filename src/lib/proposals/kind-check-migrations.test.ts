@@ -17,8 +17,7 @@ const FILE = /^(\d{4})_[a-z0-9_]+\.sql$/;
 // Kinds a migration lists before their code is on the mainline: harmless in an allow list. 0046
 // and 0048 each list both card_match and money_code, so whichever of the two runs last keeps both;
 // both kinds now have code here, so neither is pending.
-// 0080 lists deficit_book for the cancelled trip (S6c), which has no code yet.
-const PENDING_KINDS = ["settlement_approve", "pay_rule_change", "deficit_book"] as const;
+const PENDING_KINDS = ["settlement_approve", "pay_rule_change"] as const;
 
 // The union every re-creation since 0022 has listed (the queue's rule).
 const BASE_UNION = [
@@ -236,6 +235,44 @@ describe("0080's re-created proposals checks", () => {
     const before = by.get("0053") ?? [];
     expect(before.length).toBeGreaterThan(0);
     expect(by.get("0080")).toEqual([...before, "driver_deficits"]);
+  });
+});
+
+describe("0082's morning digest checks", () => {
+  const read = (name: string) => withoutComments(readFileSync(path.join(DIR, name), "utf8"));
+  const CHECKS = [
+    ["desk_log", "desk_log_source_check"],
+    ["agent_asks", "agent_asks_kind_check"],
+    ["agent_asks", "agent_asks_digest_shape"],
+    ["agent_asks", "agent_asks_check3"],
+  ] as const;
+
+  it("adds each NOT VALID in 0082_morning_digest and validates each in 0082_morning_digest_validate, applied next", () => {
+    const added = read("0082_morning_digest.sql");
+    const validate = read("0082_morning_digest_validate.sql");
+    for (const [table, name] of CHECKS) {
+      const adds = [...added.matchAll(new RegExp(`ADD\\s+CONSTRAINT\\s+${name}\\s+CHECK\\b[^;]*;`, "gi"))];
+      expect(adds, name).toHaveLength(1);
+      expect(adds[0][0], name).toMatch(/\)\s*NOT\s+VALID\s*;$/i);
+      expect(validate, name).toMatch(new RegExp(`ALTER\\s+TABLE\\s+${table}\\s+VALIDATE\\s+CONSTRAINT\\s+${name}\\s*;`, "i"));
+    }
+    const names = readdirSync(DIR).filter((f) => FILE.test(f)).sort();
+    expect(names.indexOf("0082_morning_digest_validate.sql")).toBe(names.indexOf("0082_morning_digest.sql") + 1);
+  });
+
+  // A superset of 0075's list, so no desk_log row already there can fail the validation.
+  it("lists exactly 0075's desk sources plus digest", () => {
+    const listOf = (version: string) => {
+      const sql = migrations()
+        .filter((m) => m.version === version)
+        .map((m) => m.sql)
+        .join("\n");
+      const m = /ADD\s+CONSTRAINT\s+desk_log_source_check\s+CHECK\s*\(\s*source\s+IN\s*\(([^)]*)\)\s*\)/i.exec(sql);
+      return m ? quoted(m[1]) : [];
+    };
+    const before = listOf("0075");
+    expect(before.length).toBeGreaterThan(0);
+    expect(listOf("0082")).toEqual([...before, "digest"]);
   });
 });
 

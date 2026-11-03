@@ -2,7 +2,9 @@
 // and 0005, the moves of a load from 0071 (one per seeded status change, right after loads), the
 // dispatch mirror from 0075 (the synthetic feed's snapshot at the seeded instant, after the
 // loads, customers and drivers it links to; the sync's runtime columns are not listed), the outside text and its screenings from 0008, the fuel cards on file from 0017, the
-// driver identity map and arming log from 0027, the money codes from 0048 (planned empty; it names
+// driver identity map and arming log from 0027, the status log from 0081 (planned empty: only a
+// person deactivates or reactivates a driver), the activation steps from 0085 (planned empty: only
+// an admin records one), the money codes from 0048 (planned empty; it names
 // pay items and load charges, so it goes before them on a delete), the card provider's statement
 // and the card check's runs and differences from 0046 (the seed writes no run and no difference;
 // the replace, and so the demo reset, clears them), the collection reminders from 0041 (seeded
@@ -35,6 +37,8 @@ export const TENANT_TABLES = [
   "driver_cards",
   "driver_identities",
   "driver_arm_events",
+  "driver_status_events",
+  "driver_activation_steps",
   "loads",
   "load_events",
   "tms_connections",
@@ -44,6 +48,12 @@ export const TENANT_TABLES = [
   "tms_status_events",
   "tms_line_items",
   "tms_documents",
+  "mock_tms_parties",
+  "mock_tms_loads",
+  "mock_tms_stops",
+  "mock_tms_events",
+  "mock_tms_lines",
+  "mock_tms_documents",
   "load_state_miles",
   "load_accessorials",
   "driver_days",
@@ -81,13 +91,17 @@ export const TENANT_TABLES = [
 export type TenantTable = (typeof TENANT_TABLES)[number];
 
 // The seeded tables the app role may add to but never delete from: the arming log is append-only
-// (0027), and the phone line's calls, segments and turns are the record of a call (0068). The
-// replace leaves them out of its deletes; the seed clears them through the admin login before the
-// replace (clearTenantArmLog, and the calls with the agent's records), and a row written after
-// that clear goes with its driver (the foreign keys cascade: a call names its driver, a segment
-// its call, a turn its segment).
+// (0027), the status log and the activation steps too (0081, 0085), and the phone line's calls,
+// segments and turns are the record of a call (0068). The replace leaves them out of its deletes;
+// the seed clears them through the admin login before the replace (clearTenantArmLog, and the calls
+// with the agent's records), and a row written after that clear goes with its driver (the foreign
+// keys cascade: a call, a status change or an activation step names its driver, a step its card
+// too, a segment its call, a turn its segment). The status log and the steps are never seeded, so
+// their rows only ever go that way.
 export const APP_KEEPS_TABLES: ReadonlySet<TenantTable> = new Set<TenantTable>([
   "driver_arm_events",
+  "driver_status_events",
+  "driver_activation_steps",
   "calls",
   "call_segments",
   "call_turns",
@@ -171,6 +185,28 @@ export const TABLE_SPECS: Record<TenantTable, TableSpec> = {
       ["note", "text"],
       ["membership_id", "uuid"],
       ["source", "text"],
+    ],
+  },
+  driver_status_events: {
+    table: "driver_status_events",
+    columns: [
+      ["id", "uuid"],
+      ["driver_id", "uuid"],
+      ["active", "bool"],
+      ["effective_on", "date"],
+      ["note", "text"],
+      ["membership_id", "uuid"],
+    ],
+  },
+  driver_activation_steps: {
+    table: "driver_activation_steps",
+    columns: [
+      ["id", "uuid"],
+      ["driver_id", "uuid"],
+      ["card_id", "uuid"],
+      ["step", "text"],
+      ["note", "text"],
+      ["membership_id", "uuid"],
     ],
   },
   loads: {
@@ -348,6 +384,95 @@ export const TABLE_SPECS: Record<TenantTable, TableSpec> = {
       ["first_seen_at", "timestamptz"],
     ],
   },
+  mock_tms_parties: {
+    table: "mock_tms_parties",
+    columns: [
+      ["id", "uuid"],
+      ["kind", "text"],
+      ["external_id", "text"],
+      ["name", "text"],
+      ["unit", "text"],
+      ["vin", "text"],
+    ],
+  },
+  mock_tms_loads: {
+    table: "mock_tms_loads",
+    columns: [
+      ["id", "uuid"],
+      ["external_id", "text"],
+      ["reference", "text"],
+      ["status_label", "text"],
+      ["customer_external_id", "text"],
+      ["customer_name", "text"],
+      ["driver_external_id", "text"],
+      ["truck_unit", "text"],
+      ["trailer_unit", "text"],
+      ["vin", "text"],
+      ["picked_up_at", "timestamptz"],
+      ["delivered_at", "timestamptz"],
+      ["last_completed_at", "timestamptz"],
+      ["finalized_at", "timestamptz"],
+      ["created_at", "timestamptz"],
+      ["updated_at", "timestamptz"],
+      ["seeded", "bool"],
+    ],
+  },
+  mock_tms_stops: {
+    table: "mock_tms_stops",
+    columns: [
+      ["id", "uuid"],
+      ["mock_load_id", "uuid"],
+      ["ordinal", "int"],
+      ["stop_kind", "text"],
+      ["name", "text"],
+      ["city", "text"],
+      ["state", "text"],
+      ["appt_from_local", "text"],
+      ["appt_to_local", "text"],
+      ["arrived_at", "timestamptz"],
+      ["completed_at", "timestamptz"],
+    ],
+  },
+  mock_tms_events: {
+    table: "mock_tms_events",
+    columns: [
+      ["id", "uuid"],
+      ["mock_load_id", "uuid"],
+      ["seq", "int"],
+      ["external_id", "text"],
+      ["field", "text"],
+      ["new_value", "text"],
+      ["previous_value", "text"],
+      ["changed_by", "text"],
+      ["at", "timestamptz"],
+    ],
+  },
+  mock_tms_lines: {
+    table: "mock_tms_lines",
+    columns: [
+      ["id", "uuid"],
+      ["mock_load_id", "uuid"],
+      ["external_id", "text"],
+      ["item_group", "text"],
+      ["type_label", "text"],
+      ["description", "text"],
+      ["amount_cents", "int"],
+    ],
+  },
+  mock_tms_documents: {
+    table: "mock_tms_documents",
+    columns: [
+      ["id", "uuid"],
+      ["mock_load_id", "uuid"],
+      ["external_id", "text"],
+      ["file_name", "text"],
+      ["type_label", "text"],
+      ["shared", "bool"],
+      ["uploader_kind", "text"],
+      ["byte_length", "int"],
+      ["updated_at", "timestamptz"],
+    ],
+  },
   load_state_miles: {
     table: "load_state_miles",
     columns: [
@@ -480,6 +605,8 @@ export const TABLE_SPECS: Record<TenantTable, TableSpec> = {
       ["escrow_closing_cents", "int"],
       ["parked_reason", "text"],
       ["parked_at", "timestamptz"],
+      ["stub_sent_at", "timestamptz"],
+      ["stub_sent_by", "uuid"],
     ],
   },
   settlement_lines: {
@@ -493,6 +620,8 @@ export const TABLE_SPECS: Record<TenantTable, TableSpec> = {
       ["amount_cents", "int"],
       ["sources", "jsonb"],
       ["meta", "jsonb"],
+      ["entered_by", "uuid"],
+      ["source_ref", "text"],
     ],
   },
   pay_cards: {
@@ -529,6 +658,7 @@ export const TABLE_SPECS: Record<TenantTable, TableSpec> = {
       ["item_ref", "text"],
       ["description", "text"],
       ["settlement_id", "uuid"],
+      ["entered_by", "uuid"],
     ],
   },
   money_codes: {

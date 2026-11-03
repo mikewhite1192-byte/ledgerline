@@ -15,7 +15,7 @@ import { readCleanSet, type CleanSet } from "./clean";
 import { linesHash } from "./hash";
 import { LEG_KINDS, legDraft, linkProposal, type LegKind, type SettlementMoneyDeps } from "./legs";
 import type { ParkReason } from "./reconcile";
-import { parkSettlement, readStoredLines, readStoredSettlement, recheckSettlement } from "./stored";
+import { lockPayDrivers, parkSettlement, readStoredLines, readStoredSettlement, recheckSettlement } from "./stored";
 
 // "Approve all clean" for one pay week: one deliberate approval over the exact list the person saw.
 // In one transaction, with the listed cards and their paystubs locked (ordered by id, so two
@@ -137,6 +137,14 @@ async function checkItems(q: Queryable, session: Session, req: BatchRequest): Pr
   if (locked.length !== req.proposalIds.length) return stale;
   const subjects = locked.map((p) => p.subject_id).filter(isUuid);
   if (subjects.length !== locked.length) return stale;
+  // Then the paystubs' drivers, in id order, before any recheck (lockPayDrivers): the lock the
+  // booking takes while it dates a carried shortfall.
+  const drivers = await q.query<{ driver_id: string }>(
+    `SELECT CAST(driver_id AS text) AS driver_id FROM settlements
+      WHERE tenant_id = current_tenant_id() AND id = ANY(CAST($1 AS uuid[]))`,
+    [uuidList(subjects)],
+  );
+  await lockPayDrivers(q, drivers.map((d) => d.driver_id));
   const items: Item[] = [];
   const parks: Park[] = [];
   let miss = false;

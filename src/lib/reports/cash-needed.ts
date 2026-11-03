@@ -1,6 +1,6 @@
 import {
   compareText,
-  ConfigError,
+  dueWeek,
   sum,
   type DriverRecord,
   type SettlementPeriodRecord,
@@ -27,6 +27,8 @@ export type CashNeededInput = {
   periods: readonly SettlementPeriodRecord[];
   settlements: readonly SettlementRecord[];
   drivers: readonly DriverRecord[];
+  // The days that carry pay, for the week paid next (dueWeek). Absent reads as none.
+  payDays?: readonly string[];
 };
 
 export type CashNeededArgs = { periodStart?: string };
@@ -36,13 +38,11 @@ const GROUPS: readonly { type: DriverRecord["workerType"]; label: string }[] = [
   { type: "owner_operator", label: "Owner-operators" },
 ];
 
-// The week that holds the day asked for (its first day or any day in it), or the one open week.
-// Two open weeks are refused with the engine's own category, never picked between.
+// The week that holds the day asked for (its first day or any day in it), or the week paid next
+// as Cash Friday reports it (dueWeek, D-090).
 function weekOf(input: CashNeededInput, day?: string): SettlementPeriodRecord | null {
   if (day !== undefined) return periodHolding(input.periods, day);
-  const open = input.periods.filter((p) => p.status === "open");
-  if (open.length > 1) throw new ConfigError("more_than_one_open_period");
-  return open[0] ?? null;
+  return dueWeek(input.periods, input.settlements, input.payDays ?? []);
 }
 
 export function computeCashNeeded(input: CashNeededInput, args: CashNeededArgs, asOf: string): ReportResult {

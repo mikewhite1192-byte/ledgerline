@@ -1,13 +1,17 @@
 import type { Param } from "../../../db";
 import { QUARTER_DETENTION_SQL, QUARTER_PROPOSALS_SQL, QUARTER_RECOVERY_SQL } from "../../../briefs/quarter-figures";
 import { chargeArgsOf, detentionChargeOf } from "../../../data/detention-charge";
+import { DEFICITS_SQL, INSIGHT_WHERE } from "../../../data/driver-insights";
 import {
   ESCROW_LINES,
+  HELD_ALL_SQL,
+  HELD_SQL,
   LOAD_NUMBERS_FIRST,
   LOAD_NUMBERS_NEXT,
   MONEY_CODE_DRIVER_SQL,
   MONEY_CODE_LOAD_SQL,
   MONEY_CODES_SQL,
+  NO_LIVE_PULL,
   PAID_WHERE,
   PURCHASED_BETWEEN,
   QUEUE_CHILDREN,
@@ -122,11 +126,13 @@ export function planDb(plan: CarrierPlan, extra?: Handler): FakeDb {
         })
         .sort((x, y) => (x.code === y.code ? (x.id < y.id ? -1 : 1) : x.code < y.code ? -1 : 1));
     }
-    // The money-code check's reads (data/read.ts readMoneyCodeInput): the driver's switch, the
+    // The money-code check's reads (data/read.ts readMoneyCodeInput): the driver's arm and active state, the
     // load, and the recent codes or those citing the same evidence (none in a plan unless a test
     // adds them).
     if (sql === MONEY_CODE_DRIVER_SQL) {
-      return plan.rows.drivers.filter((d) => d.id === params[0]).map((d) => ({ money_armed: d.money_armed }));
+      return plan.rows.drivers
+        .filter((d) => d.id === params[0])
+        .map((d) => ({ money_armed: d.money_armed, active_from: d.active_from, active_to: d.active_to }));
     }
     if (sql === MONEY_CODE_LOAD_SQL) {
       return plan.rows.loads
@@ -216,6 +222,8 @@ export function planDb(plan: CarrierPlan, extra?: Handler): FakeDb {
     if (sql.startsWith(FACTORING_REQUESTS_SQL)) return [];
     // The loads an approved invoice card wrote an invoice for. The plan holds no cards, so this
     // answers from a proposals list a test adds, or none: every seeded invoice is history.
+    // The driver insights' deficits (data/driver-insights.ts): a seed plan books none.
+    if (sql === DEFICITS_SQL) return [];
     if (sql === QUEUE_CARD_LOADS_SQL) {
       const cards = (tables.proposals ?? []).filter(
         (r) =>
@@ -233,6 +241,51 @@ export function planDb(plan: CarrierPlan, extra?: Handler): FakeDb {
       return (tables.pinned_rates ?? [])
         .filter((r) => r.status === "pinned" && r.retired_at === null && r.kind === params[0])
         .map((r) => ({ ...r }));
+    }
+    // What the driver's other unpaid stubs hold on the balances a week draws down (data/read.ts
+    // readHeldRecoveries): drafts in older weeks and approved stubs in any other week. A seed plan
+    // stores no lines, so this answers from a settlement_lines list a test adds, or none.
+    if (sql === HELD_SQL) {
+      const [driverId, periodId, start] = params.map(String);
+      const periods = new Map((tables.settlement_periods ?? []).map((p) => [String(p.id), p]));
+      const held = new Set(
+        (tables.settlements ?? [])
+          .filter((s) => String(s.driver_id) === driverId)
+          .filter((s) =>
+            s.status === "draft"
+              ? String(periods.get(String(s.period_id))?.period_start) < start
+              : s.status === "approved" && String(s.period_id) !== periodId,
+          )
+          .map((s) => String(s.id)),
+      );
+      return (tables.settlement_lines ?? [])
+        .filter((l) => ["advance_recovery", "deficit_recovery", "escrow"].includes(String(l.kind)))
+        .filter((l) => held.has(String(l.settlement_id)))
+        .map((l) => ({ kind: l.kind, sources: JSON.stringify(l.sources), amount_cents: String(l.amount_cents) }));
+    }
+    // The same held lines for every driver at once, each with its driver (data/read.ts
+    // readCashFridayInput). A seed plan stores no lines, so this answers from a test's list, or none.
+    if (sql === HELD_ALL_SQL) {
+      const [periodId, start] = params.map(String);
+      const periods = new Map((tables.settlement_periods ?? []).map((p) => [String(p.id), p]));
+      const held = new Map(
+        (tables.settlements ?? [])
+          .filter((s) =>
+            s.status === "draft"
+              ? String(periods.get(String(s.period_id))?.period_start) < start
+              : s.status === "approved" && String(s.period_id) !== periodId,
+          )
+          .map((s) => [String(s.id), String(s.driver_id)]),
+      );
+      return (tables.settlement_lines ?? [])
+        .filter((l) => ["advance_recovery", "deficit_recovery", "escrow"].includes(String(l.kind)))
+        .filter((l) => held.has(String(l.settlement_id)))
+        .map((l) => ({
+          driver_id: held.get(String(l.settlement_id)),
+          kind: l.kind,
+          sources: JSON.stringify(l.sources),
+          amount_cents: String(l.amount_cents),
+        }));
     }
     // The quarter review's own reads (briefs/quarter-figures.ts). A seed plan holds no proposals,
     // so the fixes and the detention they billed answer from a proposals list a test adds, or none.
@@ -348,6 +401,8 @@ function filterRows(rows: TenantRows, all: Row[], where: string | undefined, par
   if (where === undefined) return all;
   const col = BY_COLUMN.exec(where);
   if (col) return all.filter((r) => r[col[1]] === params[0]);
+  // The pay run's advances read: a seed plan has no card pull-backs, so none is held back.
+  if (where === `driver_id = CAST($1 AS uuid) AND ${NO_LIVE_PULL}`) return all.filter((r) => r.driver_id === params[0]);
   if (where === BY_DRIVER_LOADS) {
     const loadIds = new Set(rows.loads.filter((l) => l.driver_id === params[0]).map((l) => l.id));
     return all.filter((r) => loadIds.has(r.load_id as string));
@@ -385,6 +440,27 @@ function filterRows(rows: TenantRows, all: Row[], where: string | undefined, par
   if (where === PURCHASED_BETWEEN) {
     const [start, end] = params as string[];
     return all.filter((r) => typeof r.purchased_on === "string" && r.purchased_on >= start && r.purchased_on <= end);
+  }
+  // The driver insights' window reads (data/driver-insights.ts): the pay weeks ending in the window,
+  // their paid stubs and those stubs' fuel lines, the loads delivered in it, the advances owed on.
+  if ((Object.values(INSIGHT_WHERE) as string[]).includes(where)) {
+    if (where === INSIGHT_WHERE.advances) {
+      if (params.length !== 0) throw new Error("unexpected advances parameters");
+      return all.filter((r) => r.status === "approved" || r.status === "paid");
+    }
+    if (params.length !== 2) throw new Error("unexpected insight window parameters");
+    const [start, end] = params as string[];
+    const between = (d: unknown) => typeof d === "string" && d >= start && d <= end;
+    if (where === INSIGHT_WHERE.loads) {
+      return all.filter((r) => (r.status === "delivered" || r.status === "invoiced") && between(r.delivered_on));
+    }
+    const periods = new Set(rows.settlement_periods.filter((p) => between(p.period_end)).map((p) => p.id));
+    if (where === INSIGHT_WHERE.settlement_periods) return all.filter((r) => periods.has(r.id as string));
+    const paid = new Set(
+      rows.settlements.filter((st) => st.status === "paid" && periods.has(st.period_id)).map((st) => st.id),
+    );
+    if (where === INSIGHT_WHERE.settlements) return all.filter((r) => paid.has(r.id as string));
+    return all.filter((r) => r.kind === "fuel" && paid.has(r.settlement_id as string));
   }
   const paidWhere = [PAID_WHERE.all, PAID_WHERE.oneDriver].find((w) => Object.values(w).includes(where));
   if (paidWhere) {

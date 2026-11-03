@@ -78,6 +78,8 @@ export function applyHistory({ slug, zone, rows, newId }: HistoryArgs): void {
         items: [...rows.pay_items, ...carried].filter((i) => i.driver_id === d.id).map(payItemOf),
         schedules: (schedules.get(d.id) ?? []).map(scheduleOf),
         advances: (advances.get(d.id) ?? []).map(advanceOf),
+        // The seed writes no deficits, so its history recovers none.
+        deficits: [],
         escrowBalanceCents: driverOf(d).escrowBalanceCents,
       });
       const settlementId = newId();
@@ -121,6 +123,8 @@ export function applyHistory({ slug, zone, rows, newId }: HistoryArgs): void {
         escrow_closing_cents: writes.escrow.closingCents,
         parked_reason: null,
         parked_at: null,
+        stub_sent_at: null,
+        stub_sent_by: null,
       };
       rows.settlements.push(settlement);
       for (const line of result.lines) {
@@ -133,6 +137,8 @@ export function applyHistory({ slug, zone, rows, newId }: HistoryArgs): void {
           amount_cents: line.amountCents,
           sources: line.sources.map((s) => ({ table: s.table, id: s.id })),
           meta: line.meta ? { ...line.meta } : null,
+          entered_by: null,
+          source_ref: null,
         };
         rows.settlement_lines.push(row);
       }
@@ -160,6 +166,7 @@ export function applyHistory({ slug, zone, rows, newId }: HistoryArgs): void {
           item_ref: `${slug}-carry-${++carryN}`,
           description: writes.carried.description,
           settlement_id: null,
+          entered_by: null,
         });
       }
     }

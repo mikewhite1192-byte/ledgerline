@@ -108,11 +108,12 @@ describe("demo rows through a login that skips row-level security", () => {
       { cognito_sub: `service:sweep:${A}`, email: `sweep@${carrierA.slug}.invalid`, role: "staff" },
       { cognito_sub: `sub-${A}`, email: carrierA.email, role: "admin" },
     ]);
-    // The starting autopilot rules: Auto on the three kinds that move no money out of the company,
-    // and on the two that pay a driver, with a driver's day (still unarmed in flags.autopilot.kinds).
+    // The starting autopilot rules: Auto on the two kinds that move no money out of the company and
+    // can be checked, Ask me on a card match, and Auto on the two that pay a driver, with a driver's
+    // day (still unarmed in flags.autopilot.kinds).
     expect(a.rules).toMatchObject([
       { kind: "advance_payout", mode: "auto", max_cents: 30000, day_max_cents: 150000, day_max_count: 10, driver_day_max_cents: 30000, version: 1 },
-      { kind: "card_match", mode: "auto", max_cents: 50000, day_max_cents: 300000, day_max_count: 40, driver_day_max_cents: null, version: 1, updated_by: "setup" },
+      { kind: "card_match", mode: "ask", max_cents: 50000, day_max_cents: 300000, day_max_count: 40, driver_day_max_cents: null, version: 1, updated_by: "setup" },
       { kind: "invoice_post", mode: "auto", max_cents: 200000, day_max_cents: 1000000, day_max_count: 25, driver_day_max_cents: null, version: 1 },
       { kind: "money_code", mode: "auto", max_cents: 15000, day_max_cents: 60000, day_max_count: 4, driver_day_max_cents: 30000, version: 1 },
       { kind: "payment_reapply", mode: "auto", max_cents: 200000, day_max_cents: 1000000, day_max_count: 25, driver_day_max_cents: null, version: 1 },

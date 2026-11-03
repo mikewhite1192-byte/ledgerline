@@ -167,7 +167,8 @@ async function payCorrectionCheck(q: Queryable, p: ProposalRow, raw: Record<stri
   const [period] = await readRowsWhereId(q, "settlement_periods", "id", periodId);
   if (!period) return ENGINE_UNAVAILABLE;
   const window = { start: period.period_start, end: period.period_end };
-  const input = await readCheckInput(q);
+  // Under that week's own pay rules version, the one the sweep drafted the correction under (D-093).
+  const input = await readCheckInput(q, period.period_start);
   const legs: FixLeg[] = [];
   for (const f of runAllChecks(input)) {
     if (!findingInWeek(f, input, window)) continue;

@@ -146,6 +146,23 @@ const DOCUMENT_READS = [
   },
 ];
 
+// The autopilot's owner-side modules: agent code may use its readers and its pure policy
+// (autopilot/facts, mode, read, session, policy), never the rules admin that saves the owner's
+// rules, the pause switch (state) or anything else under autopilot/. The model never sets a rule
+// or the pause.
+const AUTOPILOT_READS = [
+  {
+    regex: "(^|/)autopilot/(?!(facts|mode|read|session|policy)(\\.[cm]?[jt]s)?$)",
+    message:
+      "Agent code never saves an autopilot rule or sets the pause; from autopilot/ it may import " +
+      "facts, mode, read, session and policy.",
+  },
+  {
+    regex: "(^|/)autopilot(\\.[cm]?[jt]s)?$",
+    message: "Import the autopilot module you need (facts, mode, read, session, policy).",
+  },
+];
+
 // Outside the gateway, agent code reaches records, the engine and money only by tool calls.
 const GATEWAY_ONLY = [
   {
@@ -218,14 +235,15 @@ const eslintConfig = [
   // included), so each dependency is checked statically, and every block refuses fetch,
   // XMLHttpRequest, WebSocket and EventSource, bare or through globalThis, window, self or global
   // (an alias of the global object is left to review). Every block also limits documents/ to
-  // types, schema, match and candidates: no upload, store or model read. Matching ignores case
+  // types, schema, match and candidates: no upload, store or model read, and autopilot/ to facts,
+  // mode, read, session and policy: no rule save and no pause. Matching ignores case
   // (case-insensitive file systems).
   // A re-export from a file outside these folders is not caught here; the import-boundary test
   // walks those.
   {
     files: ["src/lib/agent/**", "src/app/api/agent/**"],
     rules: {
-      "no-restricted-imports": ["error", agentImportRule([...GATEWAY_ONLY, AI_ONLY, ...NO_DIRECT_IO, ...DOCUMENT_READS, NO_VM])],
+      "no-restricted-imports": ["error", agentImportRule([...GATEWAY_ONLY, AI_ONLY, ...NO_DIRECT_IO, ...DOCUMENT_READS, ...AUTOPILOT_READS, NO_VM])],
       "no-restricted-syntax": ["error", ...NO_DYNAMIC_LOADING],
       ...NO_STRING_CODE,
       ...NO_NETWORK,
@@ -235,13 +253,13 @@ const eslintConfig = [
   {
     files: ["src/lib/agent/gateway/**"],
     rules: {
-      "no-restricted-imports": ["error", agentImportRule([...LEDGER_WRITES, ...DOCUMENT_READS, NO_VM])],
+      "no-restricted-imports": ["error", agentImportRule([...LEDGER_WRITES, ...DOCUMENT_READS, ...AUTOPILOT_READS, NO_VM])],
     },
   },
   {
     files: ["src/lib/agent/operator/turn.ts", "src/lib/agent/auditor/run.ts", "src/lib/agent/sweep/explain.ts"],
     rules: {
-      "no-restricted-imports": ["error", agentImportRule([...GATEWAY_ONLY, ...NO_DIRECT_IO, ...DOCUMENT_READS, NO_VM])],
+      "no-restricted-imports": ["error", agentImportRule([...GATEWAY_ONLY, ...NO_DIRECT_IO, ...DOCUMENT_READS, ...AUTOPILOT_READS, NO_VM])],
     },
   },
 ];

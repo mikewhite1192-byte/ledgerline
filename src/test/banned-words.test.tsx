@@ -106,6 +106,8 @@ import { PROPOSAL_CHECK_WORDS } from "@/lib/agent/verify/required";
 import { escalatedRow } from "@/lib/home/needs-you";
 import { VOICE_STATUS_WORDS } from "@/lib/voice/words";
 import * as fx from "./page-fixtures";
+import * as autopilotWords from "@/app/settings/autopilot/words";
+import { RULE_KINDS, autoOffered } from "@/lib/autopilot/rules-admin";
 
 // Every screen a person reads, rendered with fixture rows and scanned for the words that belong to
 // the code, not to a trucking office (design-ui-ease section 3). A new route file under src/app (a
@@ -364,6 +366,7 @@ vi.mock("@/lib/ai/watch", async (importOriginal) => ({
 vi.mock("@/lib/sweep/view", async (importOriginal) => ({
   ...(await importOriginal<typeof import("@/lib/sweep/view")>()),
   readSweepHome: async () => get("sweepHome"),
+  readLatestSweepRun: async () => ((await get("sweepHome")) as { runs: unknown[] }).runs[0] ?? null,
   readSweepPage: async () => get("sweepPage"),
 }));
 vi.mock("@/lib/fuel/view", async (importOriginal) => ({
@@ -409,12 +412,82 @@ vi.mock("@/lib/seed/reset", async (importOriginal) => ({
   demoCarrierOf: async () => DEMO_CARRIERS[0],
   previewDemoReset: async () => get("demoPreview"),
 }));
+// The sample dispatch system's reads (src/app/tms-demo): one load on its board, picked up, with
+// its delivery open.
+vi.mock("@/lib/mock-tms/store", async (importOriginal) => {
+  const at = "2026-11-02T15:20:00.000Z";
+  return {
+    ...(await importOriginal<typeof import("@/lib/mock-tms/store")>()),
+    readBoard: async () => ({
+      zone: "America/Chicago",
+      rows: [
+        {
+          reference: "ML20001",
+          statusLabel: "In Transit",
+          customerName: "Sample Shipper",
+          driverExternalId: "drv-1",
+          truckUnit: "101",
+          lane: "Joliet, IL to Gary, IN",
+          updatedAt: at,
+        },
+      ],
+    }),
+    readMockLoad: async () => ({
+      zone: "America/Chicago",
+      load: {
+        reference: "ML20001",
+        externalId: "syn:demo:ML20001",
+        statusLabel: "In Transit",
+        customerName: "Sample Shipper",
+        driverExternalId: "drv-1",
+        truckUnit: "101",
+        pickedUpAt: at,
+        deliveredAt: null,
+        finalizedAt: null,
+        updatedAt: at,
+        lastHookAt: at,
+        lastHookResult: "sent",
+      },
+      stops: [
+        { kind: "pickup", name: "Sample Dock", city: "Joliet", state: "IL", apptFromLocal: "2026-11-02T08:00", apptToLocal: "2026-11-02T10:00", arrivedAt: at, completedAt: at },
+        { kind: "delivery", name: "Sample Yard", city: "Gary", state: "IN", apptFromLocal: "2026-11-02T14:00", apptToLocal: "2026-11-02T16:00", arrivedAt: null, completedAt: null },
+      ],
+      lines: [{ typeLabel: "Linehaul", description: "Linehaul", amountCents: 150000 }],
+      documents: [],
+      history: [{ seq: 2, field: "status", from: "Booked", to: "In Transit", by: "Dispatch desk", at }],
+      drivers: [{ externalId: "drv-1", name: "Sample Driver One" }],
+    }),
+  };
+});
+// The sample dispatch system's New load form: one customer, one driver, the open pay week.
+vi.mock("@/lib/mock-tms/new-load", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("@/lib/mock-tms/new-load")>()),
+  readNewLoadForm: async () => ({
+    zone: "America/Chicago",
+    today: "2026-11-01",
+    customers: [{ code: "CUST-1", name: "Sample Shipper" }],
+    drivers: [{ externalId: "drv-1", name: "Sample Driver One" }],
+    openWeek: { start: "2026-10-26", end: "2026-11-01" },
+    made: 1,
+  }),
+  ourLoadIdOf: async () => null,
+}));
+vi.mock("@/lib/data/driver-insights", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("@/lib/data/driver-insights")>()),
+  readDriverInsightInput: async () => get("driverInsightInput"),
+  readCardedDrivers: async () => new Set(get<string[]>("cardedDrivers")),
+}));
 vi.mock("@/lib/settlements/views", async (importOriginal) => ({
   ...(await importOriginal<typeof import("@/lib/settlements/views")>()),
   readSettlementsView: async () => get("settlementsView"),
   readSettlementRecord: async () => get("settlementRecord"),
   readDriverRecord: async () => get("driverRecord"),
   readBatchRecord: async () => get("batchRecord"),
+}));
+// Settings > Autopilot's read: the carrier's rules, each kind's picture and the pause.
+vi.mock("@/lib/autopilot/rules-admin", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("@/lib/autopilot/rules-admin")>()),
+  readRules: async () => get("autopilotRules"),
 }));
 vi.mock("@/lib/settlements/list", async (importOriginal) => ({
   ...(await importOriginal<typeof import("@/lib/settlements/list")>()),
@@ -531,6 +604,8 @@ function defaults(): Record<string, unknown> {
     voiceList: fx.VOICE_LIST,
     voiceDetail: fx.VOICE_DETAIL,
     settlementsView: fx.SETTLEMENTS_VIEW,
+    driverInsightInput: fx.DRIVER_INSIGHT_INPUT,
+    cardedDrivers: fx.CARDED_DRIVER_IDS,
     settlementRecord: fx.SETTLEMENT_RECORD,
     driverRecord: fx.DRIVER_RECORD,
     batchRecord: fx.BATCH_RECORD,
@@ -562,6 +637,52 @@ function defaults(): Record<string, unknown> {
     factoredLine: null,
     quarterView: fx.QUARTER_VIEW,
   };
+}
+
+// Settings > Autopilot: one saved Auto rule, every other kind on Ask me, and the pause as each
+// variant sets it.
+const AUTOPILOT_PICTURE = {
+  rules: [
+    {
+      id: "33333333-3333-4333-8333-333333333333",
+      kind: "invoice_post",
+      mode: "auto",
+      maxCents: 100_000,
+      dayMaxCents: 500_000,
+      dayMaxCount: 10,
+      driverDayMaxCents: null,
+      version: 2,
+      updatedAt: "2026-11-02T16:00:00.000Z",
+    },
+  ],
+  kinds: RULE_KINDS.map((kind) => {
+    const ceiling = Object.hasOwn(flags.autopilot.kinds, kind) ? flags.autopilot.kinds[kind as keyof typeof flags.autopilot.kinds]! : null;
+    return {
+      kind,
+      mode: kind === "invoice_post" ? "auto" : "ask",
+      allowedAuto: autoOffered(kind),
+      listed: ceiling !== null,
+      armed: ceiling?.armed === true,
+      ceiling,
+    };
+  }),
+  pause: { paused: false, pausedAt: null, pausedUntil: null, pausedBy: null, revision: null },
+  startDate: "2026-10-31",
+};
+
+// The autopilot page with its switch on, the viewer's role as given (the shared fake answers admin).
+async function autopilotPage(role: "admin" | "staff" = "admin"): Promise<ReactNode> {
+  const savedSwitch = flags.autopilotRules;
+  const q = fakeQ as unknown as { query: (sql: string, params?: unknown[]) => Promise<unknown[]> };
+  const real = q.query;
+  flags.autopilotRules = { enabled: true };
+  if (role !== "admin") q.query = async (sql, params) => (/FROM memberships/.test(sql) ? [{ role }] : real(sql, params));
+  try {
+    return await (await import("@/app/settings/autopilot/page")).default();
+  } finally {
+    flags.autopilotRules = savedSwitch;
+    q.query = real;
+  }
 }
 
 // Every switch on, so each page shows its working state, not the off page. Money codes is a switch
@@ -792,6 +913,20 @@ const SETTLEMENT_CASES: [string, SettlementRecordView][] = [
       settlement: { ...fx.SETTLEMENT_RECORD.settlement, status: "paid", paidAt: "2026-10-27T16:00:00.000Z" },
       legs: [...fx.SETTLEMENT_RECORD.legs, { ...fx.SETTLEMENT_RECORD.legs[0], id: fx.ID, state: "confirmed", attempt: 3, failureCategory: null }],
       latest: { settlement_payout: "confirmed", settlement_bill: "failed", settlement_bill_payment: null },
+    },
+  ],
+  [
+    "paid, stub marked sent",
+    {
+      ...fx.SETTLEMENT_RECORD,
+      settlement: {
+        ...fx.SETTLEMENT_RECORD.settlement,
+        status: "paid",
+        paidAt: "2026-10-27T16:00:00.000Z",
+        stubSentAt: "2026-10-28T15:00:00.000Z",
+      },
+      latest: { settlement_payout: "confirmed", settlement_bill: "confirmed", settlement_bill_payment: "confirmed" },
+      stubSent: { at: "2026-10-28T15:00:00.000Z", byRole: "staff" },
     },
   ],
 ];
@@ -1523,6 +1658,78 @@ const PAGES: PageCase[] = [
         setup: () => (state.fx.driverRecord = { ...fx.DRIVER_RECORD, settlements: [], advances: [], ownInsurance: false, activeTo: "2026-09-30" }),
         load: async () => (await import("@/app/records/drivers/[id]/page")).default({ params: p({ id: ID }) }),
       },
+      {
+        name: "just added, driver admin on",
+        setup: () => {
+          state.fx.driverRecord = { ...fx.DRIVER_RECORD, settlements: [], advances: [] };
+          state.fx.identity = { ...fx.IDENTITY, armed: { on: false, since: null }, tmsIds: [], cards: [] };
+        },
+        load: async () => {
+          // The activation checklist's reads are not in this fake: off here.
+          const checklistWas = flags.activationChecklist.enabled;
+          flags.driverAdmin.enabled = true;
+          flags.activationChecklist.enabled = false;
+          try {
+            return await (await import("@/app/records/drivers/[id]/page")).default({ params: p({ id: ID }) });
+          } finally {
+            flags.driverAdmin.enabled = false;
+            flags.activationChecklist.enabled = checklistWas;
+          }
+        },
+        shows: ["Before this driver can take an advance: add a card, then arm them.", "Not armed", "Status", "Active", "Deactivate"],
+      },
+      {
+        name: "departed, driver admin on",
+        setup: () => {
+          onDay("2026-11-02T15:00:00.000Z");
+          state.fx.identity = { ...fx.IDENTITY, activeTo: "2026-10-30", armed: { on: false, since: null } };
+        },
+        load: async () => {
+          flags.driverAdmin.enabled = true;
+          try {
+            return await (await import("@/app/records/drivers/[id]/page")).default({ params: p({ id: ID }) });
+          } finally {
+            flags.driverAdmin.enabled = false;
+          }
+        },
+        shows: ["Departed, last day Oct 30, 2026", "Reactivate"],
+      },
+      {
+        name: "card on file, not armed, driver admin on",
+        setup: () => {
+          state.fx.driverRecord = { ...fx.DRIVER_RECORD, settlements: [], advances: [] };
+          state.fx.identity = { ...fx.IDENTITY, armed: { on: false, since: null } };
+        },
+        load: async () => {
+          // The activation checklist's reads are not in this fake: off here.
+          const checklistWas = flags.activationChecklist.enabled;
+          flags.driverAdmin.enabled = true;
+          flags.activationChecklist.enabled = false;
+          try {
+            return await (await import("@/app/records/drivers/[id]/page")).default({ params: p({ id: ID }) });
+          } finally {
+            flags.driverAdmin.enabled = false;
+            flags.activationChecklist.enabled = checklistWas;
+          }
+        },
+        shows: ["Before this driver can take an advance: arm them.", "Not armed"],
+      },
+      {
+        name: "deactivated, driver admin on",
+        setup: () => {
+          state.fx.driverRecord = { ...fx.DRIVER_RECORD, settlements: [], advances: [] };
+          state.fx.identity = { ...fx.IDENTITY, armed: { on: false, since: null }, activeTo: "2026-09-30" };
+        },
+        load: async () => {
+          flags.driverAdmin.enabled = true;
+          try {
+            return await (await import("@/app/records/drivers/[id]/page")).default({ params: p({ id: ID }) });
+          } finally {
+            flags.driverAdmin.enabled = false;
+          }
+        },
+        shows: "Not armed",
+      },
     ],
   },
   {
@@ -1599,6 +1806,68 @@ const PAGES: PageCase[] = [
     })),
   },
   {
+    file: "drivers/page.tsx",
+    variants: [
+      {
+        name: "active drivers",
+        setup: () => onDay("2026-11-02T15:00:00.000Z"),
+        load: async () => (await import("@/app/drivers/page")).default(sp()),
+        shows: ["Rosa Delgado", "No card", "top net Rosa Delgado (BR-D07) $2,225.00"],
+      },
+      {
+        name: "departed, by owed, last 90 days",
+        setup: () => onDay("2026-11-02T15:00:00.000Z"),
+        load: async () => (await import("@/app/drivers/page")).default(sp({ status: "departed", sort: "owed", days: "90" })),
+        shows: ["Lena Ortiz", "Departed", "Last 90 days"],
+      },
+      {
+        name: "search with no match",
+        setup: () => onDay("2026-11-02T15:00:00.000Z"),
+        load: async () => (await import("@/app/drivers/page")).default(sp({ q: "nobody" })),
+        shows: "No driver matches that search",
+      },
+      {
+        name: "no drivers yet",
+        setup: () => {
+          onDay("2026-11-02T15:00:00.000Z");
+          state.fx.driverInsightInput = { ...fx.DRIVER_INSIGHT_INPUT, drivers: [], periods: [], settlements: [], lines: [], loads: [], advances: [], deficits: [] };
+        },
+        load: async () => (await import("@/app/drivers/page")).default(sp()),
+        shows: "no paid paystubs, deliveries or amounts owed yet",
+      },
+      {
+        name: "driver admin on",
+        setup: () => onDay("2026-11-02T15:00:00.000Z"),
+        load: async () => {
+          flags.driverAdmin.enabled = true;
+          try {
+            return await (await import("@/app/drivers/page")).default(sp());
+          } finally {
+            flags.driverAdmin.enabled = false;
+          }
+        },
+        shows: ["Rosa Delgado", "Add driver"],
+      },
+    ],
+  },
+  {
+    file: "drivers/new/page.tsx",
+    variants: [
+      {
+        name: "form",
+        load: async () => {
+          flags.driverAdmin.enabled = true;
+          try {
+            return await (await import("@/app/drivers/new/page")).default();
+          } finally {
+            flags.driverAdmin.enabled = false;
+          }
+        },
+        shows: ["Add a driver", "Driver code", "starts not armed and with no card"],
+      },
+    ],
+  },
+  {
     file: "settlements/page.tsx",
     variants: [
       { name: "week", load: async () => (await import("@/app/settlements/page")).default(sp()) },
@@ -1672,6 +1941,68 @@ const PAGES: PageCase[] = [
   {
     file: "settings/demo/page.tsx",
     variants: [{ name: "preview", load: async () => (await import("@/app/settings/demo/page")).default() }],
+  },
+  {
+    file: "settings/autopilot/page.tsx",
+    variants: [
+      {
+        name: "an admin, running",
+        setup: () => (state.fx.autopilotRules = AUTOPILOT_PICTURE),
+        load: () => autopilotPage(),
+        shows: ["Pause autopilot", "Sending invoices", "Weekly settlements", "Oct 31, 2026", autopilotWords.NEVER_ALONE_NOTE],
+      },
+      {
+        name: "an admin, paused by a person",
+        setup: () =>
+          (state.fx.autopilotRules = {
+            ...AUTOPILOT_PICTURE,
+            pause: { paused: true, pausedAt: "2026-11-02T15:00:00.000Z", pausedUntil: null, pausedBy: "person", revision: "812" },
+          }),
+        load: () => autopilotPage(),
+        shows: ["Resume autopilot", "Paused. A person decides everything until an admin resumes it."],
+      },
+      {
+        name: "paused after the demo reset",
+        setup: () =>
+          (state.fx.autopilotRules = {
+            ...AUTOPILOT_PICTURE,
+            pause: { paused: true, pausedAt: "2026-11-02T15:00:00.000Z", pausedUntil: "2026-11-02T15:30:00.000Z", pausedBy: "demo_reset", revision: "812" },
+          }),
+        load: () => autopilotPage(),
+        shows: "Paused for a short while after the demo reset. It resumes by itself.",
+      },
+      {
+        name: "staff",
+        setup: () => (state.fx.autopilotRules = AUTOPILOT_PICTURE),
+        load: () => autopilotPage("staff"),
+        shows: [autopilotWords.ADMIN_ONLY, "Pause autopilot", "Ask me"],
+      },
+      {
+        // The read-only table shows the limits, and Auto on a kind not switched on yet says so.
+        name: "staff, Auto saved on a kind not switched on yet",
+        setup: () =>
+          (state.fx.autopilotRules = {
+            ...AUTOPILOT_PICTURE,
+            rules: [
+              ...AUTOPILOT_PICTURE.rules,
+              {
+                id: "44444444-4444-4444-8444-444444444444",
+                kind: "advance_payout",
+                mode: "auto",
+                maxCents: 30_000,
+                dayMaxCents: 150_000,
+                dayMaxCount: 10,
+                driverDayMaxCents: 30_000,
+                version: 1,
+                updatedAt: "2026-11-02T16:00:00.000Z",
+              },
+            ],
+            kinds: AUTOPILOT_PICTURE.kinds.map((k) => (k.kind === "advance_payout" ? { ...k, mode: "auto", armed: false } : k)),
+          }),
+        load: () => autopilotPage("staff"),
+        shows: [autopilotWords.NOT_ARMED_NOTE, autopilotWords.LIMIT_LABELS.driverDayMaxCents, "150000"],
+      },
+    ],
   },
   {
     file: "settings/pay-rules/page.tsx",
@@ -1904,6 +2235,76 @@ const PAGES: PageCase[] = [
         setup: () => (state.session = SESSION),
         load: async () => (await import("@/app/not-found")).default(),
         shows: fx.TENANT.name,
+      },
+    ],
+  },
+  {
+    file: "tms-demo/layout.tsx",
+    variants: [
+      {
+        name: "around a sample dispatch page",
+        load: async () => {
+          flags.mockTms.enabled = true;
+          try {
+            return (await import("@/app/tms-demo/layout")).default({ children: <p>Loads</p> });
+          } finally {
+            flags.mockTms.enabled = false;
+          }
+        },
+        shows: "Sample dispatch system",
+      },
+    ],
+  },
+  {
+    file: "tms-demo/page.tsx",
+    variants: [
+      {
+        name: "the board",
+        load: async () => {
+          flags.mockTms.enabled = true;
+          try {
+            return await (await import("@/app/tms-demo/page")).default();
+          } finally {
+            flags.mockTms.enabled = false;
+          }
+        },
+        shows: ["ML20001", "In Transit"],
+      },
+    ],
+  },
+  {
+    file: "tms-demo/loads/[ref]/page.tsx",
+    variants: [
+      {
+        name: "a load picked up",
+        load: async () => {
+          flags.mockTms.enabled = true;
+          try {
+            return await (await import("@/app/tms-demo/loads/[ref]/page")).default({ params: p({ ref: "ML20001" }) });
+          } finally {
+            flags.mockTms.enabled = false;
+          }
+        },
+        shows: ["Load ML20001", "Complete delivery", "Set status"],
+      },
+    ],
+  },
+  {
+    file: "tms-demo/loads/new/page.tsx",
+    variants: [
+      {
+        name: "the new load form",
+        load: async () => {
+          const saved = { ...flags.mockTms };
+          flags.mockTms.enabled = true;
+          flags.mockTms.newLoad = true;
+          try {
+            return await (await import("@/app/tms-demo/loads/new/page")).default();
+          } finally {
+            Object.assign(flags.mockTms, saved);
+          }
+        },
+        shows: ["New load", "Create load", "Oct 26 to Nov 1, 2026", "Sample Shipper"],
       },
     ],
   },
@@ -3025,6 +3426,7 @@ describe("no internal word on a pay week's buttons and notes", () => {
       doneNote("run", { counts: { drafts: 3, exceptions: 1, locked: 1, truncated: true } }),
       ...states.map((st) => doneNote("retry", { state: st })),
       ...states.map((st) => doneNote("post", { legs: { bill: st, billPayment: st } })),
+      doneNote("stub_sent", { ok: true, already: false, sentAt: "2026-10-28T15:00:00.000Z" }),
     ];
     const { container } = render(
       <ul>

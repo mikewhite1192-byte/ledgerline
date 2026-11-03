@@ -40,6 +40,10 @@ describe("askWords", () => {
     expect(of("card_load_ruling", { driverName: null, loadNumber: null, customerName: null })).toBe(
       "I drafted a card load ruling for this record, $1,400.00. Approve?",
     );
+    expect(of("deficit_book", { amountCents: 40_000 })).toBe(
+      "Load BR-1042 was cancelled after Dana Reyes got a $400.00 advance on it. Yes books the $400.00 as money Dana Reyes owes, taken back from later pay.",
+    );
+    expect(of("deficit_book", { loadNumber: null })).toBe("I drafted a cancelled trip's deficit for Dana Reyes, $1,400.00. Approve?");
     for (const kind of ASKED_KINDS) expect(isAskedKind(kind)).toBe(true);
     expect(isAskedKind("card_match")).toBe(false);
   });

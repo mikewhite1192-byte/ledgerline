@@ -82,7 +82,8 @@ async function readRosterRows(q: Queryable): Promise<RosterRows> {
 // sorts last), then by code. Past maxDrivers the rest are skipped as over_limit.
 export async function readRoster(q: Queryable, runId: string, window: Window, maxDrivers: number): Promise<Roster> {
   const rows = await readRosterRows(q);
-  const input = checkInputOf(rows);
+  // Under the run's week's pay rules version, as the run's find reads it.
+  const input = checkInputOf(rows, window.start);
   const found = await q.query<{ driver_id: string; category: string; n: number | string }>(
     `SELECT driver_id, category, COUNT(*) AS n FROM sweep_items
       WHERE seen_run_id = CAST($1 AS uuid) AND driver_id IS NOT NULL AND finding_key NOT LIKE 'fanout:%'

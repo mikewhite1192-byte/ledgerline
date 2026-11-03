@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+import type { Param, Queryable } from "../db";
 import { maxDuration as internalLimitS } from "../../app/api/internal/sweep/route";
 import { maxDuration as advanceLimitS } from "../../app/api/sweeps/[id]/advance/route";
 import { maxDuration as startLimitS } from "../../app/api/sweeps/route";
@@ -9,6 +10,7 @@ import {
   DRAFT_STEP_OVERRUN_MS,
   earlierOutcome,
   MAX_DRAFT_ATTEMPTS,
+  openPeriod,
   STOP_BEFORE_MS,
   TRANSIENT_REFUSALS,
 } from "./run";
@@ -49,5 +51,35 @@ describe("an earlier fix's outcome", () => {
     expect(earlierOutcome("expired")).toBe("expired_earlier");
     expect(earlierOutcome("rejected")).toBe("declined_earlier");
     expect(earlierOutcome("failed")).toBe("declined_earlier");
+  });
+});
+
+// A stand-in for the periods table: it keeps the open row the SQL names, one row. The week picked
+// when none is named (readDueWeek) reads against the real database (roll.db.test.ts).
+function periodsDb(rows: { id: string; period_start: string; status: string }[]): Queryable {
+  return {
+    async query<T>(sql: string, params: Param[] = []): Promise<T[]> {
+      expect(sql).toMatch(/status = 'open' AND id = CAST\(\$1 AS uuid\)/);
+      return rows
+        .filter((r) => r.status === "open" && r.id === params[0])
+        .map((r) => ({ id: r.id, period_start: r.period_start, period_end: r.period_start })) as T[];
+    },
+    async execute() {
+      throw new Error("openPeriod writes nothing");
+    },
+  };
+}
+
+describe("the run's open week", () => {
+  const rows = [
+    { id: "w-paid", period_start: "2026-10-19", status: "paid" },
+    { id: "w-old", period_start: "2026-10-26", status: "open" },
+    { id: "w-new", period_start: "2026-11-02", status: "open" },
+  ];
+
+  it("is the named week while it is open, and none when the named week is not open", async () => {
+    expect((await openPeriod(periodsDb(rows), "w-old"))?.id).toBe("w-old");
+    expect((await openPeriod(periodsDb(rows), "w-new"))?.id).toBe("w-new");
+    expect(await openPeriod(periodsDb(rows), "w-paid")).toBeNull();
   });
 });

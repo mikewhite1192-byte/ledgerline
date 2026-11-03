@@ -384,8 +384,9 @@ describe("trust_meter: the notes", () => {
 
 describe("trust_meter: a tool result cut to fit", () => {
   // Action types the result has room for beyond the ones the app has today. Each new kind spends
-  // one: 8 when this was written, 7 with the card pull-back (0080).
-  const ROOM_FOR_KINDS = 7;
+  // one: 8 when this was written, 7 with the card pull-back (0080), 6 with the cancelled trip's
+  // deficit card.
+  const ROOM_FOR_KINDS = 6;
   const READ_CAP = TRUST_PAGING.pageSize * TRUST_PAGING.maxPages;
 
   // The most decisions the reader returns, spread evenly over every action type the app has and

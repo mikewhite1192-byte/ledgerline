@@ -104,7 +104,7 @@ export default async function SweepPage() {
               </div>
               <div className="flex items-center gap-2">
                 {running ? <StatusBadge status="executing" label="Running" /> : null}
-                <StartSweep periodId={home.openPeriod?.id ?? null} running={running} />
+                <StartSweep hasOpenWeek={home.openPeriod !== null} running={running} />
               </div>
             </Card>
             {last && last.status !== "running" ? (

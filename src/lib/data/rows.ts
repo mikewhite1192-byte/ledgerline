@@ -83,6 +83,28 @@ export type DriverArmEventRow = {
   source: "seed" | "ui";
 };
 
+// One deactivation (active false) or reactivation (active true) of a driver, always a person's
+// (0081). The seed plans none.
+export type DriverStatusEventRow = {
+  id: string;
+  driver_id: string;
+  active: boolean;
+  effective_on: string;
+  note: string | null;
+  membership_id: string;
+};
+
+// One activation step an admin recorded on one of a driver's cards before arming them (0085):
+// identity confirmed, zero test sent or loads acknowledged. The seed plans none.
+export type DriverActivationStepRow = {
+  id: string;
+  driver_id: string;
+  card_id: string;
+  step: "identity_confirmed" | "zero_test_sent" | "hand_load_acknowledged";
+  note: string | null;
+  membership_id: string;
+};
+
 export type LoadRow = {
   id: string;
   load_number: string;
@@ -107,12 +129,12 @@ export type LoadRow = {
 };
 
 // One move of a load (0071, src/lib/loads/movement.ts). The seed writes one per status change
-// in its history, source seed, naming no evidence.
+// in its history, source seed, naming no evidence. A cancel (0080) is a person's press, never seeded.
 export type LoadEventRow = {
   id: string;
   load_id: string;
   from_status: "planned" | "in_transit";
-  to_status: "in_transit" | "delivered";
+  to_status: "in_transit" | "delivered" | "cancelled";
   source: "driver_photo" | "driver_text" | "driver_voice" | "staff" | "demo_feed" | "seed" | "tms";
   evidence_table: "documents" | "inbound_messages" | "voice_notes" | "tms_status_events" | null;
   evidence_id: string | null;
@@ -124,7 +146,7 @@ export type LoadEventRow = {
 // attempts, the rest mark, the tombstone, the token cache, the last pass) are runtime only.
 export type TmsConnectionRow = {
   id: string;
-  system: "synthetic";
+  system: "synthetic" | "mock";
   label_map: Record<string, string>;
   lookback_hours: number;
   finalize_cooloff_minutes: number;
@@ -243,6 +265,86 @@ export type TmsDocumentRow = {
   source_updated_at: string;
   review_state: "unreviewed" | "fetched" | "read" | "rejected";
   first_seen_at: string;
+};
+
+// The sample dispatch system (0088, src/lib/mock-tms/). The seed writes the board the synthetic
+// feed serves at the seeded instant (src/lib/seed/mock-tms.ts), id for id the mirror's snapshot;
+// a person's clicks on /tms-demo change it after. The last webhook send is runtime only.
+export type MockTmsPartyRow = {
+  id: string;
+  kind: "customer" | "driver" | "truck" | "trailer";
+  external_id: string;
+  name: string;
+  unit: string | null;
+  vin: string | null;
+};
+
+export type MockTmsLoadRow = {
+  id: string;
+  external_id: string;
+  reference: string;
+  status_label: string;
+  customer_external_id: string | null;
+  customer_name: string | null;
+  driver_external_id: string | null;
+  truck_unit: string | null;
+  trailer_unit: string | null;
+  vin: string | null;
+  picked_up_at: string | null;
+  delivered_at: string | null;
+  last_completed_at: string | null;
+  finalized_at: string | null;
+  created_at: string;
+  updated_at: string;
+  seeded: boolean;
+};
+
+export type MockTmsStopRow = {
+  id: string;
+  mock_load_id: string;
+  ordinal: number;
+  stop_kind: "pickup" | "delivery";
+  name: string;
+  city: string;
+  state: string;
+  appt_from_local: string | null;
+  appt_to_local: string | null;
+  arrived_at: string | null;
+  completed_at: string | null;
+};
+
+export type MockTmsEventRow = {
+  id: string;
+  mock_load_id: string;
+  seq: number;
+  external_id: string;
+  field: string;
+  new_value: string | null;
+  previous_value: string | null;
+  changed_by: string | null;
+  at: string;
+};
+
+export type MockTmsLineRow = {
+  id: string;
+  mock_load_id: string;
+  external_id: string;
+  item_group: "revenue" | "driver_pay" | "accessorial";
+  type_label: string;
+  description: string;
+  amount_cents: number;
+};
+
+export type MockTmsDocumentRow = {
+  id: string;
+  mock_load_id: string;
+  external_id: string;
+  file_name: string;
+  type_label: string;
+  shared: boolean;
+  uploader_kind: "driver_app" | "office" | "unknown";
+  byte_length: number;
+  updated_at: string;
 };
 
 export type LoadStateMilesRow = { id: string; load_id: string; state: string; miles: number };
@@ -365,6 +467,9 @@ export type SettlementRow = {
   // A draft whose lines no longer matched their sources at approval (0032); both null otherwise.
   parked_reason: string | null;
   parked_at: string | null;
+  // A staff member's record that they sent the paid stub (0086): when, and their membership.
+  stub_sent_at: string | null;
+  stub_sent_by: string | null;
 };
 
 export type SettlementLineRow = {
@@ -376,6 +481,9 @@ export type SettlementLineRow = {
   amount_cents: number;
   sources: { table: string; id: string }[];
   meta: Record<string, string | number | boolean | null> | null;
+  // A line a person typed (0084): their membership and the record it cites, '<table>:<uuid>'.
+  entered_by: string | null;
+  source_ref: string | null;
 };
 
 // A pay card (0052) as the tables read it: never its image bytes, which only the one checked
@@ -411,6 +519,8 @@ export type PayItemRow = {
   item_ref: string;
   description: string;
   settlement_id: string | null;
+  // The person who typed the item (0084), null for every item no person typed.
+  entered_by: string | null;
 };
 
 // A money code (0048). The seed plans none; the table is seeded so the demo reset empties it with
@@ -807,6 +917,8 @@ export type TenantRows = {
   driver_cards: DriverCardRow[];
   driver_identities: DriverIdentityRow[];
   driver_arm_events: DriverArmEventRow[];
+  driver_status_events: DriverStatusEventRow[];
+  driver_activation_steps: DriverActivationStepRow[];
   loads: LoadRow[];
   load_events: LoadEventRow[];
   tms_connections: TmsConnectionRow[];
@@ -816,6 +928,12 @@ export type TenantRows = {
   tms_status_events: TmsStatusEventRow[];
   tms_line_items: TmsLineItemRow[];
   tms_documents: TmsDocumentRow[];
+  mock_tms_parties: MockTmsPartyRow[];
+  mock_tms_loads: MockTmsLoadRow[];
+  mock_tms_stops: MockTmsStopRow[];
+  mock_tms_events: MockTmsEventRow[];
+  mock_tms_lines: MockTmsLineRow[];
+  mock_tms_documents: MockTmsDocumentRow[];
   load_state_miles: LoadStateMilesRow[];
   load_accessorials: LoadAccessorialRow[];
   driver_days: DriverDayRow[];

@@ -268,6 +268,26 @@ describe("paidWritesOf", () => {
     expect(w.carried).toBeNull();
   });
 
+  it("books each deficit recovery line against the one deficit it cites", () => {
+    const w = paidWritesOf({
+      settlementId: ID.settlement,
+      lines: [
+        { kind: "load_pay", amountCents: c(150_000), sources: [ref("loads", ID.a)] },
+        { kind: "deficit_recovery", amountCents: c(-4_000), sources: [ref("driver_deficits", ID.b)] },
+        { kind: "deficit_recovery", amountCents: c(-2_500), sources: [ref("driver_deficits", ID.c)] },
+      ],
+      carryForwardCents: c(0),
+      openingCents: 0,
+      periodEnd: "2026-11-01",
+    });
+    expect(w.deficitSettlements).toEqual([
+      { deficitId: ID.b, cents: 4_000 },
+      { deficitId: ID.c, cents: 2_500 },
+    ]);
+    expect(w.recoveries).toEqual([]);
+    expect(w.stampItemIds).toEqual([]);
+  });
+
   it("carries a shortfall into the next week's first day, citing the settlement", () => {
     const w = paidWritesOf({
       settlementId: ID.settlement,
@@ -296,6 +316,12 @@ describe("paidWritesOf", () => {
       paidWritesOf({ ...base, lines: [{ ...escrow, kind: "advance_recovery", sources: [ref("loads", ID.a)] }] }),
     ).toThrow(RangeError);
     expect(() => paidWritesOf({ ...base, lines: [], openingCents: 1.5 })).toThrow(RangeError);
+    const owed = { kind: "deficit_recovery" as const, amountCents: c(-100), sources: [ref("driver_deficits", ID.a)] };
+    expect(() =>
+      paidWritesOf({ ...base, lines: [{ ...owed, sources: [ref("driver_deficits", ID.a), ref("driver_deficits", ID.b)] }] }),
+    ).toThrow(RangeError);
+    expect(() => paidWritesOf({ ...base, lines: [{ ...owed, sources: [ref("advances", ID.a)] }] })).toThrow(RangeError);
+    expect(() => paidWritesOf({ ...base, lines: [{ ...owed, amountCents: c(0) }] })).toThrow(RangeError);
   });
 });
 

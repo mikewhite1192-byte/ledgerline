@@ -123,6 +123,16 @@ describe("due periods", () => {
     expect(dueToday("collections", { date: "2026-10-31", hour: 6 })).toBe(true);
   });
 
+  it("makes the morning digest due every day from 06:00, keyed by the local date", () => {
+    expect(dueToday("digest", { date: "2026-10-31", hour: 5 })).toBe(false);
+    expect(dueToday("digest", { date: "2026-10-31", hour: 6 })).toBe(true);
+    expect(dueToday("digest", { date: "2026-11-01", hour: 23 })).toBe(true);
+    expect(periodKey("digest", "2026-11-06")).toBe("digest:2026-11-06");
+    expect(parseEventKey("digest:2026-11-06")).toEqual({ source: "digest", subjectId: null });
+    expect(parseEventKey("digest:2026-W45")).toBeNull();
+    expect(parseEventKey("digest:2026-11-06.2")).toBeNull();
+  });
+
   it("makes the cash check due on Fridays from 06:00 only, keyed by the ISO week", () => {
     expect(dueToday("cash_check", { date: "2026-10-30", hour: 5 })).toBe(false);
     expect(dueToday("cash_check", { date: "2026-10-30", hour: 6 })).toBe(true);
@@ -137,6 +147,7 @@ describe("due periods", () => {
       { source: "sweep", key: "sweep:2026-11-06" },
       { source: "collections", key: "collections:2026-11-06" },
       { source: "cash_check", key: "cash_check:2026-W45" },
+      { source: "digest", key: "digest:2026-11-06" },
     ]);
     expect(duePeriodKeys({ date: "2026-10-31", hour: 5 }, "2026-10-31")).toEqual([
       { source: "sweep", key: "sweep:2026-10-31" },

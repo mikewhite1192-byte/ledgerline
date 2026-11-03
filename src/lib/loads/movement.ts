@@ -6,6 +6,7 @@ import { requireStaff } from "../auth/role";
 import type { Queryable, TenantDb } from "../db";
 import { parseRead } from "../documents/schema";
 import type { ReadStatus } from "../documents/types";
+import { cancelledTripEnabled, cancelledTripOn } from "../deficits/switches";
 import { AWAITING_RECHECK } from "../desk/log";
 import { finalizeInvoiceOn, proposeInvoiceOnFinalize } from "../invoices/finalize";
 import { persistEngineProposal } from "../proposals/engine";
@@ -48,6 +49,9 @@ import {
 // tms (0075): a status event mirrored from the dispatch system (src/lib/tms/sync.ts).
 export type MoveSource = "driver_photo" | "driver_text" | "driver_voice" | "staff" | "demo_feed" | "tms";
 export type MoveTo = "in_transit" | "delivered";
+// A person's press may also cancel a planned or in-transit load (CANCELLED-TRIP, S6c, 0080's
+// cancel step), only while flags.cancelledTrip is on. No automatic path ever cancels a load.
+export type StaffMoveTo = MoveTo | "cancelled";
 export type EvidenceTable = "documents" | "inbound_messages" | "voice_notes" | "tms_status_events";
 export type Evidence = { table: EvidenceTable; id: string };
 
@@ -189,7 +193,7 @@ type CardInput = {
   reason: MoveReason;
   subject: { table: "loads" | "drivers"; id: string };
   loadId: string | null;
-  toStatus: MoveTo | null;
+  toStatus: StaffMoveTo | null;
   deliveredOn?: LocalDate | null;
   evidence: Evidence | null;
   inputId?: string | null;
@@ -661,9 +665,11 @@ export async function moveFromTmsEvent(
       deliveredOn,
       evidence,
     });
+  // A load withdrawn there is a card, never a move. With the cancelled trip on for the event's day
+  // the card names the cancel, so a person's approval makes it (the executor asks the switch again).
   if (isWithdrawn(code)) {
     return load.status === "planned" || load.status === "in_transit"
-      ? cardOn("tms_withdrawn", null)
+      ? cardOn("tms_withdrawn", cancelledTripOn(row.day) ? "cancelled" : null)
       : { kind: "nothing", category: "recorded" };
   }
   // TMS-MIRROR (S3): finalized there drafts our delivered load's invoice card, from our own loads
@@ -727,7 +733,7 @@ export async function tmsGoneCard(q: Queryable, session: Session, loadId: string
 
 type When = { at: Instant; day: LocalDate; zone: string; today: LocalDate; times?: StopTimes };
 
-type CardOn = (reason: MoveReason, toStatus: MoveTo | null, deliveredOn?: LocalDate | null) => Promise<MoveOutcome>;
+type CardOn = (reason: MoveReason, toStatus: StaffMoveTo | null, deliveredOn?: LocalDate | null) => Promise<MoveOutcome>;
 
 // One move asked for by a message (cardOn set: a refusal is a card) or a person (cardOn null: a
 // refusal is returned). The status before it must be the one the move starts from and the date is
@@ -781,24 +787,61 @@ async function applyMove(
 // A person's press: Mark picked up and Mark delivered on a load, and a load_move card approved.
 
 export type StaffMoveResult =
-  | { ok: true; changed: boolean; to: MoveTo }
+  | { ok: true; changed: boolean; to: StaffMoveTo }
   | { ok: false; category: "validation" | "not_found" | MoveReason };
+
+const isStaffMoveTo = (to: unknown): to is StaffMoveTo =>
+  to === "in_transit" || to === "delivered" || (to === "cancelled" && cancelledTripEnabled());
+
+// The cancel: the status-guarded UPDATE from planned or in transit, then its one load_events row
+// (from the locked status, source staff, no evidence), as writeStep does for the other moves.
+async function cancelStep(q: Queryable, load: LockedLoad, at: Instant): Promise<string> {
+  const from = load.status;
+  if (from !== "planned" && from !== "in_transit") throw new Error("load cannot be cancelled from its status");
+  const changed = await q.execute(
+    `UPDATE loads SET status = 'cancelled'
+      WHERE tenant_id = current_tenant_id() AND id = CAST($1 AS uuid) AND status = $2`,
+    [load.id, from],
+  );
+  if (changed !== 1) throw new Error("load did not move under its lock");
+  const id = randomUUID();
+  await q.execute(
+    `INSERT INTO load_events (id, tenant_id, load_id, from_status, to_status, source, evidence_table, evidence_id, at)
+     VALUES (CAST($1 AS uuid), current_tenant_id(), CAST($2 AS uuid), $3, 'cancelled', 'staff', NULL, NULL,
+             CAST($4 AS timestamptz))`,
+    [id, load.id, from, at],
+  );
+  load.status = "cancelled";
+  return id;
+}
 
 // Inside a tenant transaction the caller holds, after the caller checked staff. A delivery dated
 // today is at the press; an earlier day (a card's POD date) is at the carrier's 17:00 that day.
+// A cancel is asked of the cancelled-trip switch here, on today's date, before the load is read:
+// off (or before its start date), it is validation, as it was before the cancel existed.
 export async function staffMoveIn(
   q: Queryable,
   loadId: string,
-  to: MoveTo,
+  to: StaffMoveTo,
   now: Date,
   deliveredOn: LocalDate | null = null,
 ): Promise<StaffMoveResult> {
-  if (!isUuid(loadId) || (to !== "in_transit" && to !== "delivered")) return { ok: false, category: "validation" };
+  if (!isUuid(loadId) || !isStaffMoveTo(to)) return { ok: false, category: "validation" };
   if (deliveredOn !== null && !isLocalDate(deliveredOn)) return { ok: false, category: "validation" };
   const zone = await zoneOf(q);
+  const today = localDateOf(now.toISOString(), zone);
+  if (to === "cancelled") {
+    if (!cancelledTripOn(today) || deliveredOn !== null) return { ok: false, category: "validation" };
+    const load = await lockLoad(q, loadId);
+    if (!load) return { ok: false, category: "not_found" };
+    if (load.status === "cancelled") return { ok: true, changed: false, to };
+    // A delivered or invoiced load has been run: cancelling it is never a press.
+    if (load.status !== "planned" && load.status !== "in_transit") return { ok: false, category: "wrong_status" };
+    await cancelStep(q, load, now.toISOString());
+    return { ok: true, changed: true, to };
+  }
   const load = await lockLoad(q, loadId);
   if (!load) return { ok: false, category: "not_found" };
-  const today = localDateOf(now.toISOString(), zone);
   const day = to === "delivered" && deliveredOn !== null ? deliveredOn : today;
   const r = await applyMove(q, load, to, { at: now.toISOString(), day, zone, today }, "staff", null, null);
   if (r.kind === "already") return { ok: true, changed: false, to };
@@ -815,7 +858,7 @@ export async function staffMove(
   to: unknown,
   now: Date,
 ): Promise<StaffMoveResult> {
-  if (!isUuid(loadId) || (to !== "in_transit" && to !== "delivered")) return { ok: false, category: "validation" };
+  if (!isUuid(loadId) || !isStaffMoveTo(to)) return { ok: false, category: "validation" };
   return db.withTenant(session.tenantId, async (q) => {
     await assertMembership(q, session);
     await requireStaff(q, session);

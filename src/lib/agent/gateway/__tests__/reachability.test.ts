@@ -21,7 +21,7 @@ const call = (name: string, args: unknown) => ({ id: "c", name, argumentsJson: J
 // Every tool's switch on (detention, reports with the IFTA quarter and the year-end 1099, invoicing,
 // invoice review, customer payments, the card check, collections,
 // Cash Friday, factoring, the profit brief, the quarter review, pay rule changes, money codes, carrier memory,
-// fuel rates, escrow releases, card pull-backs and the dispatch mirror), so each test below reaches every registered tool. The detention switch's own cases are in
+// fuel rates, escrow releases, card pull-backs, deficit recovery and the dispatch mirror), so each test below reaches every registered tool. The detention switch's own cases are in
 // detention-tools.test.ts; the last test here checks the report switch-off path.
 beforeEach(() => {
   flags.detentionEnabled = true;
@@ -32,6 +32,7 @@ beforeEach(() => {
   flags.cardRecon.enabled = true;
   flags.cardLoadRuling.enabled = true;
   flags.cardPullback.enabled = true;
+  flags.deficitRecovery.enabled = true;
   flags.cashFridayEnabled = true;
   flags.collectionsEnabled = true;
   flags.moneyCodes.enabled = true;
@@ -57,6 +58,7 @@ afterEach(() => {
   flags.cardRecon.enabled = false;
   flags.cardLoadRuling.enabled = false;
   flags.cardPullback.enabled = false;
+  flags.deficitRecovery.enabled = false;
   flags.cashFridayEnabled = false;
   flags.collectionsEnabled = false;
   flags.moneyCodes.enabled = false;
@@ -150,9 +152,9 @@ describe("reachability", () => {
   it("(e) with the report switch off, refuses and logs every report tool as unknown, for every role", async () => {
     flags.reportsEnabled = false;
     const reports = TOOLS.filter((t) => t.name.startsWith("report_"));
-    // The five reports, the IFTA quarter, the year-end 1099 and the trust meter, whose own switches
-    // are on here: the report switch wins.
-    expect(reports).toHaveLength(8);
+    // The five reports, the IFTA quarter, the year-end 1099, the trust meter and the driver insights,
+    // the three with their own switches on here: the report switch wins.
+    expect(reports).toHaveLength(9);
     for (const role of AGENT_ROLES) {
       expect(toolsFor(role).map((t) => t.name).filter((n) => n.startsWith("report_")), role).toEqual([]);
       for (const tool of reports) {

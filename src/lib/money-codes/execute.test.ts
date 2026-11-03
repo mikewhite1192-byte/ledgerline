@@ -68,11 +68,11 @@ describe("the money code precheck for the autopilot", () => {
     moneyActionId: null,
     traceId: null,
   };
-  // The tenant's zone, an armed driver and no code yet on this proposal.
+  // The tenant's zone, an armed driver active since January and no code yet on this proposal.
   const q: Queryable = {
     async query<T>(sql: string): Promise<T[]> {
       if (sql.includes("FROM tenants")) return [{ timezone: "America/Chicago" }] as T[];
-      if (sql.includes("FROM drivers")) return [{ money_armed: true }] as T[];
+      if (sql.includes("FROM drivers")) return [{ money_armed: true, active_from: "2026-01-01", active_to: null }] as T[];
       return [];
     },
     execute: async () => 0,

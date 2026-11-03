@@ -2,6 +2,7 @@ import { randomUUID } from "node:crypto";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { flags } from "../../config/flags";
 import type { Session } from "../auth/claims";
+import { PAUSE_LOCK_SQL } from "../autopilot/state-lock";
 import { readTenantRows } from "../data/read";
 import type { TenantRows } from "../data/rows";
 import { TENANT_TABLES } from "../data/tables";
@@ -14,6 +15,7 @@ import type { MoneyDraft } from "../money/types";
 import type { Handlers } from "../desk/handlers";
 import { DESK_SOURCES } from "../desk/keys";
 import { listReleasesDue } from "../escrow/due";
+import { createMockLoad } from "../mock-tms/new-load";
 import { wakeDesk } from "../desk/loop";
 import { startSweep } from "../sweep/run";
 import { serviceSession, serviceSub } from "../sweep/service-session";
@@ -389,14 +391,30 @@ describe("the demo reset", () => {
         [randomUUID(), load.id, detention],
       ),
     );
-    // A person disarming a driver and adding the id the dispatch system knows them by (0027). The
-    // app role cannot delete the arming log, so the reset's replace removes it with its drivers
-    // (the foreign key cascades) and writes the plan's log again.
+    // A person disarming a driver, deactivating them (0081), recording an activation step on their
+    // card (0085) and adding the id the dispatch system knows them by (0027). The app role cannot
+    // delete the arming log, the status log or the steps, so the reset's replace removes them with
+    // their drivers and cards (the foreign keys cascade) and writes the plan's arming log again; the
+    // status log and the steps are never seeded, so they come back empty.
     await app.withTenant(tenantId, async (q) => {
       await q.execute(
         `INSERT INTO driver_arm_events (id, tenant_id, driver_id, armed, note, membership_id, source)
          VALUES (CAST($1 AS uuid), current_tenant_id(), CAST($2 AS uuid), false, 'Paused after a call',
            (SELECT id FROM memberships WHERE tenant_id = current_tenant_id() AND cognito_sub = $3), 'ui')`,
+        [randomUUID(), other.id, session.sub],
+      );
+      await q.execute(
+        `INSERT INTO driver_status_events (id, tenant_id, driver_id, active, effective_on, note, membership_id, created_at)
+         VALUES (CAST($1 AS uuid), current_tenant_id(), CAST($2 AS uuid), false, DATE '2026-11-01', 'Left after a call',
+           (SELECT id FROM memberships WHERE tenant_id = current_tenant_id() AND cognito_sub = $3), now())`,
+        [randomUUID(), other.id, session.sub],
+      );
+      await q.execute(
+        `INSERT INTO driver_activation_steps (id, tenant_id, driver_id, card_id, step, note, membership_id)
+         SELECT CAST($1 AS uuid), current_tenant_id(), c.driver_id, c.id, 'identity_confirmed', 'Checked the license',
+           (SELECT id FROM memberships WHERE tenant_id = current_tenant_id() AND cognito_sub = $3)
+           FROM driver_cards c WHERE c.tenant_id = current_tenant_id() AND c.driver_id = CAST($2 AS uuid)
+          ORDER BY c.id LIMIT 1`,
         [randomUUID(), other.id, session.sub],
       );
       await q.execute(
@@ -806,6 +824,10 @@ describe("the demo reset", () => {
       expect(preview.current.advances).toBe(planA.rows.advances.length + 1);
       expect(preview.current.load_accessorials).toBe(planA.rows.load_accessorials.length + 1);
       expect(preview.current.driver_arm_events).toBe(planA.rows.driver_arm_events.length + 1);
+      expect(preview.current.driver_status_events).toBe(1);
+      expect(planA.rows.driver_status_events).toEqual([]);
+      expect(preview.current.driver_activation_steps).toBe(1);
+      expect(planA.rows.driver_activation_steps).toEqual([]);
       expect(preview.current.driver_identities).toBe(planA.rows.driver_identities.length + 1);
       expect(preview.current.briefs).toBe(planA.rows.briefs.length + 1);
       expect(preview.current.cash_checks).toBe(1);
@@ -852,6 +874,10 @@ describe("the demo reset", () => {
       expect(report.heroNetCents).toBe(HERO_OPEN_WEEK.netCents);
       expect(report.replaced.inserted).toEqual(countRows(planA.rows));
       expect(pick(report.after, TENANT_TABLES)).toEqual(countRows(planA.rows));
+      // The status row the app role wrote went with its driver through the cascade.
+      expect(report.after.driver_status_events).toBe(0);
+      // So did the activation step, with its driver and card.
+      expect(report.after.driver_activation_steps).toBe(0);
       expect(pick(report.after, CLEARED_TABLES)).toEqual(
         Object.fromEntries(CLEARED_TABLES.map((t) => [t, 0])),
       );
@@ -1103,6 +1129,7 @@ describe("the demo reset", () => {
     }
   });
 
+  // Three full seeds of one carrier; a CI runner needs more than the default 5 s.
   it("rolls the clear back when the replace fails after it, so the carrier is left as it was", async () => {
     await withMoneySwitches(async () => {
       await dress(A, planA, "a");
@@ -1117,7 +1144,7 @@ describe("the demo reset", () => {
       await resetDemoTenant(app, A, planA);
       expect(await rowsOf(A)).toEqual(sorted(planA.rows));
     });
-  });
+  }, 60_000);
 
   it("lets the desk loop sweep the day again, once, after a reset removed the day's sweep run, and leaves the other carrier alone", async () => {
     const saved = { desk: structuredClone(flags.deskLoop), sweep: flags.sweepEnabled, fanout: flags.fanoutEnabled };
@@ -1224,4 +1251,78 @@ describe("the demo reset", () => {
       flags.fanoutEnabled = saved.fanout;
     }
   });
+
+  it("removes a load a person created in the sample dispatch system, on both sides", async () => {
+    const { mock_tms_parties: parties, customers, driver_identities: ids } = planA.rows;
+    const customer = parties.find((p) => p.kind === "customer" && customers.some((c) => c.code === p.external_id));
+    const driver = parties.find((p) => p.kind === "driver" && ids.some((i) => i.system === "tms" && i.external_id === p.external_id));
+    expect(customer && driver).toBeTruthy();
+    const out = await app.withTenant(A, (q) =>
+      createMockLoad(
+        q,
+        {
+          loadNumber: "NEW-9001",
+          customerCode: customer!.external_id,
+          pickup: { name: "Sample Dock", city: "Joliet", state: "IL", on: DEMO_ANCHOR },
+          delivery: { name: "Sample Yard", city: "Gary", state: "IN", on: DEMO_ANCHOR },
+          loadedMiles: 420,
+          linehaulCents: 150_000,
+          fuelSurchargeCents: 0,
+          driverExternalId: driver!.external_id,
+        },
+        "staff",
+        { nowMs: Date.parse(`${DEMO_ANCHOR}T18:00:00Z`), maxNewLoads: 40, maxEventsPerLoad: 36 },
+      ),
+    );
+    expect(out).toMatchObject({ ok: true });
+    const b = await printOf(B);
+    await resetDemoTenant(app, A, planA);
+    expect(await rowsOf(A)).toEqual(sorted(planA.rows));
+    expect(await printOf(B)).toEqual(b);
+  });
+
+  it("waits for a Pause or Resume in progress before it writes its own pause, so that press's record holds", async () => {
+    // The carrier's first press: no pause row yet, and the press holds the lock having read none.
+    await admin.withoutTenant((q) => q.execute("DELETE FROM autopilot_state WHERE tenant_id = CAST($1 AS uuid)", [A]));
+    let release!: () => void;
+    const released = new Promise<void>((r) => (release = r));
+    let read!: (n: number) => void;
+    const beforeRead = new Promise<number>((r) => (read = r));
+    const press = app.withTenant(A, async (q) => {
+      await q.query(PAUSE_LOCK_SQL, []);
+      read((await q.query("SELECT 1 AS one FROM autopilot_state WHERE tenant_id = current_tenant_id()", [])).length);
+      await released;
+      await q.execute(
+        `INSERT INTO autopilot_state (tenant_id, paused_at, paused_by, paused_until, updated_at)
+         VALUES (current_tenant_id(), now(), 'sub-owner', NULL, now())`,
+      );
+    });
+    let settled = false;
+    let reset: Promise<unknown> = Promise.resolve();
+    try {
+      expect(await beforeRead).toBe(0);
+      reset = resetDemoTenant(app, A, planA).finally(() => (settled = true));
+      // The reset is seen waiting on the lock (read from the server, not timed), and has not finished.
+      let waiting = 0;
+      for (let i = 0; i < 600 && waiting === 0; i += 1) {
+        await new Promise((r) => setTimeout(r, 100));
+        const rows = await admin.withoutTenant((q) =>
+          q.query<{ n: number }>(
+            `SELECT CAST(count(*) AS integer) AS n FROM pg_locks
+              WHERE locktype = 'advisory' AND NOT granted AND database = (SELECT oid FROM pg_database WHERE datname = current_database())`,
+          ),
+        );
+        waiting = rows[0]?.n ?? 0;
+      }
+      expect(waiting).toBe(1);
+      expect(settled).toBe(false);
+    } finally {
+      // Never left holding the lock, so a failure here cannot hang the tests after it.
+      release();
+    }
+    await press;
+    await reset;
+    // The press's pause, set with nothing before it, is the row: the reset leaves a person's pause alone.
+    expect(await pauseOf(A)).toEqual([{ paused_by: "sub-owner", until_min: null, at_now: true }]);
+  }, 60_000);
 });

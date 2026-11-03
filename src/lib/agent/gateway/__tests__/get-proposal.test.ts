@@ -2,8 +2,14 @@ import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { flags } from "../../../../config/flags";
 import { rawOf } from "../../../documents/schema";
 import { CONFIDENCE_FIELDS, type DocumentRead } from "../../../documents/types";
+import { configFor } from "../../../data/config-version";
+import { checkInputOf } from "../../../data/records";
+import { runAllChecks } from "../../../rules-engine";
+import type { CarrierPlan } from "../../../seed/plan";
+import { addDays } from "../../../time/local-date";
 import { callTool, MAX_RESULT_CHARS } from "..";
-import { OTHER_ID, context, fixedClock, type Handler, type Row } from "./fake-db";
+import { engineCheck } from "../store/engine-check";
+import { OTHER_ID, TENANT, context, fixedClock, type Handler, type Row } from "./fake-db";
 import {
   PROPOSAL_ID,
   blueRidgePlan,
@@ -346,5 +352,65 @@ describe("get_proposal carrier notes", () => {
     expect(result.proposal.sources).toHaveLength(12);
     // The sources still carry their figures, not only references.
     expect(result.proposal.sources.some((s) => Object.keys(s).length > 2)).toBe(true);
+  });
+});
+
+// A pay correction is checked under its own week's pay rules version, the one its draft was
+// computed under (D-093). With two open weeks under two versions, the older week's correction
+// reads the older version in both the auditor's pack and the engine check, never the newest open
+// week's, so the auditor's findings and the stored match agree.
+describe("a pay correction for the older of two open weeks", () => {
+  // Carrier memory off, as in the packs above: the fake database plans no notes read.
+  beforeEach(() => {
+    flags.carrierMemoryEnabled = false;
+  });
+
+  const seeded = plan.rows.settlement_periods.find((p) => p.status === "open")!;
+  const nextStart = addDays(seeded.period_end, 1);
+  const own = configFor(plan.rows.pay_configs, seeded.period_start);
+  const later = {
+    ...own,
+    id: "00000000-0000-4000-8000-000000000911",
+    effective_from: nextStart,
+    insurance_per_day_cents: own.insurance_per_day_cents + 100,
+  };
+  const twoWeeks: CarrierPlan = {
+    ...plan,
+    rows: {
+      ...plan.rows,
+      pay_configs: [...plan.rows.pay_configs, later],
+      settlement_periods: [
+        ...plan.rows.settlement_periods,
+        { id: "00000000-0000-4000-8000-000000000912", period_start: nextStart, period_end: addDays(nextStart, 6), status: "open" },
+      ],
+    },
+  };
+  // The planted insurance day not driven, a finding whose cents follow the version's daily rate.
+  const ownFinding = runAllChecks(checkInputOf(plan.rows)).find((f) => f.check === "insurance_day_not_driven")!;
+  const owedCents = ownFinding.amountCents!;
+  const row = proposalRowFor(plan, "pay_correction", {
+    subject_id: ownFinding.driverId,
+    amount_cents: owedCents,
+    args: JSON.stringify({ driverId: ownFinding.driverId, periodId: seeded.id, deltaCents: owedCents }),
+  });
+
+  it("differs by version, so the test can tell the two apart", () => {
+    const newest = runAllChecks(checkInputOf(twoWeeks.rows)).find((f) => f.check === "insurance_day_not_driven")!;
+    expect(newest.driverId).toBe(ownFinding.driverId);
+    expect(newest.amountCents).not.toBe(owedCents);
+  });
+
+  it("gives the auditor the findings under the older week's version", async () => {
+    const db = planDb(twoWeeks, withProposal(row));
+    const out = await callTool(auditor, call(PROPOSAL_ID), { db, clock: fixedClock });
+    if (out.decision !== "allowed") throw new Error(`not allowed: ${out.reason}`);
+    const findings = (out.result.engine as { findings: { check: string; amountCents: number | null }[] }).findings;
+    expect(findings.find((f) => f.check === "insurance_day_not_driven")?.amountCents).toBe(owedCents);
+  });
+
+  it("matches the engine check under the older week's version", async () => {
+    const db = planDb(twoWeeks, withProposal(row));
+    const result = await db.withTenant(TENANT, (q) => engineCheck(q, auditor, PROPOSAL_ID));
+    expect(result).toEqual({ check: "matched", engineCents: owedCents });
   });
 });

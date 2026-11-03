@@ -17,7 +17,7 @@ import {
   type LineDraft,
 } from "./load-pay";
 import { assertCents, cents, sub, sum } from "./money";
-import { checkAdvance, recoverAdvances } from "./recovery";
+import { checkAdvance, checkDeficit, recoverAdvances, recoverDeficits } from "./recovery";
 import {
   assertPeriod,
   assertUniqueIds,
@@ -30,8 +30,8 @@ import {
 // One driver's pay for one period. The order below is the contract (design section 3):
 //   1. load pay, then accessorial pay      2. reimbursements      3. gross = 1 + 2
 //   4. hard deductions, always taken       5. below zero: net 0 and carry the rest forward
-//   6. escrow, above the floor             7. advance recovery, above the floor
-//   8. net = what is left
+//   6. escrow, above the floor             7. advance recovery, then deficit recovery, above the
+//   8. net = what is left                     floor and within one cap
 // Pure: it reads only its input and writes nothing. Every line cites its records.
 export function settleDriver(input: SettlementInput): SettlementResult {
   const config = assertPayConfig(input.config);
@@ -48,6 +48,10 @@ export function settleDriver(input: SettlementInput): SettlementResult {
   const advances = assertUniqueIds(
     input.advances.map((a) => checkAdvance(a, driver.id)),
     "advance",
+  );
+  const deficits = assertUniqueIds(
+    input.deficits.map((d) => checkDeficit(d, driver.id)),
+    "deficit",
   );
 
   // 1. Loads delivered in the period, in load number order.
@@ -79,6 +83,7 @@ export function settleDriver(input: SettlementInput): SettlementResult {
   let carryForward = cents(0);
   let escrowDelta = cents(0);
   let recoveries: SettlementResult["recoveries"] = [];
+  let deficitRecoveries: SettlementResult["deficitRecoveries"] = [];
   if (afterHard < 0) {
     carryForward = sub(0, afterHard);
     exceptions.push({
@@ -98,9 +103,14 @@ export function settleDriver(input: SettlementInput): SettlementResult {
     const recovery = recoverAdvances(config, advances, period, room);
     if (recovery.note) notes.push(recovery.note);
     recoveries = recovery.recoveries;
-    tail = [...(escrow.line ? [escrow.line] : []), ...recovery.lines];
+    // Then the deficits, in the room the advances left and under what is left of the same cap.
+    const roomAfterAdvances = sub(room, recovery.recoveredCents);
+    const deficit = recoverDeficits(config, deficits, period, roomAfterAdvances, recovery.recoveredCents);
+    if (deficit.note) notes.push(deficit.note);
+    deficitRecoveries = deficit.recoveries;
+    tail = [...(escrow.line ? [escrow.line] : []), ...recovery.lines, ...deficit.lines];
     // 8.
-    net = sub(afterEscrow, recovery.recoveredCents);
+    net = sub(afterEscrow, sum([recovery.recoveredCents, deficit.recoveredCents]));
   }
 
   const drafts = [...earnings, ...hard.lines, ...tail];
@@ -119,6 +129,7 @@ export function settleDriver(input: SettlementInput): SettlementResult {
     netCents: net,
     carryForwardCents: carryForward,
     recoveries,
+    deficitRecoveries,
     escrowDeltaCents: escrowDelta,
     insuredDays: hard.insuredDays,
   };

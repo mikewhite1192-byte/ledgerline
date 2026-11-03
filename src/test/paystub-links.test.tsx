@@ -51,6 +51,10 @@ function walk(): { lines: Walked[]; exceptions: Exception[]; has: (carrier: stri
 
 const { lines, exceptions, has, chargeLoad } = walk();
 
+// The seed writes no driver deficits and deficit recovery ships off, so the demo never shows a
+// deficit_recovery line; every other kind it shows.
+const DEMO_LINE_KINDS = LINE_KINDS.filter((k) => k !== "deficit_recovery");
+
 // The page a link opens, or why it does not resolve.
 function pageProblem(href: string): string | null {
   const m = /^\/records\/([a-z_]+)\/([0-9a-f-]{36})$/.exec(href);
@@ -62,7 +66,7 @@ afterEach(() => cleanup());
 
 describe("every paystub line in the demo links to a page that exists", () => {
   it("the demo shows every kind of paystub line", () => {
-    expect(new Set(lines.map((l) => l.kind))).toEqual(new Set(LINE_KINDS));
+    expect(new Set(lines.map((l) => l.kind))).toEqual(new Set(DEMO_LINE_KINDS));
   });
 
   it("every record behind every line links to its page, for a record the seed wrote", () => {
@@ -114,7 +118,7 @@ describe("every paystub line in the demo links to a page that exists", () => {
       if (!best || l.sources.length > best.sources.length) pick.set(l.kind, l);
     }
     const sample: PaystubLine[] = [...pick.values()].map((l, i) => ({ seq: i + 1, kind: l.kind, label: l.label, amountCents: 100, sources: l.sources }));
-    expect(sample.map((l) => l.kind).sort()).toEqual([...LINE_KINDS].sort());
+    expect(sample.map((l) => l.kind).sort()).toEqual([...DEMO_LINE_KINDS].sort());
     expect(sample.some((l) => l.sources.length > 1)).toBe(true);
 
     const { container } = render(<Paystub {...PAYSTUB} lines={sample} exceptions={[]} />);
@@ -122,5 +126,17 @@ describe("every paystub line in the demo links to a page that exists", () => {
     const expected = sample.flatMap((l) => l.sources.map((s) => recordHref(s)));
     expect(expected.filter((h) => !shown.includes(h)), "a line's record shows without its link").toEqual([]);
     expect(shown.map(pageProblem).filter((p) => p !== null)).toEqual([]);
+  });
+
+  it("a deficit recovery line shows as plain text, since a driver deficit has no record page", () => {
+    const deficit: SourceRef = { table: "driver_deficits", id: "00000000-0000-4000-8000-0000000000d1" };
+    expect(hrefOrNull(recordHref, deficit)).toBeNull();
+    const label = "Deficit repaid: Card 4417 load with no payment record";
+    const line: PaystubLine = { seq: 1, kind: "deficit_recovery", label, amountCents: -4_000, sources: [deficit] };
+    const { container, getByText } = render(<Paystub {...PAYSTUB} lines={[line]} exceptions={[]} />);
+    const shown = getByText(label);
+    expect(shown.tagName).toBe("SPAN");
+    expect(shown.closest("a")).toBeNull();
+    expect([...container.querySelectorAll("a[href]")].filter((a) => (a.getAttribute("href") ?? "").startsWith("/records/"))).toEqual([]);
   });
 });

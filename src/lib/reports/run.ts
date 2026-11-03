@@ -9,10 +9,12 @@ import {
   fuelPurchaseOf,
   loadsOf,
   payConfigOf,
+  payDaysOf,
   periodOf,
   receivablesInputOf,
   settlementOf,
 } from "../data/records";
+import { readDriverInsightInput } from "../data/driver-insights";
 import type { PayConfigRow } from "../data/rows";
 import { ConfigError, type PayConfig } from "../rules-engine";
 import { localDateOf, quarterContaining } from "../time/local-date";
@@ -20,6 +22,7 @@ import { computeAdvancesOutstanding } from "./advances-outstanding";
 import { computeArAging } from "./ar-aging";
 import type { ReportRequest } from "./args";
 import { computeCashNeeded } from "./cash-needed";
+import { computeDriverInsights, insightWindow } from "./driver-insights";
 import { computeDriverPaySummary } from "./driver-pay-summary";
 import { computeIftaQuarter } from "./ifta-quarter";
 import { computeMarginPerLoad } from "./margin-per-load";
@@ -95,12 +98,22 @@ export async function computeReport(
       );
     }
     case "cash_needed": {
-      const rows = await readReportInput(q, ["settlement_periods", "settlements", "drivers"]);
+      const rows = await readReportInput(q, [
+        "settlement_periods",
+        "settlements",
+        "drivers",
+        "loads",
+        "pay_items",
+        "driver_days",
+        "pay_configs",
+        "deduction_schedules",
+      ]);
       return computeCashNeeded(
         {
           periods: rows.settlement_periods.map(periodOf),
           settlements: rows.settlements.map(settlementOf),
           drivers: rows.drivers.map(driverOf),
+          payDays: payDaysOf(rows),
         },
         request.args,
         today,
@@ -198,6 +211,12 @@ export async function computeReport(
         asOf,
         clock.timeZone,
       );
+    }
+    case "driver_insights": {
+      // The window is checked whole before any read: forward, at most 366 days, in the carrier's
+      // own dates; the owed figures are as of today.
+      const window = insightWindow(request.args, today);
+      return computeDriverInsights(await readDriverInsightInput(q, window), request.args, today);
     }
   }
 }

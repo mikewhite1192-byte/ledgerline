@@ -68,6 +68,9 @@ export default async function SettlementRecord({ params }: { params: Promise<{ i
     flags.settlementsEnabled && s.status === "approved" && s.netCents > 0 && (payout === null || payout === "failed" || payout === "reserved");
   // The payout went out but the paystub was not booked: the same button books it, sending nothing.
   const canBook = flags.settlementsEnabled && s.status === "approved" && s.netCents > 0 && payout === "confirmed";
+  // A staff member records that they sent the paid stub; the app sends nothing. A mark already made
+  // shows with the switch off too.
+  const canMarkSent = flags.stubSent.enabled && flags.settlementsEnabled && s.status === "paid" && view.stubSent === null;
   const ask = `/?paystub=${encodeURIComponent(s.id)}`;
   return (
     <SignedInPage
@@ -126,6 +129,18 @@ export default async function SettlementRecord({ params }: { params: Promise<{ i
           url={`/api/settlements/${encodeURIComponent(s.id)}/retry-payout`}
           label={canBook ? "Retry booking" : "Retry payout"}
           kind="retry"
+        />
+      ) : null}
+      {view.stubSent ? (
+        <p className="text-small text-foreground-2">
+          Stub sent {formatInstant(view.stubSent.at, tz)} by {view.stubSent.byRole}.
+        </p>
+      ) : canMarkSent ? (
+        <SettlementAction
+          url={`/api/settlements/${encodeURIComponent(s.id)}/stub-sent`}
+          label="Mark stub sent"
+          kind="stub_sent"
+          variant="outline"
         />
       ) : null}
       {canPost ? (

@@ -20,6 +20,8 @@ export const DESK_SOURCES = [
   "load_event",
   // TMS-MIRROR (0075): a status event mirrored from the dispatch system.
   "tms_event",
+  // MORNING DIGEST (0082): the carrier's morning line, one per local day.
+  "digest",
 ] as const;
 export type DeskSource = (typeof DESK_SOURCES)[number];
 
@@ -39,7 +41,7 @@ export const SUBJECT_TABLES = {
 export type SubjectSource = keyof typeof SUBJECT_TABLES;
 
 // A source whose work is one period, and the local hour (24-hour clock) it is due from.
-export const PERIOD_DUE_HOUR = { sweep: 5, collections: 6, cash_check: 6 } as const;
+export const PERIOD_DUE_HOUR = { sweep: 5, collections: 6, cash_check: 6, digest: 6 } as const;
 export type PeriodSource = keyof typeof PERIOD_DUE_HOUR;
 export const PERIOD_SOURCES = Object.keys(PERIOD_DUE_HOUR) as PeriodSource[];
 
@@ -108,8 +110,8 @@ export function localMidnightOf(date: LocalDate, zone: string): Instant {
   return new Date(Math.min(...onDate)).toISOString();
 }
 
-// Whether a period's work is due now: the sweep from 05:00 local each day, collections from 06:00
-// local each day, the cash check from 06:00 local on Fridays.
+// Whether a period's work is due now: the sweep from 05:00 local each day, collections and the
+// morning digest from 06:00 local each day, the cash check from 06:00 local on Fridays.
 export function dueToday(source: PeriodSource, now: LocalNow): boolean {
   if (!isPeriodSource(source)) return false;
   if (now.hour < PERIOD_DUE_HOUR[source]) return false;
@@ -117,7 +119,8 @@ export function dueToday(source: PeriodSource, now: LocalNow): boolean {
   return true;
 }
 
-// `sweep:YYYY-MM-DD`, `collections:YYYY-MM-DD`, `cash_check:YYYY-Www`: the period's key.
+// `sweep:YYYY-MM-DD`, `collections:YYYY-MM-DD`, `digest:YYYY-MM-DD`, `cash_check:YYYY-Www`: the
+// period's key.
 export function periodKey(source: PeriodSource, date: LocalDate): string {
   if (!isPeriodSource(source)) throw new RangeError("not a period source");
   if (source === "cash_check") return `cash_check:${isoWeekOf(date)}`;

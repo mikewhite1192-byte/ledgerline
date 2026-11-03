@@ -989,7 +989,7 @@ describe("runTurn with tool search and the prompt cache", () => {
   it("sends today's request with both off and the report tools on: their full schemas and the report lines", async () => {
     promptSwitches({ reportsEnabled: true, collectionsEnabled: false, cashFridayEnabled: false, carrierMemoryEnabled: false });
     const tools = toolsFor("operator");
-    expect(tools.filter((t) => t.name.startsWith("report_"))).toHaveLength(5);
+    expect(tools.filter((t) => t.name.startsWith("report_"))).toHaveLength(6);
     const h = harness(script(), gateway);
     h.deps.tools = tools;
     h.deps.request = turnRequest(tools, false, { enabled: false, retention: "in_memory" });

@@ -11,6 +11,7 @@ export { customerPayments } from "./customer-payments";
 export { demo } from "./demo";
 export { documents } from "./documents";
 export { driverNotes } from "./driver-notes";
+export { drivers } from "./drivers";
 export { factoring } from "./factoring";
 export { home } from "./home";
 export { invoices } from "./invoices";

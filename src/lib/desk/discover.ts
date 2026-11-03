@@ -242,11 +242,19 @@ async function periodKeyToFind(q: Queryable, source: PeriodSource, base: string)
   return go < MAX_PERIOD_GO ? periodGoKey(base, go + 1) : null;
 }
 
+// MORNING DIGEST (0082): no digest period is found while the digest is off. The loop would log a
+// found one skipped, and a period with a line is never found again, so turning the digest on later
+// in the morning would miss that day's.
+const PERIOD_WHEN: Partial<Record<PeriodSource, () => boolean>> = {
+  digest: () => flags.morningDigest.enabled === true && flags.aiEnabled === true,
+};
+
 // The day's and the week's due periods whose work is not in the log.
 export async function findPeriods(q: Queryable, input: DiscoverInput): Promise<FinderResult> {
   let seen = 0;
   for (const { source, key } of duePeriodKeys(input.nowLocal, input.startDate)) {
     if (seen >= input.budget) break;
+    if (PERIOD_WHEN[source]?.() === false) continue;
     const found = await periodKeyToFind(q, source, key);
     if (found === null) continue;
     await seenLine(q, input, source, found);

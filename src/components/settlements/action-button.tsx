@@ -6,7 +6,7 @@ import { postJson } from "@/components/invoices/post-json";
 import { Button } from "@/components/ui/button";
 import { settlementOutcome } from "@/lib/settlements/labels";
 
-type Kind = "run" | "post" | "retry";
+type Kind = "run" | "post" | "retry" | "stub_sent";
 
 const plural = (n: number, one: string, many: string) => `${n} ${n === 1 ? one : many}`;
 const whole = (v: unknown): number => (Number.isSafeInteger(v) ? (v as number) : 0);
@@ -36,6 +36,7 @@ export function doneNote(kind: Kind, data: Record<string, unknown>): string {
     const legs = (data.legs ?? {}) as Record<string, unknown>;
     return `Bill: ${legWords(legs.bill)}. Bill payment: ${legWords(legs.billPayment)}.`;
   }
+  if (kind === "stub_sent") return "Recorded: the stub was marked sent.";
   return `Payout: ${legWords(data.state)}.`;
 }
 

@@ -16,7 +16,12 @@ export const TAKEBACK_REASON_LABELS: Readonly<Record<TakebackReason, string>> = 
   other: "Other",
 };
 
+// The reason a cancelled trip's deficit card closes the advance with (src/lib/proposals/executors/
+// deficit-book.ts). Never on the Take back form: only an approved deficit card writes it.
+export const CANCELLED_TRIP_REASON = "cancelled_trip";
+
 export function takebackReasonWords(reason: string): string {
+  if (reason === CANCELLED_TRIP_REASON) return "Load cancelled, booked as money the driver owes";
   return isTakebackReason(reason) ? TAKEBACK_REASON_LABELS[reason] : "Other";
 }
 

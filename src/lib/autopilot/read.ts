@@ -48,16 +48,19 @@ export async function readRule(q: Queryable, kind: string, lock: boolean): Promi
   };
 }
 
-const PAUSE_SQL = `SELECT ${ts("paused_at")} AS paused_at, ${ts("paused_until")} AS paused_until, paused_by
+const PAUSE_SQL = `SELECT ${ts("paused_at")} AS paused_at, ${ts("paused_until")} AS paused_until, paused_by,
+       CAST(xmin AS text) AS revision
   FROM autopilot_state WHERE tenant_id = current_tenant_id()`;
 
-export type PauseRow = PauseFacts & { pausedBy: string | null };
+// revision: the row's version (xmin), which a Resume sends back (./state.ts); null when it does not
+// read, and a Resume naming null on a carrier that has a row is refused as changed.
+export type PauseRow = PauseFacts & { pausedBy: string | null; revision: string | null };
 
 const instantMs = (v: unknown): number | null => (v === null ? null : typeof v === "string" ? Date.parse(v) : Number.NaN);
 
 // The carrier's pause row, or null when it has none (not paused).
 export async function readPause(q: Queryable): Promise<PauseRow | null> {
-  const rows = await q.query<{ paused_at: unknown; paused_until: unknown; paused_by: unknown }>(PAUSE_SQL, []);
+  const rows = await q.query<{ paused_at: unknown; paused_until: unknown; paused_by: unknown; revision: unknown }>(PAUSE_SQL, []);
   if (rows.length === 0) return null;
   if (rows.length !== 1) throw new DbError("unknown");
   const r = rows[0];
@@ -65,6 +68,7 @@ export async function readPause(q: Queryable): Promise<PauseRow | null> {
     pausedAtMs: instantMs(r.paused_at),
     pausedUntilMs: instantMs(r.paused_until),
     pausedBy: typeof r.paused_by === "string" ? r.paused_by : null,
+    revision: typeof r.revision === "string" && /^\d{1,20}$/.test(r.revision) ? r.revision : null,
   };
 }
 

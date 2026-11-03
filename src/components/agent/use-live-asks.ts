@@ -182,17 +182,24 @@ export function useLiveAsks({
     async (ask: LiveAsk, action: AskAction) => {
       setState(ask.id, { busy: action });
       if (action === "yes") {
+        // A morning digest names no proposal and offers no Yes: nothing to send.
+        const proposalId = ask.proposalId;
+        const proposalKind = ask.proposalKind;
+        if (proposalId === null || proposalKind === null) {
+          setState(ask.id, {});
+          return;
+        }
         // The proposal card's own request for a pass: anything that needs the second confirm or
         // a reason is refused by the gate (needs_confirm), and the line says to open the card.
         try {
-          const res = await fetch(`/api/proposals/${encodeURIComponent(ask.proposalId)}/approve`, {
+          const res = await fetch(`/api/proposals/${encodeURIComponent(proposalId)}/approve`, {
             method: "POST",
             headers: { "content-type": "application/json" },
             body: JSON.stringify({ confirmed: false }),
           });
           if (res.ok) {
             const body = (await res.json().catch(() => ({}))) as { status?: unknown };
-            answered(ask.id, yesConfirmation(ask.proposalKind, body.status));
+            answered(ask.id, yesConfirmation(proposalKind, body.status));
           } else if (res.status >= 500) {
             // A server error may have come after the approval went through.
             setState(ask.id, { note: YES_UNKNOWN });

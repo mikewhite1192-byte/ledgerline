@@ -4,7 +4,7 @@ import { instantAt } from "../../seed/calendar";
 import { clocksOf, localClockOf } from "../../tms/clocks";
 import { SYNTHETIC_LABELS, SYNTHETIC_RENAMED, type TmsStatusCode } from "../../tms/status";
 import { addDays, parseInstant, type Instant, type LocalDate } from "../../time/local-date";
-import { FAULT_EDIT_CENTS, NO_FAULTS, readDemoFaults, type DemoFaults } from "./faults";
+import { FAULT_EDIT_CENTS, NO_FAULTS, readDemoFaults, type DemoFaults, type DemoFeed } from "./faults";
 import {
   TmsSourceError,
   type ListBookmark,
@@ -55,7 +55,7 @@ import {
 
 const HOUR_MS = 3_600_000;
 const MILES_PER_DAY = 450;
-const HISTORY_PAGE = 50;
+export const HISTORY_PAGE = 50;
 
 // One load as the feed needs it.
 export type SynLoad = {
@@ -103,9 +103,10 @@ const DESK = "Dispatch desk";
 const APP = "Driver app";
 
 const MINUTE_MS = 60_000;
-const STALE_MS = 30 * MINUTE_MS;
+// Shared with the sample dispatch system's faults (mock-faults.ts).
+export const STALE_MS = 30 * MINUTE_MS;
 const SHIFT_AFTER_MS = 10 * MINUTE_MS;
-const SKEW_MS = 48 * HOUR_MS;
+export const SKEW_MS = 48 * HOUR_MS;
 const YARD_AFTER_MS = 30 * MINUTE_MS;
 const EDIT_AFTER_MS = HOUR_MS;
 export const CUT_PAGE = 2;
@@ -529,7 +530,7 @@ async function loadById(ctx: TmsContext, world: SynWorld, externalId: string): P
   );
 }
 
-async function guarded<T>(fn: () => Promise<T>): Promise<T> {
+export async function guarded<T>(fn: () => Promise<T>): Promise<T> {
   try {
     return await fn();
   } catch (err) {
@@ -540,13 +541,15 @@ async function guarded<T>(fn: () => Promise<T>): Promise<T> {
 }
 
 // The tenant's fault switches, read fresh on every call: none while
-// flags.tmsSync.demoFaultsEnabled is off, and none unless the tenant's connection is the synthetic
-// one. A value that cannot be read is no faults (the clean feed).
-async function faultsOf(ctx: TmsContext): Promise<DemoFaults> {
-  if (flags.tmsSync.demoFaultsEnabled !== true || ctx.connection.system !== "synthetic") return NO_FAULTS;
+// flags.tmsSync.demoFaultsEnabled is off, and none unless the tenant's connection is this feed
+// (`system`, the synthetic feed here and the sample dispatch system in mock.ts). A value that
+// cannot be read is no faults (the clean feed).
+export async function faultsOf(ctx: TmsContext, system: DemoFeed = "synthetic"): Promise<DemoFaults> {
+  if (flags.tmsSync.demoFaultsEnabled !== true || ctx.connection.system !== system) return NO_FAULTS;
   const rows = await ctx.q.query<{ faults: string | null }>(
     `SELECT CAST(demo_faults AS text) AS faults FROM tms_connections
-      WHERE tenant_id = current_tenant_id() AND system = 'synthetic'`,
+      WHERE tenant_id = current_tenant_id() AND system = $1`,
+    [system],
   );
   if (rows.length !== 1 || typeof rows[0].faults !== "string") return NO_FAULTS;
   try {
@@ -592,7 +595,7 @@ async function served(ctx: TmsContext, externalId: string, faults: DemoFaults, p
 
 // One history page: HISTORY_PAGE rows, or with history_page_cut on, CUT_PAGE new rows a page with
 // the page before's last row repeated first (an empty page once the rows run out).
-function historyPage(rows: readonly TmsHistoryRow[], page: number, faults: DemoFaults): TmsHistoryRow[] {
+export function historyPage(rows: readonly TmsHistoryRow[], page: number, faults: DemoFaults): TmsHistoryRow[] {
   if (!faults.history_page_cut) return rows.slice(page * HISTORY_PAGE, (page + 1) * HISTORY_PAGE);
   const fresh = rows.slice(page * CUT_PAGE, (page + 1) * CUT_PAGE);
   return page === 0 || fresh.length === 0 ? fresh : [rows[page * CUT_PAGE - 1], ...fresh];

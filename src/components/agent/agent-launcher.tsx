@@ -152,7 +152,7 @@ export function AgentLauncher({
     const clear = setTimeout(() => setAnnounce(""), 50);
     const say = setTimeout(() => {
       announced.current.add(currentId);
-      setAnnounce(currentKind === "told" ? ASK_WORDS.arrivedTold : ASK_WORDS.arrivedAsk);
+      setAnnounce(currentKind === "ask" ? ASK_WORDS.arrivedAsk : ASK_WORDS.arrivedTold);
     }, 100);
     return () => {
       clearTimeout(clear);

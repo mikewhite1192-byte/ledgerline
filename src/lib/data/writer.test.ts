@@ -7,6 +7,7 @@ import {
   insertStatements,
   MAX_PARAMS_PER_INSERT,
   MAX_STATEMENT_CHARS,
+  WIPE_MARK_SQL,
 } from "./writer";
 
 const customer = (i: number) => ({
@@ -31,6 +32,8 @@ const line = (meta: Record<string, number> | null, label = "Load X-1") => ({
   amount_cents: 82500,
   sources: [{ table: "loads", id: "00000000-0000-4000-8000-000000000003" }],
   meta,
+  entered_by: null,
+  source_ref: null,
 });
 
 // A fake connection that records each statement and reports `affected(rows)` rows.
@@ -101,7 +104,7 @@ describe("insertStatements", () => {
     expect(s.sql).toContain("CAST($7 AS jsonb), CAST($8 AS jsonb)");
     expect(s.params[6]).toBe('[{"table":"loads","id":"00000000-0000-4000-8000-000000000003"}]');
     expect(s.params[7]).toBe('{"days":5}');
-    expect(s.params[15]).toBeNull();
+    expect(s.params[17]).toBeNull();
   });
 
   it("keeps a statement under the character limit by starting a new one", () => {
@@ -153,21 +156,29 @@ describe("insertRows", () => {
 });
 
 describe("deleteTenantRows", () => {
-  it("deletes the current tenant's rows from every table, children first", async () => {
+  it("marks the transaction as the tenant's wipe, then deletes its rows from every table, children first", async () => {
     const { q, seen } = fakeQ(() => 3);
     const out = await deleteTenantRows(q);
-    expect(seen.map((s) => s.sql)).toEqual(
-      [...TENANT_TABLES]
+    expect(seen.map((s) => s.sql)).toEqual([
+      WIPE_MARK_SQL,
+      ...[...TENANT_TABLES]
         .reverse()
         .filter((t) => !APP_KEEPS_TABLES.has(t))
         .map((t) => `DELETE FROM ${t} WHERE tenant_id = current_tenant_id()`),
-    );
+    ]);
     expect(Object.keys(out).sort()).toEqual([...TENANT_TABLES].sort());
     expect(Object.entries(out).every(([t, n]) => n === (APP_KEEPS_TABLES.has(t as never) ? 0 : 3))).toBe(true);
   });
 
   it("never deletes from the arming log or the phone line's calls, which the app role may only add to", async () => {
-    expect([...APP_KEEPS_TABLES]).toEqual(["driver_arm_events", "calls", "call_segments", "call_turns"]);
+    expect([...APP_KEEPS_TABLES]).toEqual([
+      "driver_arm_events",
+      "driver_status_events",
+      "driver_activation_steps",
+      "calls",
+      "call_segments",
+      "call_turns",
+    ]);
     const { q, seen } = fakeQ(() => 0);
     await deleteTenantRows(q);
     for (const table of APP_KEEPS_TABLES) {

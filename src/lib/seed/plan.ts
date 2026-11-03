@@ -727,6 +727,7 @@ export function buildCarrierPlan(carrier: DemoCarrier, anchor: LocalDate): Carri
       ref_id: ref ? ref[1] : null,
       description,
       settlement_id: null,
+      entered_by: null,
     };
     items.push(row);
     return row;
@@ -868,6 +869,7 @@ export function buildCarrierPlan(carrier: DemoCarrier, anchor: LocalDate): Carri
     ref_id: f.id,
     description: "Fuel, paid by driver",
     settlement_id: null,
+    entered_by: null,
     item_ref: `${slug}-item-${payItems.length + n}`,
   });
   const dupPaybacks = [dupPayback(dupOlder, 1), dupPayback(dupNewer, 2)];
@@ -1201,6 +1203,8 @@ export function buildCarrierPlan(carrier: DemoCarrier, anchor: LocalDate): Carri
     driver_cards: cardPlan.cards,
     driver_identities: driverIdentities(parity, drivers, prefix),
     driver_arm_events: armEvents(parity, drivers),
+    driver_status_events: [],
+    driver_activation_steps: [],
     loads,
     load_events: [],
     tms_connections: [],
@@ -1210,6 +1214,12 @@ export function buildCarrierPlan(carrier: DemoCarrier, anchor: LocalDate): Carri
     tms_status_events: [],
     tms_line_items: [],
     tms_documents: [],
+    mock_tms_parties: [],
+    mock_tms_loads: [],
+    mock_tms_stops: [],
+    mock_tms_events: [],
+    mock_tms_lines: [],
+    mock_tms_documents: [],
     load_state_miles: stateMiles,
     load_accessorials: accessorials,
     driver_days: days,

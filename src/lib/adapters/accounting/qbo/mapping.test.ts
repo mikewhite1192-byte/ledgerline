@@ -127,6 +127,7 @@ describe("QuickBooks account and item mapping", () => {
   it("maps every settlement line kind to an account and refuses an unknown one", () => {
     expect(accountForPayLine("load_pay")).toBe("driver_pay");
     expect(accountForPayLine("advance_recovery")).toBe("driver_advances");
+    expect(accountForPayLine("deficit_recovery")).toBe("driver_chargebacks");
     expect(() => accountForPayLine("toString")).toThrow(MoneyError);
     expect(() => accountForPayLine("bonus")).toThrow(MoneyError);
   });

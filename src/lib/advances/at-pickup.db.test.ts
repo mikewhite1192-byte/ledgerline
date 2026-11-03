@@ -23,6 +23,7 @@ import { proposeAdvanceAtPickup } from "./at-pickup";
 const NOW = new Date("2026-11-02T18:00:00.000Z");
 const savedPickup = structuredClone(flags.advanceAtPickup);
 const savedMove = structuredClone(flags.loadMovement);
+const savedTrip = structuredClone(flags.cancelledTrip);
 
 let admin: Db;
 let app: Db;
@@ -136,11 +137,14 @@ beforeEach(() => {
   flags.advanceAtPickup.enabled = true;
   flags.advanceAtPickup.startDate = "2026-10-31";
   flags.loadMovement.enabled = false;
+  // The cancelled trip's card also wakes on a load event: held off so these runs ask only the pickup.
+  flags.cancelledTrip.enabled = false;
 });
 
 afterEach(() => {
   Object.assign(flags.advanceAtPickup, savedPickup);
   Object.assign(flags.loadMovement, savedMove);
+  Object.assign(flags.cancelledTrip, savedTrip);
 });
 
 describe("the advance at pickup", () => {

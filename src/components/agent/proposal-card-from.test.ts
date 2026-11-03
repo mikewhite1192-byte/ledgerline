@@ -534,6 +534,17 @@ describe("a card pull-back card", () => {
   });
 });
 
+describe("a cancelled trip deficit card", () => {
+  it("asks to book the advance as owed and says nothing is paid or sent", () => {
+    const card = proposalCardFrom({ ...view, kind: "deficit_book", amountCents: 40_000, direction: "none", destination: null });
+    expect(card.confirmNoun).toBe("cancelled trip deficit");
+    expect(card.confirmQuestion).toBe("Book the $400.00 advance on this cancelled load as money the driver owes?");
+    expect(card.confirmNext).toBe(
+      "Closes the advance and books the same amount as money the driver owes, taken back from later pay. Nothing is paid or sent.",
+    );
+  });
+});
+
 describe("the verification label on the card", () => {
   const on = { on: true, checking: false };
 

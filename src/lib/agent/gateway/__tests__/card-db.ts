@@ -30,7 +30,8 @@ export function cardReconHandler(plan: CarrierPlan, breaks: Row[] = []): Handler
         },
       ];
     }
-    if (sql.includes("AS active_from") && sql.includes("FROM drivers")) {
+    // The card check reads a driver's active dates without the money switch; the money gates read both.
+    if (sql.includes("AS active_from") && sql.includes("FROM drivers") && !sql.includes("money_armed")) {
       return [...rows.drivers]
         .sort((a, b) => (a.code < b.code ? -1 : a.code > b.code ? 1 : 0))
         .map((d) => ({ id: d.id, code: d.code, active_from: d.active_from, active_to: d.active_to }));

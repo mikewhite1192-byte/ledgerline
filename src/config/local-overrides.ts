@@ -25,9 +25,10 @@ export const LOCAL_OVERRIDABLE = [
 // company's id; for the rest, a page, a card or a route the recorded run never had). The local run
 // sets every one of them false so it replays what it recorded. The armed switches for money
 // codes, the desk loop, factoring, escrow releases and the autopilot, the dispatch sync's switch
-// (tmsSync.enabled), the card load ruling's switch, the invoice on finalize's switch
-// (tmsFinalizeInvoice.enabled), parked advances' switch (advanceParking.enabled) and the card
-// pull-back's switch are listed ahead of their own release, while they still ship off, so each
+// (tmsSync.enabled), the dispatch webhook's switch (tmsHook.enabled), the card load ruling's
+// switch, the invoice on finalize's switch
+// (tmsFinalizeInvoice.enabled), parked advances' switch (advanceParking.enabled), the card
+// pull-back's switch, deficit recovery's switch, the morning digest's switch, the named stub lines' switch, the activation checklist's switch, the stub sent switch, the sample dispatch system's switch (mockTms.enabled), its new load form's (mockTms.newLoad), the pay week roll's switch (payWeekRoll.enabled) and the autopilot rules page's switch (autopilotRules.enabled) are listed ahead of their own release, while they still ship off, so each
 // release PR changes only its flag: an off-only switch can never be turned on, so listing one early
 // lets the local run do nothing it could not already do.
 export const LOCAL_OFF_ONLY = [
@@ -88,9 +89,21 @@ export const LOCAL_OFF_ONLY = [
   "tmsSync.enabled",
   "cardLoadRuling.enabled",
   "tmsSync.demoFaultsEnabled",
+  "tmsHook.enabled",
   "tmsFinalizeInvoice.enabled",
   "advanceParking.enabled",
   "cardPullback.enabled",
+  "deficitRecovery.enabled",
+  "morningDigest.enabled",
+  "cancelledTrip.enabled",
+  "driverAdmin.enabled",
+  "namedLines.enabled",
+  "activationChecklist.enabled",
+  "stubSent.enabled",
+  "mockTms.enabled",
+  "mockTms.newLoad",
+  "payWeekRoll.enabled",
+  "autopilotRules.enabled",
 ] as const;
 
 type Overridable = (typeof LOCAL_OVERRIDABLE)[number];

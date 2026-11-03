@@ -471,6 +471,14 @@ function keysAndReferences(rows: TenantRows): void {
   unique(rows.tms_status_events, (x) => x.external_event_id, "dispatch event");
   unique(rows.tms_line_items, (x) => x.external_id, "dispatch line");
   unique(rows.tms_documents, (x) => x.external_id, "dispatch document");
+  unique(rows.mock_tms_parties, (x) => `${x.kind}:${x.external_id}`, "sample dispatch party");
+  unique(rows.mock_tms_loads, (x) => x.external_id, "sample dispatch load");
+  unique(rows.mock_tms_loads, (x) => x.reference, "sample dispatch reference");
+  unique(rows.mock_tms_stops, (x) => `${x.mock_load_id}:${x.ordinal}`, "sample dispatch stop");
+  unique(rows.mock_tms_events, (x) => `${x.mock_load_id}:${x.seq}`, "sample dispatch event seq");
+  unique(rows.mock_tms_events, (x) => x.external_id, "sample dispatch event");
+  unique(rows.mock_tms_lines, (x) => x.external_id, "sample dispatch line");
+  unique(rows.mock_tms_documents, (x) => x.external_id, "sample dispatch document");
   if (rows.tms_status_events.some((x) => !x.seeded) || rows.tms_loads.some((x) => !x.seeded)) {
     fail("a dispatch snapshot row is not marked seeded");
   }
@@ -492,6 +500,11 @@ function keysAndReferences(rows: TenantRows): void {
   refs(rows.tms_status_events, (x) => x.tms_load_id, tmsLoads, "a dispatch event");
   refs(rows.tms_line_items, (x) => x.tms_load_id, tmsLoads, "a dispatch line");
   refs(rows.tms_documents, (x) => x.tms_load_id, tmsLoads, "a dispatch document");
+  const mockLoads = idsOf(rows.mock_tms_loads);
+  refs(rows.mock_tms_stops, (x) => x.mock_load_id, mockLoads, "a sample dispatch stop");
+  refs(rows.mock_tms_events, (x) => x.mock_load_id, mockLoads, "a sample dispatch event");
+  refs(rows.mock_tms_lines, (x) => x.mock_load_id, mockLoads, "a sample dispatch line");
+  refs(rows.mock_tms_documents, (x) => x.mock_load_id, mockLoads, "a sample dispatch document");
   refs(rows.driver_days, (x) => x.driver_id, drivers, "a driver day");
   refs(rows.driver_days, (x) => x.load_id, loads, "a driver day");
   refs(rows.fuel_purchases, (x) => x.driver_id, drivers, "a fuel purchase");

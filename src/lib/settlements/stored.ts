@@ -1,3 +1,4 @@
+import { flags } from "../../config/flags";
 import type { Queryable } from "../db";
 import { readSettlementInput } from "../data/read";
 import {
@@ -10,6 +11,8 @@ import {
   type SettlementResult,
   type SourceRef,
 } from "../rules-engine";
+import { isUuid } from "../uuid";
+import { findContradictions, isNamed, readSourceFacts } from "./contradiction";
 import {
   checkLineSources,
   parkReasonOf,
@@ -36,6 +39,9 @@ export type StoredSettlement = {
   paidAt: string | null;
   parkedReason: string | null;
   parkedAt: string | null;
+  // When a staff member recorded sending the paid stub to the driver (0086), null until then. Who
+  // did it stays out of this view; readStubSent names them by role.
+  stubSentAt: string | null;
 };
 
 type Row = {
@@ -51,12 +57,14 @@ type Row = {
   paid_at: string | null;
   parked_reason: string | null;
   parked_at: string | null;
+  stub_sent_at: string | null;
 };
 
 const COLUMNS =
   "id, period_id, driver_id, status, gross_cents, deductions_cents, net_cents, carry_forward_cents," +
   " exception_count, to_char(paid_at AT TIME ZONE 'UTC', 'YYYY-MM-DD\"T\"HH24:MI:SS.MS\"Z\"') AS paid_at," +
-  " parked_reason, to_char(parked_at AT TIME ZONE 'UTC', 'YYYY-MM-DD\"T\"HH24:MI:SS.MS\"Z\"') AS parked_at";
+  " parked_reason, to_char(parked_at AT TIME ZONE 'UTC', 'YYYY-MM-DD\"T\"HH24:MI:SS.MS\"Z\"') AS parked_at," +
+  " to_char(stub_sent_at AT TIME ZONE 'UTC', 'YYYY-MM-DD\"T\"HH24:MI:SS.MS\"Z\"') AS stub_sent_at";
 
 function whole(value: number | string, what: string): number {
   const n = Number(value);
@@ -78,6 +86,7 @@ function storedOf(r: Row): StoredSettlement {
     paidAt: r.paid_at,
     parkedReason: r.parked_reason,
     parkedAt: r.parked_at,
+    stubSentAt: r.stub_sent_at,
   };
 }
 
@@ -102,6 +111,8 @@ type LineRow = {
   amount_cents: number | string;
   sources: unknown;
   meta: unknown;
+  entered_by: string | null;
+  source_ref: string | null;
 };
 
 function sourcesOf(value: unknown): SourceRef[] {
@@ -116,10 +127,12 @@ function sourcesOf(value: unknown): SourceRef[] {
   });
 }
 
-// The stored lines in seq order, as the engine's PayLine.
+// The stored lines in seq order, as the engine's PayLine. A line a person typed (0084) carries who
+// typed it and the record it cites, as the engine's line does; any other line has neither field.
 export async function readStoredLines(q: Queryable, settlementId: string): Promise<PayLine[]> {
   const rows = await q.query<LineRow>(
-    `SELECT seq, kind, label, amount_cents, sources, meta FROM settlement_lines
+    `SELECT seq, kind, label, amount_cents, sources, meta, CAST(entered_by AS text) AS entered_by, source_ref
+       FROM settlement_lines
       WHERE tenant_id = current_tenant_id() AND settlement_id = CAST($1 AS uuid)
       ORDER BY seq`,
     [settlementId],
@@ -133,6 +146,9 @@ export async function readStoredLines(q: Queryable, settlementId: string): Promi
       amountCents: cents(whole(r.amount_cents, "line amount"), "line amount"),
       sources: sourcesOf(r.sources),
       ...(meta && typeof meta === "object" ? { meta: meta as PayLine["meta"] } : {}),
+      ...(r.entered_by !== null || r.source_ref !== null
+        ? { enteredBy: r.entered_by, sourceRef: r.source_ref }
+        : {}),
     };
   });
 }
@@ -165,6 +181,7 @@ export function sourceRowsOf(input: SettlementInput): Map<string, SourceRow | nu
   for (const i of input.items) put("pay_items", i.id, { table: "pay_items", record: i });
   for (const s of input.schedules) put("deduction_schedules", s.id, { table: "deduction_schedules", record: s });
   for (const a of input.advances) put("advances", a.id, { table: "advances", record: a });
+  for (const d of input.deficits) put("driver_deficits", d.id, { table: "driver_deficits", record: d });
   put("drivers", input.driver.id, { table: "other" });
   return rows;
 }
@@ -176,7 +193,9 @@ export type Recheck = {
 };
 
 // The pre-pay recheck: a fresh engine run over the driver's records as they stand now, compared
-// whole with the stored totals and lines, then every cited record checked. Pure past the read.
+// whole with the stored totals and lines, then every cited record checked, then, while
+// flags.namedLines is on, every typed line and insurance line against the records it claims to
+// match (contradiction.ts). Pure past the reads.
 export async function recheckSettlement(
   q: Queryable,
   stored: StoredSettlement,
@@ -195,6 +214,12 @@ export async function recheckSettlement(
     fresh,
   );
   const problems = checkLineSources(lines, stored.id, input.period, sourceRowsOf(input));
+  // A typed line already on the stub is checked against its record with the switch off too (a
+  // rollback stops new lines, never the check on the ones there); the insurance rule only while on.
+  const checked = flags.namedLines.enabled ? lines : lines.filter(isNamed);
+  if (checked.length > 0) {
+    problems.push(...findContradictions(checked, await readSourceFacts(q, checked, stored.driverId), stored.id));
+  }
   return { fresh, period: input.period, park: parkReasonOf(reconcile, problems) };
 }
 
@@ -213,8 +238,22 @@ export async function parkSettlement(
   );
 }
 
+// The drivers' rows, locked for the rest of the caller's transaction in id order, after the
+// paystubs' locks: the lock the booking holds while it dates a carried shortfall into a later
+// week (book.ts). An approval takes it before its pre-pay recheck, so that read and the stub's
+// move to approved never interleave with a booking of another week of the same driver: whichever
+// commits second sees the first (D-090).
+export async function lockPayDrivers(q: Queryable, driverIds: readonly string[]): Promise<void> {
+  for (const id of driverIds) if (!isUuid(id)) throw new Error("not a record id");
+  await q.query(
+    `SELECT id FROM drivers WHERE tenant_id = current_tenant_id() AND id = ANY(CAST($1 AS uuid[]))
+      ORDER BY id FOR UPDATE`,
+    [`{${[...new Set(driverIds)].join(",")}}`],
+  );
+}
+
 // A per-tenant advisory lock for the rest of the transaction, so two runs of one job cannot
-// interleave. The name is fixed text from this module, never input.
+// interleave. The name is a constant from this package, never input.
 export async function tenantLock(q: Queryable, name: string): Promise<void> {
   await q.query(
     `SELECT count(*) AS n FROM (

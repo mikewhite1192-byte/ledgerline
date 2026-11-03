@@ -15,12 +15,14 @@ const invoice = (n: number, over: Partial<InvoiceRow> = {}): InvoiceRow => ({
   ...over,
 });
 
-// A clean ledger, as the aggregates read it: two settlements with seven lines, two advances, one
-// confirmed payout, two customer payments, and four invoices read one row each.
+// A clean ledger, as the aggregates read it: two settlements with seven lines, two advances, two
+// carriers whose deficits tie out, one confirmed payout, two customer payments, and four invoices
+// read one row each.
 function clean(): LedgerRows {
   return {
     settlements: [{ settlements: 2, lines: "7", unread: 0, odd_kind: 0, totals_off: 0 }],
     recoveries: [{ advances: 2, unread: 0, recovery_off: 0 }],
+    deficitRecoveries: [{ tenants: 2, unread: 0, deficit_recovery_off: 0 }],
     recoveryLines: [{ lines: 1, uncited: 0, orphaned: 0 }],
     payouts: [{ payouts: 1, subject_missing: 0, unread: 0, mismatch: 0 }],
     payments: [{ payments: "2", unread: "0", overapplied: "0" }],
@@ -45,6 +47,7 @@ describe("judgeLedger", () => {
       [(r) => (r.settlements[0].totals_off = 2), { settlement_totals_off: 2 }],
       [(r) => (r.settlements[0].odd_kind = 1), { settlement_line_kind_unknown: 1 }],
       [(r) => (r.recoveries[0].recovery_off = "3"), { recovery_off: 3 }],
+      [(r) => (r.deficitRecoveries[0].deficit_recovery_off = 1), { deficit_recovery_off: 1 }],
       [(r) => (r.recoveryLines[0] = { lines: 3, uncited: 1, orphaned: 1 }), { recovery_line_uncited: 1, recovery_line_orphaned: 1 }],
       [(r) => (r.payouts[0].mismatch = 1), { payout_mismatch: 1 }],
       [(r) => (r.payouts[0].subject_missing = 1), { payout_subject_missing: 1 }],
@@ -89,11 +92,14 @@ describe("judgeLedger", () => {
       [(r) => (r.payments[0].payments = true), "not_whole"],
       [(r) => (r.settlements[0].unread = 1), "not_whole"],
       [(r) => (r.recoveries[0].unread = 1), "not_whole"],
+      [(r) => (r.deficitRecoveries[0].unread = 1), "not_whole"],
+      [(r) => (r.deficitRecoveries[0].deficit_recovery_off = null), "not_whole"],
       [(r) => (r.payouts[0].unread = 1), "not_whole"],
       [(r) => (r.payments[0].unread = 1), "not_whole"],
       [(r) => (r.invoices[1].amount = "500.00"), "not_whole"],
       [(r) => (r.settlements = []), "settlements_unread"],
       [(r) => r.recoveries.push(r.recoveries[0]), "recoveries_unread"],
+      [(r) => (r.deficitRecoveries = []), "deficit_recoveries_unread"],
       [(r) => (r.recoveryLines = []), "recovery_lines_unread"],
       [(r) => (r.payouts = []), "payouts_unread"],
       [(r) => (r.payments = []), "payments_unread"],
@@ -123,6 +129,7 @@ function fakeDb(total: number, over: { settlements?: Record<string, unknown> } =
       }
       if (sql.includes("AS totals_off")) return [{ ...base.settlements[0], ...over.settlements }] as T[];
       if (sql.includes("AS recovery_off")) return base.recoveries as T[];
+      if (sql.includes("AS deficit_recovery_off")) return base.deficitRecoveries as T[];
       if (sql.includes("AS orphaned")) return base.recoveryLines as T[];
       if (sql.includes("AS subject_missing")) return base.payouts as T[];
       if (sql.includes("AS overapplied")) return base.payments as T[];
@@ -177,7 +184,7 @@ describe("checkLedger", () => {
       [TENANT, key(PAGE_SIZE * 2), PAGE_SIZE],
     ]);
     // Every other statement is an aggregate, read once.
-    expect(calls.filter((c) => !paged(c.sql))).toHaveLength(5);
+    expect(calls.filter((c) => !paged(c.sql))).toHaveLength(6);
   });
 
   it("stops at an empty page after a full one", async () => {

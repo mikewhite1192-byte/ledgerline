@@ -137,6 +137,7 @@ export function item(over: Partial<PayItemRecord> & { id: string }): PayItemReco
     itemRef: `ref-${over.id}`,
     description: null,
     settlementId: null,
+    enteredBy: null,
     ...over,
   };
 }

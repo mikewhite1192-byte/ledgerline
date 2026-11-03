@@ -14,6 +14,7 @@ export const ASKED_KINDS = [
   "load_move",
   "card_load_ruling",
   "card_pullback",
+  "deficit_book",
 ] as const;
 
 export type AskedKind = (typeof ASKED_KINDS)[number];
@@ -68,6 +69,7 @@ const KIND_WORDS: Readonly<Record<string, string>> = {
   load_move: "a load update",
   card_load_ruling: "a card load ruling",
   card_pullback: "a card pull-back",
+  deficit_book: "a cancelled trip's deficit",
 };
 
 const WORD = /^[a-z][a-z_]{1,39}$/;
@@ -169,6 +171,13 @@ export function askWords(f: AskFacts): string {
       }
       break;
     }
+    case "deficit_book":
+      if (f.driverName && f.loadNumber) {
+        return fit(
+          `Load ${f.loadNumber} was cancelled after ${f.driverName} got a ${amount} advance on it. Yes books the ${amount} as money ${f.driverName} owes, taken back from later pay.`,
+        );
+      }
+      break;
     case "card_load_ruling":
       if (f.driverName) {
         return fit(

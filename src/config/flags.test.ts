@@ -2,10 +2,12 @@ import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { isTestKey } from "../lib/adapters/payment/stripe-test";
+import { CUT_PAGE } from "../lib/adapters/tms-source/synthetic";
 import { assertMoneyEnvSafe, MoneyEnvRefused } from "../lib/money/guard";
 import { payoutSwitchOn } from "../lib/money/ledger";
 import { DEMO_CARRIERS } from "../lib/seed/carriers";
 import { isLocalDate } from "../lib/time/local-date";
+import { MAX_HISTORY_PAGES } from "../lib/tms/sync";
 import { flags, stepThroughShown, type Flags } from "./flags";
 import { LOCAL_SWITCHES } from "../../e2e/env.local-mode";
 import { applyLocalOverrides, LOCAL_OFF_ONLY, LOCAL_OVERRIDABLE } from "./local-overrides";
@@ -108,6 +110,40 @@ const RELEASED_ON = [
   // Released by the owner (D-071, 2026-11-01): a taken-back or stranded card load is pulled back off
   // the card once a named person approves. Test mode only; the autopilot never approves a pull.
   "cardPullback.enabled",
+  // Released by the owner (D-071, 2026-11-01): a driver's named deficits are taken back from pay
+  // after advances, within the same cap and floor. Pay math only; nothing moves money on its own.
+  "deficitRecovery.enabled",
+  // Released by the owner (D-074, D-077, 2026-11-01): an admin adds, deactivates and reactivates a
+  // driver. A new driver starts not armed with no card; deactivating disarms. Moves no money.
+  "driverAdmin.enabled",
+  // Released by the owner (D-056, D-077, 2026-11-01): a person cancels a load, and a person approves
+  // the card that books its paid advance as money the driver owes. Never the autopilot.
+  "cancelledTrip.enabled",
+  // Released by the owner (D-071, 2026-11-01): one short model-written digest per carrier each
+  // morning, capped per call. It sends nothing and moves no money.
+  "morningDigest.enabled",
+  // Released by the owner (D-071, 2026-11-01): staff put a named line citing one record on a draft
+  // stub, and a line that contradicts its record parks the stub. A person still approves it.
+  "namedLines.enabled",
+  // Released by the owner (D-071, 2026-11-01): an admin records three steps on the driver's default
+  // card before arming them. It only refuses an arm; armed drivers are untouched.
+  "activationChecklist.enabled",
+  // Released by the owner (D-071, 2026-11-01): staff mark a paid stub as sent and the agent shows
+  // when and by which role. It records a person's send; the app sends nothing.
+  "stubSent.enabled",
+  // Released by the owner (D-071, 2026-11-01) once the key was stored: the dispatch system can wake
+  // the desk with a signed call. It reads only, never writes to dispatch, and moves no money.
+  "tmsHook.enabled",
+  // Released by the owner (D-071, D-087, 2026-11-01): the sample dispatch system for the demo
+  // carriers. It changes only its own tables and moves no money.
+  "mockTms.enabled",
+  "mockTms.newLoad",
+  // Released by the owner (D-071, D-090, 2026-11-02): the pay sweep opens the pay week holding the
+  // carrier's local today. It inserts an open week only and moves no money.
+  "payWeekRoll.enabled",
+  // Released by the owner (D-071, D-094, 2026-11-02): the owner sets the autopilot rules and the
+  // pause from the app. It changes only the owner's rules and their record, and moves no money.
+  "autopilotRules.enabled",
 ] as const;
 
 // What stays off, each waiting on a missing piece or an outside send the owner has not released.
@@ -359,6 +395,34 @@ describe("flags", () => {
     expect(LOCAL_OFF_ONLY as readonly string[]).toContain("cardPullback.enabled");
   });
 
+  it("releases the morning digest, with a start date and small caps on its one call, off for the local demo run", () => {
+    expect(flags.morningDigest).toEqual({ enabled: true, startDate: "2026-11-02", maxCostCents: 4, maxOutputTokens: 400 });
+    expect(isLocalDate(flags.morningDigest.startDate)).toBe(true);
+    // Listed ahead of its release, so the demo-path run keeps it off once it ships on.
+    expect(LOCAL_OFF_ONLY as readonly string[]).toContain("morningDigest.enabled");
+  });
+
+  it("releases deficit recovery, with a start date, off for the local demo run", () => {
+    expect(flags.deficitRecovery).toEqual({ enabled: true, startDate: "2026-11-02" });
+    expect(isLocalDate(flags.deficitRecovery.startDate)).toBe(true);
+    // Listed ahead of its release, so the demo-path run keeps it off once it ships on.
+    expect(LOCAL_OFF_ONLY as readonly string[]).toContain("deficitRecovery.enabled");
+  });
+
+  it("releases driver admin, off for the local demo run, and local mode can never turn it on", () => {
+    expect(flags.driverAdmin).toEqual({ enabled: true });
+    expect(LOCAL_OVERRIDABLE as readonly string[]).not.toContain("driverAdmin.enabled");
+    expect(LOCAL_OFF_ONLY as readonly string[]).toContain("driverAdmin.enabled");
+  });
+
+  it("releases the cancelled trip, with a start date, off for the local demo run, never a kind the autopilot may approve", () => {
+    expect(flags.cancelledTrip).toEqual({ enabled: true, startDate: "2026-11-02" });
+    expect(isLocalDate(flags.cancelledTrip.startDate)).toBe(true);
+    expect(Object.keys(flags.autopilot.kinds)).not.toContain("deficit_book");
+    expect(LOCAL_OVERRIDABLE as readonly string[]).not.toContain("cancelledTrip.enabled");
+    expect(LOCAL_OFF_ONLY as readonly string[]).toContain("cancelledTrip.enabled");
+  });
+
   it("ships load movement from driver evidence on, with a start date", () => {
     expect(flags.loadMovement).toEqual({ enabled: true, startDate: "2026-10-30" });
     expect(isLocalDate(flags.loadMovement.startDate)).toBe(true);
@@ -380,6 +444,41 @@ describe("flags", () => {
     expect(LOCAL_OFF_ONLY as readonly string[]).toContain("tmsSync.enabled");
     // A load moves on a mirrored event only while load movement is on too (D-071 turned it on).
     expect(flags.loadMovement.enabled).toBe(true);
+  });
+
+  it("ships the dispatch webhook on, at 60 calls a minute a carrier, and local mode can never turn it on", () => {
+    expect(flags.tmsHook).toEqual({ enabled: true, hookPerMinute: 60 });
+    expect(Number.isSafeInteger(flags.tmsHook.hookPerMinute) && flags.tmsHook.hookPerMinute > 0).toBe(true);
+    expect(LOCAL_OVERRIDABLE as readonly string[]).not.toContain("tmsHook.enabled");
+    // Listed ahead of its release, so the demo-path run keeps it off once it ships on.
+    expect(LOCAL_OFF_ONLY as readonly string[]).toContain("tmsHook.enabled");
+  });
+
+  it("ships the sample dispatch system and its new load form on, capped, and local mode can never turn them on", () => {
+    expect(flags.mockTms).toEqual({ enabled: true, newLoad: true, maxEventsPerLoad: 36, maxNewLoads: 40 });
+    expect(flags.mockTms.maxEventsPerLoad).toBeLessThan((MAX_HISTORY_PAGES - 1) * CUT_PAGE);
+    expect(Number.isSafeInteger(flags.mockTms.maxEventsPerLoad) && flags.mockTms.maxEventsPerLoad > 0).toBe(true);
+    expect(LOCAL_OVERRIDABLE as readonly string[]).not.toContain("mockTms.enabled");
+    // Listed ahead of its release, so the demo-path run keeps it off once it ships on.
+    expect(LOCAL_OFF_ONLY as readonly string[]).toContain("mockTms.enabled");
+    // The new load form: on, capped, and kept off in local mode the same way.
+    expect(Number.isSafeInteger(flags.mockTms.maxNewLoads) && flags.mockTms.maxNewLoads > 0).toBe(true);
+    expect(LOCAL_OVERRIDABLE as readonly string[]).not.toContain("mockTms.newLoad");
+    expect(LOCAL_OFF_ONLY as readonly string[]).toContain("mockTms.newLoad");
+  });
+
+  it("ships the autopilot's rules from the app on, and local mode can never turn them on", () => {
+    expect(flags.autopilotRules).toEqual({ enabled: true });
+    expect(LOCAL_OVERRIDABLE as readonly string[]).not.toContain("autopilotRules.enabled");
+    // Listed ahead of its release, so the demo-path run keeps it off once it ships on.
+    expect(LOCAL_OFF_ONLY as readonly string[]).toContain("autopilotRules.enabled");
+  });
+
+  it("ships the pay week roll on, and local mode can never turn it on", () => {
+    expect(flags.payWeekRoll).toEqual({ enabled: true });
+    expect(LOCAL_OVERRIDABLE as readonly string[]).not.toContain("payWeekRoll.enabled");
+    // Listed ahead of its release, so the demo-path run keeps it off once it ships on.
+    expect(LOCAL_OFF_ONLY as readonly string[]).toContain("payWeekRoll.enabled");
   });
 
   it("releases the invoice on finalize, with a start date, off for the local demo run", () => {
@@ -428,6 +527,17 @@ describe("flags", () => {
       "tmsFinalizeInvoice.enabled",
       "advanceParking.enabled",
       "cardPullback.enabled",
+      "deficitRecovery.enabled",
+      "cancelledTrip.enabled",
+      "tmsHook.enabled",
+      "morningDigest.enabled",
+      "namedLines.enabled",
+      "activationChecklist.enabled",
+      "stubSent.enabled",
+      "mockTms.enabled",
+      "mockTms.newLoad",
+      "payWeekRoll.enabled",
+      "autopilotRules.enabled",
     ];
     const offOnly = LOCAL_OFF_ONLY as readonly string[];
     expect(KEPT_OFF.filter((k) => offOnly.includes(k))).toEqual(KEPT_OFF.filter((k) => armedAhead.includes(k)));

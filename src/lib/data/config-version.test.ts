@@ -133,8 +133,11 @@ describe("checkVersionOf", () => {
     refuses(() => checkVersionOf([], []), "no_pay_config");
   });
 
-  it("refuses two open periods", () => {
-    const periods = [period("2026-10-19", "open"), period("2026-10-26", "open")];
-    refuses(() => checkVersionOf(BLUE_RIDGE, periods), "more_than_one_open_period");
+  it("reads the newest open period's version when two are open", () => {
+    const periods = [period("2026-10-26", "open"), period("2026-10-12", "open")];
+    expect(checkVersionOf(BLUE_RIDGE, periods).id).toBe("br-2");
+    expect(checkVersionOf(BLUE_RIDGE, [...periods].reverse()).id).toBe("br-2");
+    const before = [period("2026-10-05", "open"), period("2026-10-12", "open")];
+    expect(checkVersionOf(BLUE_RIDGE, before).id).toBe("br-1");
   });
 });

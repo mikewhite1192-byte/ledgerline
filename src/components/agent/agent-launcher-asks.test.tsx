@@ -105,6 +105,18 @@ const TOLD: LiveAsk = {
   shownAt: "2026-11-02T15:20:00.000Z",
 };
 
+// A morning digest: no proposal, only Got it.
+const DIGEST: LiveAsk = {
+  id: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaa4",
+  kind: "digest",
+  proposalId: null,
+  proposalKind: null,
+  text: "Morning digest. Needs you: 2 card breaks. Yesterday: 1 trip cancelled.",
+  reason: null,
+  createdAt: "2026-11-02T12:00:00.000Z",
+  shownAt: "2026-11-02T12:00:00.000Z",
+};
+
 type Call = { url: string; init?: RequestInit };
 // fail: the request itself throws, as a lost connection does.
 type Reply = { status: number; body: unknown; fail?: boolean };
@@ -233,6 +245,24 @@ describe("the agent's questions on the launcher", () => {
     fireEvent.click(within(b).getByRole("button", { name: "Got it" }));
     await waitFor(() => expect(screen.queryByRole("region", { name: "The agent's questions" })).toBeNull());
     expect(server.calls.find((c) => c.url.endsWith("/ack"))?.url).toBe(`/api/asks/${TOLD.id}/ack`);
+  });
+
+  it("shows a morning digest with only Got it, and marks it seen", async () => {
+    vi.stubGlobal("localStorage", memoryStorage());
+    const server = stubServer({
+      reads: [showing([DIGEST])],
+      writes: { [`/api/asks/${DIGEST.id}/ack`]: { status: 200, body: { ok: true } } },
+    });
+    page();
+    const b = await findBubble();
+    expect(within(b).getByText(DIGEST.text)).toBeTruthy();
+    expect(within(b).queryByRole("button", { name: "Yes" })).toBeNull();
+    expect(within(b).queryByRole("button", { name: "Not now" })).toBeNull();
+    await waitFor(() => expect(screen.getByTestId("ask-announcer").textContent).toBe("New note from the agent"));
+    fireEvent.click(within(b).getByRole("button", { name: "Got it" }));
+    await waitFor(() => expect(screen.queryByRole("region", { name: "The agent's questions" })).toBeNull());
+    expect(server.calls.find((c) => c.url.endsWith("/ack"))?.url).toBe(`/api/asks/${DIGEST.id}/ack`);
+    expect(server.calls.some((c) => c.url.includes("/api/proposals/"))).toBe(false);
   });
 
   it("opens the card on Ask a question with the load in the box, unsent", async () => {

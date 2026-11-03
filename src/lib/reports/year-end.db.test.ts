@@ -196,6 +196,7 @@ async function insertCorrection(
     itemRef: approved ? correctionItemRef(proposalId) : `year-end-test:${id}`,
     description: "Year-end test correction",
     settlementId: at.settlementId,
+    enteredBy: null,
   };
   const [line] = itemLines([item], item.kind, { start: at.weekStart, end: at.weekStart });
   if (line === undefined || line.amountCents !== deltaCents) throw new Error("the engine made no line from the correction");

@@ -1,4 +1,4 @@
-// The eight reports: their names, titles, columns and result shape. Plain data with no imports, so
+// The nine reports: their names, titles, columns and result shape. Plain data with no imports, so
 // the chat, the turn view and the download route can all use it without reaching the records or
 // the rules engine. The numbers themselves are computed in the files next to this one, from the
 // records and the engine's own functions; a model only picks a report and fills its typed args.
@@ -12,6 +12,7 @@ export const REPORT_NAMES = [
   "ifta_quarter",
   "year_end_contractors",
   "trust_meter",
+  "driver_insights",
 ] as const;
 export type ReportName = (typeof REPORT_NAMES)[number];
 
@@ -40,6 +41,7 @@ export const REPORT_TITLES: Readonly<Record<ReportName, string>> = {
   ifta_quarter: "IFTA quarter summary (SAMPLE rates)",
   year_end_contractors: "Year-end 1099 contractor totals (not a filing)",
   trust_meter: "Review trust meter: checks versus people, by week",
+  driver_insights: "Driver insights",
 };
 
 // cents: integer cents. int: a count. pct: basis points (1234 is 12.34%). milli: thousandths
@@ -88,6 +90,24 @@ export type ReportResult = {
   // The trust meter only: one verdict per action type over the window. Kept beside the rows for
   // the same reason.
   trust?: TrustVerdict[];
+  // Driver insights only: the driver with the largest value of each figure over the window, ties
+  // to the lower code, null when no driver has more than zero. Kept beside the rows for the same
+  // reason.
+  leaders?: DriverLeaders;
+};
+
+// One leader of the driver insights: the driver and the figure, in integer cents under a key that
+// ends in Cents (so the agent's figure check reads it), or a count.
+export type CentsLeader = { driver: RefCell; valueCents: number };
+export type CountLeader = { driver: RefCell; value: number };
+export type DriverLeaders = {
+  topNet: CentsLeader | null;
+  topGross: CentsLeader | null;
+  mostLoads: CountLeader | null;
+  mostMiles: CountLeader | null;
+  mostAdvances: CountLeader | null;
+  mostOwed: CentsLeader | null;
+  mostFuel: CentsLeader | null;
 };
 
 // One action type's verdict over the trust meter's window, in the same order as the subtotals,
@@ -176,6 +196,24 @@ export const REPORT_COLUMNS: Readonly<Record<ReportName, readonly ReportColumn[]
     { key: "wrong", header: "Wrong", kind: "int" },
     { key: "missed", header: "Missed by the checks", kind: "int" },
     { key: "missedBps", header: "Missed rate", kind: "pct" },
+  ],
+  driver_insights: [
+    { key: "driver", header: "Driver", kind: "ref" },
+    { key: "workerType", header: "Type", kind: "text" },
+    { key: "status", header: "Status", kind: "text" },
+    { key: "armed", header: "Armed", kind: "text" },
+    { key: "netCents", header: "Net pay", kind: "cents" },
+    { key: "grossCents", header: "Gross", kind: "cents" },
+    { key: "deductionsCents", header: "Deductions", kind: "cents" },
+    { key: "fuelCents", header: "Fuel deducted", kind: "cents" },
+    { key: "loads", header: "Loads", kind: "int" },
+    { key: "loadedMiles", header: "Loaded miles", kind: "int" },
+    { key: "emptyMiles", header: "Empty miles", kind: "int" },
+    { key: "advancesTaken", header: "Advances taken", kind: "int" },
+    { key: "advancesTakenCents", header: "Advanced", kind: "cents" },
+    { key: "advancesOwedCents", header: "Advances owed", kind: "cents" },
+    { key: "deficitsOwedCents", header: "Deficits owed", kind: "cents" },
+    { key: "owedCents", header: "Owed", kind: "cents" },
   ],
 };
 

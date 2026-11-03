@@ -497,13 +497,13 @@ describe("the fault switches store", () => {
     const a = await carrier("flt-sa");
     const b = await carrier("flt-sb", { clock_skew: true });
     const out = await app.withTenant(a.tenantId, (q) => saveDemoFaults(q, { hard_delete: true }));
-    expect(out).toEqual({ kind: "ok", faults: { ...NO_FAULTS, hard_delete: true } });
+    expect(out).toEqual({ kind: "ok", faults: { ...NO_FAULTS, hard_delete: true }, feed: "synthetic" });
     const again = await app.withTenant(a.tenantId, (q) => saveDemoFaults(q, { clock_skew: true, hard_delete: false }));
-    expect(again).toEqual({ kind: "ok", faults: { ...NO_FAULTS, clock_skew: true } });
+    expect(again).toEqual({ kind: "ok", faults: { ...NO_FAULTS, clock_skew: true }, feed: "synthetic" });
     expect(await storedFaultsOf(a)).toEqual({ ...NO_FAULTS, clock_skew: true });
     expect(await storedFaultsOf(b)).toEqual({ clock_skew: true });
-    expect(await app.withTenant(a.tenantId, (q) => readFaultSettings(q))).toEqual({ kind: "ok", faults: { ...NO_FAULTS, clock_skew: true } });
-    expect(await app.withTenant(b.tenantId, (q) => readFaultSettings(q))).toEqual({ kind: "ok", faults: { ...NO_FAULTS, clock_skew: true } });
+    expect(await app.withTenant(a.tenantId, (q) => readFaultSettings(q))).toEqual({ kind: "ok", faults: { ...NO_FAULTS, clock_skew: true }, feed: "synthetic" });
+    expect(await app.withTenant(b.tenantId, (q) => readFaultSettings(q))).toEqual({ kind: "ok", faults: { ...NO_FAULTS, clock_skew: true }, feed: "synthetic" });
   });
 
   it("reads and writes nothing while the switch is off, and nothing for a carrier without the demo feed", async () => {

@@ -18,7 +18,7 @@ import {
   type SettlementMoneyDeps,
 } from "./legs";
 import { isUuid } from "../uuid";
-import { parkSettlement, readStoredLines, readStoredSettlement, recheckSettlement } from "./stored";
+import { lockPayDrivers, parkSettlement, readStoredLines, readStoredSettlement, recheckSettlement } from "./stored";
 
 // The settlement_approve executor: a person approved the engine's paystub for one driver and week.
 //
@@ -165,11 +165,15 @@ async function prepare(q: Queryable, proposal: ProposalRow, now: Date): Promise<
   if (!sameAsStored(args, proposal, stored, linesHash(lines))) {
     return { kind: "result", result: await failApproved(q, proposal.id, "stale", now) };
   }
+  // The driver's lock before the recheck, the order the booking takes (lockPayDrivers).
+  await lockPayDrivers(q, [stored.driverId]);
   // The pre-pay recheck. A park is a definite refusal: nothing is reserved.
   const check = await recheckSettlement(q, stored, lines);
   if (check.park !== null) {
     await parkSettlement(q, stored.id, check.park, now);
-    return { kind: "result", result: await failApproved(q, proposal.id, "parked", now) };
+    // A typed line that contradicts its record ends the card with that refusal word itself.
+    const note = check.park === "contradicting_line" ? "contradicting_line" : "parked";
+    return { kind: "result", result: await failApproved(q, proposal.id, note, now) };
   }
   const nowIso = now.toISOString();
   const moved = await q.execute(

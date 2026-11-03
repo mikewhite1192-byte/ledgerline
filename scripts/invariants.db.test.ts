@@ -270,12 +270,22 @@ describe("the money invariants on a real database", { timeout: 60_000 }, () => {
     // A person pausing the autopilot (0070): no seed, the pause switch writes it. Its rules are
     // seeded for both carriers.
     "autopilot_state",
+    // The record of a person's Pause or rule save (0089): no seed, the pause switch and the rules
+    // page write it.
+    "autopilot_changes",
     // The agent's question about a proposal (0072): no seed, the desk writes it.
     "agent_asks",
     // A deficit a card load ruling booked (0078): no seed, an approval writes it.
     "driver_deficits",
     // A fuel card pull-back (0080): no seed, an approval writes it.
     "card_pullbacks",
+    // A driver deactivated by a person (0081): no seed, the driver's page writes it.
+    "driver_status_events",
+    // A person's activation step on a driver's card (0085): no seed, the driver's page writes it.
+    "driver_activation_steps",
+    // A dispatch-system wake-up and its minute's count (0083): no seed, the webhook writes them.
+    "tms_wakeups",
+    "tms_hook_minutes",
   ];
 
   it("all five pass with a row in every tenant table for both carriers, and the probe reads them", async () => {
@@ -566,12 +576,45 @@ describe("the money invariants on a real database", { timeout: 60_000 }, () => {
           `INSERT INTO autopilot_state (tenant_id, paused_at, paused_by, paused_until, updated_at)
            VALUES (current_tenant_id(), now(), 'invariants-test', NULL, now())`,
         );
+        // The pause's record, as the pause switch writes it beside the switch (0089).
+        await q.execute(
+          `INSERT INTO autopilot_changes (tenant_id, subject, before, after, changed_by)
+           VALUES (current_tenant_id(), 'pause', NULL,
+             CAST('{"pausedAt":null,"pausedBy":"invariants-test","pausedUntil":null}' AS jsonb), 'invariants-test')`,
+        );
         // A person arming the driver for advances, and the id the carrier's TMS knows them by (0027).
         await q.execute(
           `INSERT INTO driver_arm_events (id, tenant_id, driver_id, armed, note, membership_id, source)
            VALUES (CAST($1 AS uuid), current_tenant_id(), CAST($2 AS uuid), true, 'invariants-test',
              CAST($3 AS uuid), 'ui')`,
           [randomUUID(), c.driver, c.membership],
+        );
+        // A person recording the driver's last day, as the driver's page writes it (0081).
+        await q.execute(
+          `INSERT INTO driver_status_events (id, tenant_id, driver_id, active, effective_on, note, membership_id)
+           VALUES (CAST($1 AS uuid), current_tenant_id(), CAST($2 AS uuid), false, DATE '2026-11-02',
+             'invariants-test', CAST($3 AS uuid))`,
+          [randomUUID(), c.driver, c.membership],
+        );
+        // A person recording an activation step on a driver's card, as the driver's page writes it
+        // (0085).
+        await q.execute(
+          `INSERT INTO driver_activation_steps (id, tenant_id, driver_id, card_id, step, note, membership_id)
+           SELECT CAST($1 AS uuid), current_tenant_id(), c.driver_id, c.id, 'identity_confirmed', 'invariants-test',
+             CAST($2 AS uuid)
+             FROM driver_cards c WHERE c.tenant_id = current_tenant_id() ORDER BY c.id LIMIT 1`,
+          [randomUUID(), c.membership],
+        );
+        // A wake-up the dispatch system sent and the minute it was counted in, as the webhook
+        // writes them (0083).
+        await q.execute(
+          `INSERT INTO tms_wakeups (id, tenant_id, record_type, external_id, received_at)
+           VALUES (CAST($1 AS uuid), current_tenant_id(), 'load', 'invariants-test', TIMESTAMPTZ '2026-11-02T15:00:00Z')`,
+          [randomUUID()],
+        );
+        await q.execute(
+          `INSERT INTO tms_hook_minutes (tenant_id, minute_at, accepted)
+           VALUES (current_tenant_id(), TIMESTAMPTZ '2026-11-02T15:00:00Z', 1)`,
         );
         await q.execute(
           `INSERT INTO driver_identities (id, tenant_id, driver_id, system, external_id, source)
@@ -731,6 +774,24 @@ describe("the money invariants on a real database", { timeout: 60_000 }, () => {
         () => sql("UPDATE advances SET recovered_cents = recovered_cents - 1 WHERE id = CAST($1 AS uuid)", [a]),
         () => sql("UPDATE advances SET recovered_cents = recovered_cents + 1 WHERE id = CAST($1 AS uuid)", [a]),
         { recovery_off: 1 },
+      );
+    });
+
+    it("catches a carrier whose deficits say more was recovered than its paid deficit lines took", async () => {
+      const c = carriers[1];
+      const d = randomUUID();
+      await planted(
+        "I1",
+        () =>
+          sql(
+            `INSERT INTO driver_deficits (id, tenant_id, driver_id, amount_cents, note, source_kind, source_id, named_by,
+               recovered_cents)
+             VALUES (CAST($1 AS uuid), CAST($2 AS uuid), CAST($3 AS uuid), 5000, 'Card load with no payment record.',
+               'ruling', CAST($4 AS uuid), CAST($5 AS uuid), 1)`,
+            [d, c.id, c.driver, randomUUID(), c.membership],
+          ),
+        () => sql("DELETE FROM driver_deficits WHERE id = CAST($1 AS uuid)", [d]),
+        { deficit_recovery_off: 1 },
       );
     });
 

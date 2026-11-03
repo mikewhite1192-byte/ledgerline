@@ -11,6 +11,7 @@ import { assertMembership } from "../tenant/context";
 import { decide, driverOf, isPaused, recordOf, type DecisionRecord } from "../autopilot/policy";
 import { midnightMs, readDriverToday, readPause, readRule, readToday, readZone, todayStartIso } from "../autopilot/read";
 import { autopilotSub, isAutopilotSub } from "../autopilot/session";
+import { PAUSE_SHARED_LOCK_SQL } from "../autopilot/state-lock";
 import { namedPersonRequired } from "../money/never-alone";
 import { isServiceSub } from "../sweep/service-session";
 import { isUuid } from "../uuid";
@@ -18,6 +19,8 @@ import { overrideReasonOf } from "../agent/auditor/words";
 import { cardLoadRulingExecutor } from "./executors/card-load-ruling";
 import { pullbackExecutor } from "./executors/card-pullback";
 import { cardMatchExecutor } from "./executors/card-match";
+import { deficitBookEnabled } from "../deficits/switches";
+import { deficitBookExecutor } from "./executors/deficit-book";
 import { factoringRequestExecutor } from "../factoring/execute";
 import { executeBillDefer, executeChaseTestMode, executeFactoringTestMode } from "./executors/cash-friday";
 import { escrowReleaseExecutor } from "./executors/escrow-release";
@@ -275,6 +278,16 @@ export const EXECUTORS: ExecutorRegistry = {
   get card_pullback() {
     return flags.cardPullback.enabled ? pullbackExecutor : undefined;
   },
+  // A cancelled trip's advance booked as what the driver owes
+  // (src/lib/proposals/executors/deficit-book.ts): the advance line closed and one named deficit
+  // for the same cents, in one transaction, read through cancelledTrip.enabled and
+  // deficitRecovery.enabled (deficitBookEnabled) on every approval, with a precheck that refuses a
+  // machine login, or a pull-back or approved paystub on the advance right now (stale), before
+  // anything is approved; a card whose facts can never hold again goes on to the executor, which
+  // ends it failed with its note. No money moves. Never the autopilot's.
+  get deficit_book() {
+    return deficitBookEnabled() ? deficitBookExecutor : undefined;
+  },
 };
 
 const DAY_MS = 86_400_000;
@@ -372,22 +385,33 @@ function principalRefusal(session: Session, opts: ApproveOptions, role: string |
 }
 
 // The autopilot's policy, decided again inside the gate's transaction with the proposal locked:
-// the switch, its arming and start date read now, the pause, the rule (locked, so two approvals
-// of one kind read today's totals one after the other) and today's totals, the driver's own too on a
-// kind that pays a driver (a plain read: no driver or load lock is taken here). Anything but auto is
+// the switch, its arming and start date read now, the pause (under the pause lock the gate took
+// shared, so a Pause either committed before this read or waits until the approval commits), the
+// rule (locked, so two approvals of one kind read today's totals one after the other) and today's
+// totals, the driver's own too on a kind that pays a driver (a plain read: no driver or load lock is taken here). Anything but auto is
 // refused with the policy's reason word and nothing written; a rule changed since the decision
-// (another id or version) is refused too. Reads only.
+// (another id or version) is refused too. The clock is read once the rule is locked, so a wait for
+// any of the gate's locks (across the carrier's midnight too) counts the approval on the day it is
+// made; at is that instant, for the approval's own record, and a row past the age limit by then is
+// refused as expired, retryable. Reads only.
 async function autopilotDecision(
   q: Queryable,
   session: Session,
   p: ProposalRow,
   row: Row,
   sent: { ruleId: string; version: number },
-  now: Date,
-): Promise<{ record: DecisionRecord } | { result: ProposalResult }> {
+  clock: () => Date,
+): Promise<{ record: DecisionRecord; at: Date } | { result: ProposalResult }> {
   const pause = await readPause(q);
   const zone = await readZone(q);
   const rule = await readRule(q, p.kind, true);
+  const now = clock();
+  // The gate's age cutoff is from its entry instant: a row that aged past the limit while the gate
+  // waited for its locks is refused here, retryable and with nothing written, so the next attempt's
+  // entry cutoff expires it through the gate's own write.
+  if (Date.parse(row.created_at) < now.getTime() - flags.proposalMaxAgeDays * DAY_MS) {
+    return { result: { ok: false, category: "expired", retryable: true } };
+  }
   const since = todayStartIso(now, zone);
   const today = await readToday(q, p.kind, session.sub, since);
   const driverId = driverOf(p.kind, p);
@@ -415,7 +439,7 @@ async function autopilotDecision(
   if (!rule || rule.id !== sent.ruleId.toLowerCase() || rule.version !== sent.version) {
     return { result: refused("autopilot_rule") };
   }
-  return { record: recordOf({ ...decided, decision: "auto" }, rule, today, { id: driverId, today: driverToday }) };
+  return { record: recordOf({ ...decided, decision: "auto" }, rule, today, { id: driverId, today: driverToday }), at: now };
 }
 
 // A precheck's refusal, thrown out of the gate so its transaction rolls back (a read inside the
@@ -437,6 +461,7 @@ async function gate(
   proposalId: string,
   opts: ApproveOptions,
   now: Date,
+  clock: () => Date,
   registry: ExecutorRegistry,
 ): Promise<Gate> {
   await assertMembership(q, session);
@@ -447,6 +472,10 @@ async function gate(
   const principal = principalRefusal(session, opts, member.length === 1 ? member[0].role : undefined);
   if (principal) return { result: principal };
   const auto = opts.autopilot !== undefined;
+  // The autopilot's approval holds the pause lock shared until it commits, so a Pause or a demo reset
+  // waits for it and it waits for them. Taken before the proposal row lock, as the reset and a press
+  // take theirs before any row, so the order is the same everywhere and nothing deadlocks.
+  if (auto) await q.query(PAUSE_SHARED_LOCK_SQL, []);
   const cutoff = new Date(now.getTime() - flags.proposalMaxAgeDays * DAY_MS).toISOString();
   const rows = await q.query<Row>(
     `SELECT id, conversation_id, turn_id, kind, subject_table, subject_id, amount_cents, direction,
@@ -513,14 +542,17 @@ async function gate(
   if (needsConfirm && !opts.confirmed) return { result: refused("needs_confirm") };
   if (!executor) return { result: refused("not_executable") };
   let decision: DecisionRecord | null = null;
+  // The autopilot's approval is made at the instant it read with its locks held; a person's at now.
+  let at = now;
   if (auto && opts.autopilot) {
-    const checked = await autopilotDecision(q, session, p, rows[0], opts.autopilot, now);
+    const checked = await autopilotDecision(q, session, p, rows[0], opts.autopilot, clock);
     if ("result" in checked) return checked;
     decision = checked.record;
+    at = checked.at;
   }
   // The executor's own early refusal, before anything is approved (see Precheck).
   if (executor.precheck) {
-    const stop = await executor.precheck(q, p, now, { session, opts });
+    const stop = await executor.precheck(q, p, at, { session, opts });
     if (stop) throw new Prechecked(stop);
   }
   // Lock the approval in while the row is still locked. Exactly one row must move; anything else
@@ -532,7 +564,7 @@ async function gate(
   // validated ({} for none) are stored in the same statement too (0063), always the last
   // parameter, and that executor plans only from them, so a resume can never write values other
   // than the approved ones.
-  const nowIso = now.toISOString();
+  const nowIso = at.toISOString();
   const approvedEdits = EDITS_KINDS.has(p.kind) ? JSON.stringify(opts.edits ?? {}) : null;
   // The autopilot's approval: one fixed statement that stores its decision with it, only on a row
   // still waiting with no decision, unflagged, passed by the auditor and matched by the engine.
@@ -607,12 +639,13 @@ export async function executeProposal(
   deps: ExecuteDeps = {},
 ): Promise<ProposalResult> {
   const db = deps.db ?? getDb();
-  const now = (deps.clock ?? (() => new Date()))();
+  const clock = deps.clock ?? (() => new Date());
+  const now = clock();
   const registry = deps.executors ?? EXECUTORS;
   let checked: Gate;
   try {
     checked = await db.withTenant(session.tenantId, (q) =>
-      gate(q, session, proposalId, opts, now, registry),
+      gate(q, session, proposalId, opts, now, clock, registry),
     );
   } catch (err) {
     if (err instanceof Prechecked) return err.result;

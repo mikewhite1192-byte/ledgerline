@@ -1,3 +1,4 @@
+import { PAUSE_LOCK_SQL } from "../autopilot/state-lock";
 import { countTenantRows, readSettlementInput, readTenant } from "../data/read";
 import { TENANT_TABLES, assertIdentifier, type TenantTable } from "../data/tables";
 import { DbError, type Queryable, type TenantDb } from "../db/types";
@@ -25,12 +26,13 @@ import { replaceInTransaction, verifyTenant, type SeedReport } from "./run";
 //      lock and deletes the settled ledger rows,
 //      the agent's records and the fictional broker portal's loads (the app role has no DELETE on
 //      them); the portal's loads come back only with npm run seed, since the app cannot write them;
-//   4. the seed's replace of the 47 seeded tables (TENANT_TABLES, with Cash Friday's checks, the
-//      money codes, the card check's runs and differences, the pinned fuel and tax rates and the
-//      phone line's calls, segments and turns, which the seed leaves empty), as the app role, under
-//      row-level security (the arming log and the calls, which the app role may add to but never
-//      delete from, go with their drivers through the foreign keys' cascades, and the plan's log is
-//      written again);
+//   4. the seed's replace of the 49 seeded tables (TENANT_TABLES, with Cash Friday's checks, the
+//      money codes, the card check's runs and differences, the pinned fuel and tax rates, the
+//      drivers' status log, the activation steps and the phone line's calls, segments and turns,
+//      which the seed leaves empty), as the app role, under
+//      row-level security (the arming log, the status log, the activation steps and the calls,
+//      which the app role may add to but never delete from, go with their drivers through the
+//      foreign keys' cascades, and the plan's arming log is written again);
 //   5. the read-back: every seeded table equals the plan, every cleared table is empty, and the
 //      hero's open-week net is the worked example;
 //   6. the autopilot paused for 30 minutes (paused_by demo_reset), so it approves nothing on the
@@ -132,12 +134,21 @@ export const DEMO_RESET_KEPT = {
   autopilot_rules:
     "the owner's Off, Ask me or Auto rule and limits per action kind (0070); it names only the " +
     "carrier, and the owner's choices survive a reset",
+  autopilot_changes:
+    "the record of each rule save and each Pause or Resume a person made (0089); it names only the " +
+    "carrier and its kept rules, and the owner's record survives a reset as the rules do",
   autopilot_state:
     "the carrier's Pause autopilot switch (0070); it names only the carrier, and the reset itself " +
     "sets a 30 minute pause on it",
   demo_sessions:
     "each demo visitor's sign-in with its spend and turn counts (0043); it names only the carrier, " +
     "the app login cannot delete it, and a reset must not hand a visitor a fresh budget",
+  tms_wakeups:
+    "the dispatch webhook's waiting wake-ups (0083); each names only the carrier and a dispatch " +
+    "record id, so one kept over a reset only reads that record again",
+  tms_hook_minutes:
+    "the dispatch webhook's calls a minute (0083); it names only the carrier, and a reset must not " +
+    "hand the webhook a fresh minute",
   schema_migrations: "the migration record, not tenant data",
   "ops.ai_spend": "the one model credit every tenant shares",
 } as const;
@@ -191,6 +202,8 @@ export const TABLE_LABELS: Record<ResetTable, string> = {
   driver_cards: "Fuel cards on file (test mode)",
   driver_identities: "Driver ids in the dispatch system",
   driver_arm_events: "Changes to who is armed to receive money",
+  driver_status_events: "Drivers deactivated or reactivated",
+  driver_activation_steps: "Activation steps recorded before arming",
   loads: "Loads",
   load_events: "Load moves",
   tms_connections: "Dispatch connection",
@@ -200,6 +213,12 @@ export const TABLE_LABELS: Record<ResetTable, string> = {
   tms_status_events: "Dispatch status history",
   tms_line_items: "Dispatch line items",
   tms_documents: "Dispatch documents",
+  mock_tms_parties: "Sample dispatch parties",
+  mock_tms_loads: "Sample dispatch loads",
+  mock_tms_stops: "Sample dispatch stops",
+  mock_tms_events: "Sample dispatch history",
+  mock_tms_lines: "Sample dispatch line items",
+  mock_tms_documents: "Sample dispatch documents",
   load_state_miles: "Miles by state",
   load_accessorials: "Load charges (detention and other extras)",
   driver_days: "Driver days",
@@ -421,6 +440,9 @@ export type DemoResetReport = {
 // statement; the caller's transaction then rolls back.
 export async function resetDemoInTransaction(q: Queryable, plan: CarrierPlan): Promise<DemoResetReport> {
   try {
+    // After any Pause or Resume in progress, so its record's before is the row step 6 replaces.
+    // First, before the reset locks any row a press would wait on, so the two never deadlock.
+    await q.query(PAUSE_LOCK_SQL, []);
     await verifyTenant(q, plan.carrier);
     const before = await readResetCounts(q);
     const refusals = await readRefusals(q);

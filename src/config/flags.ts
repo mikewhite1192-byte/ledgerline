@@ -200,7 +200,7 @@ export type Flags = {
     // At most 400,000: the byte_length CHECK in migration 0052 refuses a larger card.
     maxPngBytes: number;
   };
-  // The eight report tools in the chat and the report download route. Off: the agent is not
+  // The nine report tools in the chat and the report download route. Off: the agent is not
   // offered them, a call to one is refused as an unknown tool, and the route answers 404.
   reportsEnabled: boolean;
   // The IFTA quarter report (report_ifta_quarter and /api/reports/ifta_quarter): per-state miles
@@ -316,6 +316,10 @@ export type Flags = {
   // finding it can fix and lists the rest for a person. It only proposes; a person approves.
   // Off means the Sweep page shows its reason text and the routes refuse before any work.
   sweepEnabled: boolean;
+  // The pay sweep opens the pay week holding today when no period holds it, so deliveries after
+  // the seeded week draft. Off means the sweep only sweeps a week that already exists
+  // (no_open_period once the seeded week has ended and been paid).
+  payWeekRoll: { enabled: boolean };
   // The nightly kicker (infra sweep stack). Off means the internal route refuses every call.
   sweepScheduleEnabled: boolean;
   // A person's approval of a pay correction (drafted by the sweep or in chat) writes its pay item
@@ -767,6 +771,15 @@ export type Flags = {
       Record<"invoice_post" | "card_match" | "payment_reapply" | "advance_payout" | "money_code", AutopilotCeiling>
     >;
   };
+  // The autopilot's rules from the app (docs: AUTOPILOT-RULES, D-094, 0089): Settings > Autopilot
+  // shows each kind's Off, Ask me or Auto rule, its limits and the pause, and an admin saves a rule
+  // there (GET and POST /api/autopilot/rules, src/lib/autopilot/rules-admin.ts). A save is refused
+  // when it sets Auto on a kind a named person always approves, or a limit above the kind's ceiling
+  // in autopilot.kinds (raising a ceiling stays its own PR). Every save and every Pause or Resume is
+  // recorded in autopilot_changes in the same transaction. A saved rule only decides proposals not
+  // yet decided; nothing here approves or moves money. The page and both routes ask enabled
+  // themselves; the pause route stays on autopilot.enabled. It ships off.
+  autopilotRules: { enabled: boolean };
   // Load movement from driver evidence (docs: LOAD-MOVEMENT, owner D-056): a load moves planned to
   // in transit once its pickup bill of lading is read in, and in transit to delivered once its
   // proof of delivery is (src/lib/loads/paperwork.ts decides from the stored reads, no model), or
@@ -797,6 +810,29 @@ export type Flags = {
     pageSize: number;
     demoFaultsEnabled: boolean;
   };
+  // The dispatch system's webhook (docs: TMS-MIRROR T4, 0083, owner D-071): POST
+  // /api/internal/tms-hook/<tenant>?token=<key> is a wake-up only. It reads two fields of the body
+  // (record type and external id), keeps one tms_wakeups row per record while it waits, and wakes
+  // the desk by 'webhook' under the loop's own lease; the next sync re-reads those records in full
+  // first. Nothing in the payload is trusted for content. At most hookPerMinute calls a minute are
+  // taken per carrier, then 429 (the wake-up is still kept, once). The route answers 409 unless
+  // enabled and tmsSync.enabled are both on, and reads the key (TMS_HOOK_KEY_SECRET_NAME) only
+  // after both. Settings > Demo's "Fire a wake-up twice" needs it too. It ships off; its own
+  // one-line PR turns it on, after the owner stores the key.
+  tmsHook: { enabled: boolean; hookPerMinute: number };
+  // The sample dispatch system (docs: MOCK-TMS, 0088, owner D-087): /tms-demo, a plain stand-in for
+  // a carrier's TMS on the demo carriers, where a person moves a seeded load through its statuses
+  // (assign a driver, complete a stop, set a status) and each change writes one history row. The
+  // desk reads it only through the read-only `mock` dispatch source, exactly as it would read a
+  // real one; each change also calls our own webhook route over HTTP with the stored key (it needs
+  // tmsHook and tmsSync on). While on, the seed and the demo reset put the demo carriers'
+  // connection on it. At most maxEventsPerLoad history rows a load. It moves no money and sends
+  // nothing anywhere else. It ships off; its own one-line PR turns it on.
+  // newLoad: a "New load" form there (/tms-demo/loads/new) writes the sample system's load AND our
+  // planned load with the same number, in one transaction, so the desk links the two on its next
+  // read. It writes no money. At most maxNewLoads loads a carrier made there (the seeded board does
+  // not count); a demo reset removes them. It needs enabled on too, and ships off on its own.
+  mockTms: { enabled: boolean; newLoad: boolean; maxEventsPerLoad: number; maxNewLoads: number };
   // The invoice on finalize (docs: TMS-MIRROR, S3): when a mirrored status event says the dispatch
   // system finalized one of our delivered loads, the desk loop's tms_event source drafts that load's
   // one invoice_post card from our own loads row, the same card Refresh on the invoice queue drafts
@@ -864,6 +900,80 @@ export type Flags = {
   // itself: the propose tool, the take-back, the gate, the executor, the ledger hooks, the
   // simulated card provider and the Check route.
   cardPullback: { enabled: boolean; startDate: string };
+  // Named stub lines (docs: design-s8, 0084): a staff member puts one reimbursement or deduction on
+  // a driver's open draft paystub that cites one fuel purchase or load accessorial of that driver,
+  // with their name on it (POST /api/settlements/[id]/lines, src/lib/settlements/named-line.ts). It
+  // is written as a pay item and the rules engine makes the line, so the amount must equal the
+  // record's at entry, and the pre-pay recheck compares every typed line with its record again at
+  // every approval, and every insurance line's days with the day rows it cites
+  // (src/lib/settlements/contradiction.ts): a difference parks the paystub as contradicting_line.
+  // Moves no money. Asked by the route, the service and the recheck, each itself; off, the recheck
+  // still compares a typed line already stored with its record (a rollback never skips that) and
+  // only the insurance rule stops. The agent's explain_paystub shows the verdict only while it is
+  // on, and null (not checked) while off. No start date: a line can only be typed
+  // after the release, on an open draft.
+  namedLines: { enabled: boolean };
+  // Stub sent (docs: design-s10, 0086): a staff member records that they sent a driver's paid
+  // paystub to the driver, when and who (POST /api/settlements/[id]/stub-sent,
+  // src/lib/settlements/stub-sent.ts, and the "Mark stub sent" button on the record page). A click
+  // is the only way a mark is made; nothing is ever sent by the app. Asked by the route, the
+  // service and the page's button. Reading a mark already made is not switched: a fact a person
+  // recorded stays visible after a rollback. No start date: a mark can only be made by a click
+  // after the release.
+  stubSent: { enabled: boolean };
+  // Deficit recovery on pay day (docs: RECOVERY, 0080): a driver's named deficits (a card load
+  // ruled owed, a pull-back the card could not cover) are taken back from pay after the advances,
+  // oldest first, above the net pay floor and within the same advanceRecoveryCapCents, one cap on
+  // everything recovered from a stub (src/lib/rules-engine/recovery.ts). A part taken stays owed on
+  // the deficit for the next week. The engine reads no switch: the settlement input carries the
+  // deficits only while enabled is on (src/lib/data/read.ts), and booking a paid stub that holds
+  // deficit lines is refused while it is off (src/lib/settlements/book.ts), so a flip never
+  // half-books: a stub approved while it was on and booked after a flip to off waits not_booked
+  // until the switch is back on. startDate (YYYY-MM-DD, the carrier's zone): a period ending before it recovers
+  // nothing, so turning it on never rewrites an old stub. The agent reads deficits with
+  // get_driver_deficits only while it is on.
+  deficitRecovery: { enabled: boolean; startDate: string };
+  // Driver admin (docs: design-d1-drivers 5.1): an admin adds a driver on the Add driver page
+  // (src/lib/drivers/create.ts, POST /api/drivers). A new driver starts not armed and with no
+  // card, so no money can go to them until an admin adds a card and arms them on their page. The
+  // same switch covers deactivating and reactivating a driver on their page
+  // (src/lib/drivers/status.ts, POST /api/drivers/[id]/status, 5.3): deactivating disarms them in
+  // the same transaction, reactivating never arms. The money gates refuse a driver past their last
+  // day whatever this switch says. Moves no money. The pages, the routes and the services each
+  // ask enabled themselves.
+  driverAdmin: { enabled: boolean };
+  // The activation checklist (docs: design-s9, 0085): before an admin arms a driver who is not
+  // armed, three steps are on record with a person's name for the driver's default card
+  // (driver_activation_steps): identity confirmed against the card on file, a zero-dollar test sent
+  // to it, and its loads acknowledged (POST /api/drivers/[id]/activation-steps,
+  // src/lib/advances/activation.ts). Code refuses the arm while a step is missing, while the card's
+  // statement names someone else, or while a load on the driver's cards has no record and no
+  // ruling. Only the false-to-true arm reads it: a driver armed today stays armed. Moves no money.
+  // Asked by the route, the service and armDriver, each itself; off, arming is exactly as before
+  // and the agent's get_driver_identity shows activation null. No start date: it only ever refuses
+  // an arm.
+  activationChecklist: { enabled: boolean };
+  // The cancelled trip (docs: RECOVERY, 0080): a person may cancel a planned or in-transit load
+  // (POST /api/loads/[id]/move with to "cancelled", or a load_move card from the dispatch sync's
+  // withdrawn status, approved), and the desk then drafts one deficit_book card per paid advance
+  // still owed on that load (src/lib/deficits/cancelled-trip.ts). A person approves the card; the
+  // approval closes the advance line and books the same cents as a named deficit in one
+  // transaction, so the driver owes them once. Nothing moves money. Read on every path that writes:
+  // the staff move, the load-move executor, the route, the desk handler and the deficit executor.
+  // The deficit card is drafted and approved only while deficitRecovery.enabled is on too, since
+  // only then does pay take a deficit back. Off, a cancel is refused as validation, as before. startDate (YYYY-MM-DD, the carrier's zone):
+  // a cancel recorded before it drafts nothing, so turning it on never reaches back.
+  cancelledTrip: { enabled: boolean; startDate: string };
+  // The morning digest (docs: S7, 0082): at 06:00 the carrier's local time the desk reads about ten
+  // facts from SQL (src/lib/digest/facts.ts: what needs a person, what happened yesterday, the
+  // billing lines, Fridays the week's paystubs, the 1st last month's tie-out counts), Muse Spark
+  // words them into one line of at most 400 characters, every number checked against the facts,
+  // and the line shows in the agent's ask card. A failed call or a refused number lands a line code
+  // wrote from the same facts instead; a fact that could not be read says "not read", never 0.
+  // Sends nothing and moves no money. startDate (YYYY-MM-DD, the carrier's zone): no day before it
+  // is digested. maxCostCents and maxOutputTokens cap the one model call per carrier per day. The
+  // desk's handler and the writer each ask enabled themselves.
+  morningDigest: { enabled: boolean; startDate: string; maxCostCents: number; maxOutputTokens: number };
 };
 
 // One kind's ceiling over the owner's autopilot limits: one item, and the carrier's local day.
@@ -968,6 +1078,7 @@ export const flags: Flags = {
     proposeTimeoutMs: 20_000,
   },
   sweepEnabled: true,
+  payWeekRoll: { enabled: true },
   sweepScheduleEnabled: true,
   payCorrectionsEnabled: true,
   sweepLimits: { maxItems: 40, maxRunCents: 150, maxExplainCents: 5, sliceMs: 20_000, maxAuditAttempts: 3 },
@@ -1107,6 +1218,8 @@ export const flags: Flags = {
       money_code: { maxCents: 15_000, dayMaxCents: 60_000, dayMaxCount: 4, driverDayMaxCents: 30_000, armed: false },
     },
   },
+  // On by the owner's call (D-071, D-094, 2026-11-02). It changes only the owner's rules and their record.
+  autopilotRules: { enabled: true },
   // On by the owner's call (D-071, 2026-10-31). A load_move card is still a person's tap.
   loadMovement: { enabled: true, startDate: "2026-10-30" },
   // On by the owner's call (D-071, 2026-10-31). A load moves on it only while loadMovement is on too.
@@ -1119,6 +1232,16 @@ export const flags: Flags = {
     // On by the owner's call (D-071, 2026-10-31): the panel shows; every fault itself starts off.
     demoFaultsEnabled: true,
   },
+  // On by the owner's call (D-071, 2026-11-01), after the owner stored payday-copilot/tms-hook-key.
+  // A wake-up only: it reads, never writes to the dispatch system, and moves no money.
+  tmsHook: { enabled: true, hookPerMinute: 60 },
+  // On by the owner's call (D-071, D-087, 2026-11-01): the demo carriers' sample dispatch system. It
+  // changes only its own tables and moves no money. 36 history rows a load stay readable with the
+  // history_page_cut fault on (the sync reads at most MAX_HISTORY_PAGES pages of CUT_PAGE new rows,
+  // the last one empty).
+  // newLoad: on by the owner's call (D-071, D-089, 2026-11-01): staff and demo visitors may create at
+  // most maxNewLoads loads a carrier there, each linked to our planned load; the demo reset clears them.
+  mockTms: { enabled: true, newLoad: true, maxEventsPerLoad: 36, maxNewLoads: 40 },
   // On by the owner's call (D-071, 2026-10-31). It only drafts a card; approving it goes through the usual gate.
   tmsFinalizeInvoice: { enabled: true, startDate: "2026-10-31" },
   // On by the owner's call (D-071): Yes still goes through the usual approve route and gate.
@@ -1140,6 +1263,22 @@ export const flags: Flags = {
   // On by the owner's call (D-071, 2026-11-01). A pull is an outside write, in test mode only, and
   // always a named person's approval.
   cardPullback: { enabled: true, startDate: "2026-11-02" },
+  // On by the owner's call (D-071, 2026-11-01). A typed line changes what an approval pays.
+  namedLines: { enabled: true },
+  // On by the owner's call (D-071, 2026-11-01). A mark records a person's send; nothing is sent.
+  stubSent: { enabled: true },
+  // On by the owner's call (D-071, 2026-11-01). Pay math only; nothing moves money on its own.
+  deficitRecovery: { enabled: true, startDate: "2026-11-02" },
+  // On by the owner's call (D-074, D-077, 2026-11-01). Adds a driver (not armed, no card),
+  // deactivates (disarms) and reactivates (never arms) one; moves no money.
+  driverAdmin: { enabled: true },
+  // On by the owner's call (D-071, 2026-11-01). Only refuses an arm; nothing is paid or sent.
+  activationChecklist: { enabled: true },
+  // On by the owner's call (D-056, D-077, 2026-11-01). A person cancels and a person approves the
+  // deficit; the autopilot never approves it.
+  cancelledTrip: { enabled: true, startDate: "2026-11-02" },
+  // On by the owner's call (D-071, 2026-11-01). One model call per carrier per day; sends nothing.
+  morningDigest: { enabled: true, startDate: "2026-11-02", maxCostCents: 4, maxOutputTokens: 400 },
 };
 
 applyLocalOverrides(flags);

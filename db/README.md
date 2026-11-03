@@ -60,6 +60,15 @@ every carrier unless its own `WHERE` says which. `scripts/lib/demo-rows.db.test.
 demo user statements through a local role with BYPASSRLS, the local stand-in for the Aurora
 master.
 
+Settlements carry one guard that tells the two logins apart (`settlements_delete_guard`, 0087).
+`payday_app` may delete a draft settlement and nothing else: a delete of an approved or paid one
+raises `check_violation` (23514) and rolls the transaction back. The admin login, a carrier's own
+removal (the cascade from `tenants`) and the seed's replace pass. The replace runs as the app role
+in the demo reset and `npm run seed`, so `deleteTenantRows` first sets the transaction-local
+`app.tenant_wipe` to its tenant id, and the guard lets a row through only when that mark names
+the row's tenant. The app role can set the mark itself, so the guard stops bugs and stray
+queries, not a deliberate wipe; nothing else sets it.
+
 ## The money ledger (`money_actions`, 0006)
 
 One row per outside money write, reserved before the call. Two things differ from the "Every

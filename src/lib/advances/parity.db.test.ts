@@ -1,5 +1,6 @@
 import { randomUUID } from "node:crypto";
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from "vitest";
+import { flags } from "../../config/flags";
 import { createPgDb } from "../db/pg";
 import { adminUrl, appUrl } from "../db/test-urls";
 import type { Db } from "../db/types";
@@ -202,6 +203,16 @@ describe("0027's driver tables", () => {
 });
 
 describe("arming a driver", () => {
+  // These arm a driver with no activation steps on record: the checklist is off here, and
+  // activation.db.test.ts arms with it on.
+  let checklistWas = false;
+  beforeAll(() => {
+    checklistWas = flags.activationChecklist.enabled;
+    flags.activationChecklist.enabled = false;
+  });
+  afterAll(() => {
+    flags.activationChecklist.enabled = checklistWas;
+  });
   it("lets only an admin arm or disarm, logs each change once, and keeps the last armed time", async () => {
     expect(await armDriver(A.session, A.driverId, { armed: false }, deps())).toEqual({
       ok: false,

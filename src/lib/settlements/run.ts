@@ -131,11 +131,13 @@ async function draftDriver(
       [settlementId, period.id, driverId, config.id, ...totals, exceptionCount],
     );
   }
+  // A line a person typed carries their name and its record (0084), copied from its pay item.
   for (const line of result.lines) {
     await q.execute(
-      `INSERT INTO settlement_lines (id, tenant_id, settlement_id, seq, kind, label, amount_cents, sources, meta)
+      `INSERT INTO settlement_lines (id, tenant_id, settlement_id, seq, kind, label, amount_cents, sources, meta,
+                                     entered_by, source_ref)
        VALUES (CAST($1 AS uuid), current_tenant_id(), CAST($2 AS uuid), $3, $4, $5, $6,
-               CAST($7 AS jsonb), CAST($8 AS jsonb))`,
+               CAST($7 AS jsonb), CAST($8 AS jsonb), CAST($9 AS uuid), $10)`,
       [
         randomUUID(),
         settlementId,
@@ -145,6 +147,8 @@ async function draftDriver(
         line.amountCents,
         JSON.stringify(line.sources),
         line.meta ? JSON.stringify(line.meta) : null,
+        line.enteredBy ?? null,
+        line.sourceRef ?? null,
       ],
     );
   }
@@ -196,8 +200,9 @@ export async function runPayPeriod(
     if (period.status !== "open") return { ok: false as const, category: "not_open" as const };
     if (period.start < flags.settlementsStart) return { ok: false as const, category: "before_start" as const };
     const drivers = await candidates(q, period);
-    // Findings once per run, over the tenant's records; each draft takes its driver's.
-    const findings = runAllChecks(await readCheckInput(q));
+    // Findings once per run, over the tenant's records, under this week's pay rules version
+    // (D-093); each draft takes its driver's.
+    const findings = runAllChecks(await readCheckInput(q, period.start));
     return { ok: true as const, period, drivers, findings };
   });
   if (!start.ok) return start;

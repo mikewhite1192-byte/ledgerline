@@ -136,8 +136,12 @@ function percentBps(digits: string): number | null {
   return Number.isSafeInteger(bps) ? bps : null;
 }
 
+// What the check reads of each figure: its tag, kind, value and the name it is about. A figure
+// needs no source to be checked (the morning digest's facts have none).
+export type CheckedFigure = Pick<BriefFigure, "key" | "kind" | "value" | "subject">;
+
 // The model's reply, parsed and checked.
-export function verifyBrief(reply: string, figures: readonly BriefFigure[]): BriefCheck {
+export function verifyBrief(reply: string, figures: readonly CheckedFigure[]): BriefCheck {
   const parsed = parseBriefReply(reply);
   if (parsed === null) return { ok: false, category: "format", verification: { category: "format", cited: [], numbers: 0 } };
   return checkBriefText(parsed, figures);
@@ -145,7 +149,7 @@ export function verifyBrief(reply: string, figures: readonly BriefFigure[]): Bri
 
 // The words alone, checked: what verifyBrief runs after parsing, and what the page runs again on a
 // stored brief to find where each tagged number sits.
-export function checkBriefText(words: string, figures: readonly BriefFigure[]): BriefCheck {
+export function checkBriefText(words: string, figures: readonly CheckedFigure[]): BriefCheck {
   const cited = new Set<string>();
   let numbers = 0;
   const record = (category: BriefCategory | null): BriefVerification => ({

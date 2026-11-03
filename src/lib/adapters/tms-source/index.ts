@@ -7,6 +7,7 @@ import {
   parsePartyRead,
   parseReady,
 } from "./schema";
+import { createMockSource } from "./mock";
 import { createSyntheticSource } from "./synthetic";
 import { TmsSourceError, type TmsConnection, type TmsSource } from "./types";
 
@@ -62,5 +63,6 @@ export function validated(inner: TmsSource): TmsSource {
 
 export function tmsSource(connection: Pick<TmsConnection, "system">): TmsSource {
   if (connection.system === "synthetic") return validated(createSyntheticSource());
+  if (connection.system === "mock") return validated(createMockSource());
   throw new Error("no adapter for this TMS system");
 }

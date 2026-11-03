@@ -9,6 +9,9 @@ import { deskHandlers, type Handlers } from "../desk/handlers";
 import { DESK_SOURCES, eventKey } from "../desk/keys";
 import { wakeDesk } from "../desk/loop";
 import { addJudge, dropTenant, makeTenant, sqlStateOf, type Fixture } from "../money/test-db";
+import { persistEngineProposal } from "../proposals/engine";
+import type { ProposalRow } from "../proposals/execute";
+import { loadMoveExecutor } from "../proposals/executors/load-move";
 import { serviceSession } from "../sweep/service-session";
 import { moveFleetIn, moveFromDocument, moveFromMessage, staffMove } from "./movement";
 
@@ -24,6 +27,7 @@ const NOW = new Date("2026-11-02T18:00:00.000Z");
 const PICKUP_ON = "2026-11-01";
 const savedMove = structuredClone(flags.loadMovement);
 const savedDesk = structuredClone(flags.deskLoop);
+const savedCancel = structuredClone(flags.cancelledTrip);
 
 let admin: Db;
 let app: Db;
@@ -225,6 +229,7 @@ afterEach(() => {
   flags.deskLoop.enabled = savedDesk.enabled;
   flags.deskLoop.armed = savedDesk.armed;
   flags.deskLoop.startDate = savedDesk.startDate;
+  flags.cancelledTrip = structuredClone(savedCancel);
 });
 
 describe("the paperwork path", () => {
@@ -543,6 +548,150 @@ describe("a person's press", () => {
     expect(out).toEqual({ pickedUp: 1, delivered: 0 });
     expect((await stateOf(f, mine.id)).status).toBe("planned");
     expect(await eventsOf(f, theirs.id)).toMatchObject([{ to_status: "in_transit", source: "demo_feed", evidence_table: null }]);
+  });
+});
+
+describe("a person's cancel", () => {
+  // A cancel is a person's press too (flags.cancelledTrip, not the automatic switch).
+  beforeEach(() => {
+    flags.loadMovement.enabled = false;
+    flags.cancelledTrip = { enabled: true, startDate: "2026-11-02" };
+  });
+
+  const cancel = (f: Fixture, id: string) => staffMove(app, f.session, id, "cancelled", NOW);
+
+  it("cancels a planned load and a load on the road, one event each, and a second press changes nothing", async () => {
+    const f = await carrier("move-cancel");
+    const planned = await load(f);
+    const onRoad = await load(f, { status: "in_transit" });
+    expect(await cancel(f, planned.id)).toEqual({ ok: true, changed: true, to: "cancelled" });
+    expect(await cancel(f, onRoad.id)).toEqual({ ok: true, changed: true, to: "cancelled" });
+    expect(await cancel(f, onRoad.id)).toEqual({ ok: true, changed: false, to: "cancelled" });
+    expect(await stateOf(f, planned.id)).toMatchObject({ status: "cancelled", delivered_on: null });
+    expect((await stateOf(f, onRoad.id)).status).toBe("cancelled");
+    expect(await eventsOf(f, planned.id)).toMatchObject([
+      { from_status: "planned", to_status: "cancelled", source: "staff", evidence_table: null, at: NOW.toISOString() },
+    ]);
+    expect(await eventsOf(f, onRoad.id)).toMatchObject([{ from_status: "in_transit", to_status: "cancelled", source: "staff" }]);
+    // A cancelled load is the last status: no press moves it on.
+    expect(await staffMove(app, f.session, planned.id, "in_transit", NOW)).toEqual({ ok: false, category: "wrong_status" });
+  });
+
+  it("refuses a delivered or invoiced load as wrong_status, writing nothing", async () => {
+    const f = await carrier("move-cancel-late");
+    const l = await load(f);
+    expect(await staffMove(app, f.session, l.id, "in_transit", NOW)).toMatchObject({ ok: true, changed: true });
+    expect(await staffMove(app, f.session, l.id, "delivered", NOW)).toMatchObject({ ok: true, changed: true });
+    expect(await cancel(f, l.id)).toEqual({ ok: false, category: "wrong_status" });
+    await admin.withTenant(f.tenantId, (q) =>
+      q.execute("UPDATE loads SET status = 'invoiced' WHERE tenant_id = current_tenant_id() AND id = CAST($1 AS uuid)", [l.id]),
+    );
+    expect(await cancel(f, l.id)).toEqual({ ok: false, category: "wrong_status" });
+    expect((await stateOf(f, l.id)).status).toBe("invoiced");
+    expect((await eventsOf(f, l.id)).map((e) => e.to_status)).toEqual(["in_transit", "delivered"]);
+  });
+
+  it("takes a cancel as validation with the switch off or before its start date, exactly as before", async () => {
+    const f = await carrier("move-cancel-off");
+    const l = await load(f);
+    flags.cancelledTrip = { enabled: false, startDate: "2026-11-02" };
+    expect(await cancel(f, l.id)).toEqual({ ok: false, category: "validation" });
+    flags.cancelledTrip = { enabled: true, startDate: "2026-11-03" };
+    expect(await cancel(f, l.id)).toEqual({ ok: false, category: "validation" });
+    expect((await stateOf(f, l.id)).status).toBe("planned");
+    expect(await eventsOf(f, l.id)).toEqual([]);
+  });
+
+  // An approved load_move card naming the cancel (the dispatch system withdrew the load), read
+  // back as the gate hands it to the executor.
+  async function cancelCard(f: Fixture, loadId: string): Promise<ProposalRow> {
+    const args = { loadId, toStatus: "cancelled", deliveredOn: null };
+    const r = await app.withTenant(f.tenantId, (q) =>
+      persistEngineProposal(
+        q,
+        {
+          kind: "load_move",
+          subjectTable: "loads",
+          subjectId: loadId,
+          amountCents: 0,
+          args,
+          exceptions: [],
+          reasons: ["tms_withdrawn"],
+          sources: [{ table: "loads", id: loadId }],
+        },
+        f.session,
+        NOW,
+      ),
+    );
+    if (r.kind !== "created") throw new Error(`no card: ${r.kind}`);
+    await admin.withTenant(f.tenantId, (q) =>
+      q.execute(
+        `UPDATE proposals SET status = 'approved', decided_by = $2, decided_at = CAST($3 AS timestamptz),
+                updated_at = CAST($3 AS timestamptz)
+          WHERE tenant_id = current_tenant_id() AND id = CAST($1 AS uuid)`,
+        [r.proposalId, f.session.sub, NOW.toISOString()],
+      ),
+    );
+    const [row] = await admin.withTenant(f.tenantId, (q) =>
+      q.query<{ args: Record<string, unknown> }>("SELECT args FROM proposals WHERE id = CAST($1 AS uuid)", [r.proposalId]),
+    );
+    return {
+      id: r.proposalId,
+      conversationId: null,
+      turnId: null,
+      kind: "load_move",
+      subjectTable: "loads",
+      subjectId: loadId,
+      amountCents: 0,
+      direction: "none",
+      args: row.args,
+      status: "approved",
+      flaggedInputId: null,
+      auditorVerdict: null,
+      auditorAgrees: null,
+      moneyActionId: null,
+      traceId: null,
+    };
+  }
+
+  const statusOfCard = async (f: Fixture, id: string) =>
+    (
+      await admin.withTenant(f.tenantId, (q) =>
+        q.query<{ status: string; decision_note: string | null }>(
+          "SELECT status, decision_note FROM proposals WHERE id = CAST($1 AS uuid)",
+          [id],
+        ),
+      )
+    )[0];
+
+  it("carries out an approved cancel card while the switch is on, and refuses it as not_executable while off", async () => {
+    flags.loadMovement.enabled = true;
+    const f = await carrier("move-cancel-card");
+    const on = await load(f);
+    const onCard = await cancelCard(f, on.id);
+    expect(await loadMoveExecutor(app, f.session, onCard, { confirmed: false }, { clock: () => NOW })).toMatchObject({
+      ok: true,
+      status: "done",
+    });
+    expect((await stateOf(f, on.id)).status).toBe("cancelled");
+    expect(await eventsOf(f, on.id)).toMatchObject([{ from_status: "planned", to_status: "cancelled", source: "staff" }]);
+
+    const off = await load(f);
+    const offCard = await cancelCard(f, off.id);
+    flags.cancelledTrip = { enabled: false, startDate: "2026-11-02" };
+    const precheck = loadMoveExecutor.precheck;
+    if (!precheck) throw new Error("no precheck");
+    const early = await app.withTenant(f.tenantId, (q) =>
+      precheck(q, offCard, NOW, { session: f.session, opts: { confirmed: false } }),
+    );
+    expect(early).toMatchObject({ ok: false, category: "not_executable" });
+    expect(await loadMoveExecutor(app, f.session, offCard, { confirmed: false }, { clock: () => NOW })).toMatchObject({
+      ok: false,
+      category: "not_executable",
+    });
+    expect(await statusOfCard(f, offCard.id)).toEqual({ status: "failed", decision_note: "not_executable" });
+    expect((await stateOf(f, off.id)).status).toBe("planned");
+    expect(await eventsOf(f, off.id)).toEqual([]);
   });
 });
 

@@ -5,10 +5,13 @@ import { askFor, tellFor } from "../asks/store";
 import { getDb, type Queryable, type TenantDb } from "../db";
 import { proposeAdvanceAtPickup } from "../advances/at-pickup";
 import { proposeCardLoadRuling } from "../card-loads/ruling";
+import { proposeCancelledTripDeficit } from "../deficits/cancelled-trip";
+import { deficitBookEnabled } from "../deficits/switches";
 import { runAudit } from "../agent/auditor/run";
 import { runAutopilot } from "../autopilot/run";
 import { runCashCheck } from "../cash/check";
 import { draftCollections } from "../collections/draft";
+import { writeDigest, type CompleteFn } from "../digest/write";
 import { handOffMessage, sortMessage } from "../inbound/pipeline";
 import { moveFromDocument, moveFromMessage, moveFromTmsEvent, type MessageTable, type MoveOutcome } from "../loads/movement";
 import { advanceCardCheck, startCardCheck, statementVerdict } from "../recon/run";
@@ -21,7 +24,8 @@ import type { OpenEvent } from "./log";
 
 // What each piece of work is handed to: the entry an existing button already calls, run as the
 // carrier's service login. The loop adds nothing to what those entries may do: each re-checks its
-// own switch and caps, and none moves money. The loop itself makes no model call.
+// own switch and caps, and none moves money. The loop itself makes no model call (the morning
+// digest's one call is made by its own entry, src/lib/digest/write.ts, through src/lib/ai).
 
 export type Outcome = "done" | "running" | "skipped" | "failed";
 export type HandlerOutcome = { outcome: Outcome; detail: LineDetail };
@@ -68,7 +72,8 @@ function sumOf(...values: unknown[]): number | undefined {
   return total;
 }
 
-export type HandlerDeps = { db?: TenantDb; newId?: () => string };
+// complete: the digest's model call, for tests; src/lib/ai's complete() when absent.
+export type HandlerDeps = { db?: TenantDb; newId?: () => string; complete?: CompleteFn };
 
 // The finished card check that started at or after a card row was written already covers it.
 const COVERING_CHECK_SQL = `SELECT CAST(r.id AS text) AS id FROM card_recon_runs r
@@ -130,13 +135,28 @@ export function deskHandlers(deps: HandlerDeps = {}): Handlers {
 
   // A recorded move. ADVANCE-AT-PICKUP: a move to in transit, for a carrier whose advances unlock
   // at pickup, drafts one advance card for a person to approve (src/lib/advances/at-pickup.ts asks
-  // its own switch and start date again). The other lanes that follow a move hang off here too.
+  // its own switch and start date again). CANCELLED-TRIP: a cancel drafts one deficit card per paid
+  // advance still owed on the load (src/lib/deficits/cancelled-trip.ts asks its own switch and
+  // start date again), in its own transaction. The other lanes that follow a move hang off here too.
   const loadEvent: Handler = {
-    switchOn: () => flags.loadMovement.enabled === true || flags.advanceAtPickup.enabled === true,
+    switchOn: () =>
+      flags.loadMovement.enabled === true || flags.advanceAtPickup.enabled === true || deficitBookEnabled(),
     needsMs: 2_000,
     async run(session, event, ctx) {
-      if (flags.advanceAtPickup.enabled !== true) return done({ found: 0, category: "recorded" });
       const id = event.subjectId;
+      if (deficitBookEnabled()) {
+        if (!id) return failed("bad_request");
+        const c = await db().withTenant(session.tenantId, async (q) => {
+          await assertMembership(q, session);
+          return proposeCancelledTripDeficit(q, session, id, ctx.clock());
+        });
+        if (c.kind === "proposed") return done({ found: c.proposalIds.length, category: "deficit_proposed" });
+        // Not a cancel: the move is the advance at pickup's to read.
+        if (c.category !== "not_cancel") {
+          return done({ found: 0, category: c.category === "switched_off" ? "recorded" : c.category });
+        }
+      }
+      if (flags.advanceAtPickup.enabled !== true) return done({ found: 0, category: "recorded" });
       if (!id) return failed("bad_request");
       const r = await db().withTenant(session.tenantId, async (q) => {
         await assertMembership(q, session);
@@ -399,7 +419,8 @@ export function deskHandlers(deps: HandlerDeps = {}): Handlers {
       const r = await runAutopilot(session.tenantId, id, { db: db(), clock: ctx.clock });
       if (!r.ok) return failed(r.category);
       const o = r.result;
-      // Done by the autopilot: a told line. Stored as ask: the question, if none is live yet.
+      // Done by the autopilot: a told line. Stored as ask: the question, if none is live yet and the
+      // owner has not set the kind to Off since (askFor reads the rule again).
       if ((o.outcome === "approved" || (o.outcome === "earlier" && o.mine)) && o.status === "done") {
         await noteAsk(session, (q) => tellFor(q, session.tenantId, id, ctx.clock()));
       } else if (o.outcome === "decided" && o.mode === "ask") {
@@ -430,6 +451,29 @@ export function deskHandlers(deps: HandlerDeps = {}): Handlers {
     },
   };
 
+  // MORNING DIGEST: the carrier's 06:00 line (src/lib/digest/write.ts re-checks the switch and the
+  // start date, and a digest already stored for the date covers it with no second model call).
+  const digest: Handler = {
+    switchOn: () => flags.morningDigest.enabled === true && flags.aiEnabled === true,
+    needsMs: 25_000,
+    async run(session, event, ctx) {
+      const periodDate = event.eventKey.startsWith("digest:") ? event.eventKey.slice("digest:".length) : "";
+      const r = await writeDigest(session, periodDate, {
+        db: db(),
+        clock: ctx.clock,
+        newId,
+        ...(deps.complete ? { complete: deps.complete } : {}),
+      });
+      if (r.kind === "skipped") return skipped(r.category);
+      if (r.kind === "failed") return failed(r.category);
+      return done({
+        ...(r.found === undefined ? {} : { found: r.found }),
+        ...(r.cents === undefined ? {} : { cents: r.cents }),
+        category: r.category,
+      });
+    },
+  };
+
   return {
     card_transaction: cardTransaction,
     inbound_message: inboundMessage,
@@ -443,5 +487,6 @@ export function deskHandlers(deps: HandlerDeps = {}): Handlers {
     document,
     load_event: loadEvent,
     tms_event: tmsEvent,
+    digest,
   };
 }

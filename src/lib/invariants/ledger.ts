@@ -20,6 +20,8 @@ import type { Db } from "../db/types";
 // I1: the ledger balances to the cent.
 // - Every settlement's lines add up to its stored totals, and net = gross - deductions + carry.
 // - Every advance's recovered_cents equals the recovery lines on paid settlements that cite it.
+// - Per carrier, the deficit recovery lines on paid settlements add up to what its driver
+//   deficits say pay has recovered (driver_deficits.recovered_cents, 0080).
 // - Every confirmed payout paid its subject's amount to its subject's driver, and the outside
 //   amount equals it.
 // - No customer payment is applied for more than it brought in, and every invoice's status is
@@ -79,6 +81,21 @@ export const RECOVERY_SQL = `SELECT count(*) AS advances,
                     AND l.sources -> 0 ->> 'table' = 'advances'
                     AND l.sources -> 0 ->> 'id' = CAST(a.id AS text)), 0) AS bigint) AS recovered_lines
           FROM advances a) r`;
+
+// A deficit recovery line moves its deficit's recovered_cents when the week is paid; per carrier,
+// what the paid lines took equals what the deficits say was recovered.
+export const DEFICIT_RECOVERY_SQL = `SELECT count(*) AS tenants,
+       count(*) FILTER (WHERE d.recovered IS NULL OR d.recovered_lines IS NULL) AS unread,
+       count(*) FILTER (WHERE d.recovered <> d.recovered_lines) AS deficit_recovery_off
+  FROM (SELECT CAST(COALESCE((SELECT SUM(x.recovered_cents) FROM driver_deficits x
+                               WHERE x.tenant_id = t.id), 0) AS bigint) AS recovered,
+               CAST(COALESCE((
+                 SELECT -SUM(l.amount_cents)
+                   FROM settlement_lines l
+                   JOIN settlements s ON s.tenant_id = l.tenant_id AND s.id = l.settlement_id
+                  WHERE l.tenant_id = t.id AND l.kind = 'deficit_recovery' AND s.status = 'paid'), 0) AS bigint)
+                 AS recovered_lines
+          FROM tenants t) d`;
 
 export const RECOVERY_LINES_SQL = `SELECT count(*) AS lines,
        count(*) FILTER (WHERE NOT (jsonb_array_length(l.sources) = 1
@@ -168,6 +185,7 @@ export type SettlementTotalsRow = {
   totals_off: unknown;
 };
 export type RecoveryRow = { advances: unknown; unread: unknown; recovery_off: unknown };
+export type DeficitRecoveryRow = { tenants: unknown; unread: unknown; deficit_recovery_off: unknown };
 export type RecoveryLinesRow = { lines: unknown; uncited: unknown; orphaned: unknown };
 export type PayoutRow = { payouts: unknown; subject_missing: unknown; unread: unknown; mismatch: unknown };
 export type PaymentRow = { payments: unknown; unread: unknown; overapplied: unknown };
@@ -177,6 +195,7 @@ export type InvoiceRow = PageKey & { status: unknown; amount: unknown; has_paid_
 export type LedgerRows = {
   settlements: SettlementTotalsRow[];
   recoveries: RecoveryRow[];
+  deficitRecoveries: DeficitRecoveryRow[];
   recoveryLines: RecoveryLinesRow[];
   payouts: PayoutRow[];
   payments: PaymentRow[];
@@ -196,6 +215,11 @@ export function judgeLedger(rows: LedgerRows): InvariantResult {
   const advances = countOf(r.advances);
   refuseUnread(r.unread, "not_whole");
   tally(v, "recovery_off", countOf(r.recovery_off));
+
+  const dr = onlyRow(rows.deficitRecoveries, "deficit_recoveries_unread");
+  countOf(dr.tenants);
+  refuseUnread(dr.unread, "not_whole");
+  tally(v, "deficit_recovery_off", countOf(dr.deficit_recovery_off));
 
   if (rows.recoveryLines.length !== 1) throw new InvariantReadError("recovery_lines_unread");
   const [rl] = rows.recoveryLines;
@@ -252,6 +276,7 @@ export async function readLedger(q: ReadQuery): Promise<LedgerRows> {
   return {
     settlements: await q.query<SettlementTotalsRow>(SETTLEMENT_TOTALS_SQL),
     recoveries: await q.query<RecoveryRow>(RECOVERY_SQL),
+    deficitRecoveries: await q.query<DeficitRecoveryRow>(DEFICIT_RECOVERY_SQL),
     recoveryLines: await q.query<RecoveryLinesRow>(RECOVERY_LINES_SQL),
     payouts: await q.query<PayoutRow>(PAYOUTS_SQL),
     payments: await q.query<PaymentRow>(PAYMENTS_SQL),

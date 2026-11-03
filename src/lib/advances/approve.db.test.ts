@@ -11,6 +11,8 @@ import { adminUrl, appUrl } from "../db/test-urls";
 import type { Db, TenantDb } from "../db/types";
 import { dbLedgerStore, type LedgerStore } from "../money/execute";
 import { reconcileMoneyActions } from "../money/reconcile";
+import { MoneyError, type MoneyAction } from "../money/types";
+import { setDriverStatus } from "../drivers/status";
 import {
   addAdvance,
   addCard,
@@ -28,6 +30,7 @@ import { executeProposal, type Executor, type ExecutorRegistry } from "../propos
 import {
   checkAdvancePayouts,
   executeAdvanceProposal,
+  payoutHooksFor,
   payoutReconcileHooks,
   precheckAdvanceProposal,
   retryAdvancePayout,
@@ -1271,6 +1274,11 @@ describe("the advance flow", () => {
   });
 
   describe("with 0027: arming, a named card, a load and a take-back", () => {
+    // These arm a driver with no activation steps on record: the checklist is off here (the outer
+    // hooks restore every flag around each test), and activation.db.test.ts arms with it on.
+    beforeEach(() => {
+      flags.activationChecklist.enabled = false;
+    });
     const sim = () => createFuelCardSimAdapter({ log: () => {} });
     // Read at call time: the databases open in beforeAll.
     const services = () => ({ db: app, clock });
@@ -1360,6 +1368,123 @@ describe("the advance flow", () => {
       expect(mock.sendCount).toBe(2);
     });
 
+    // 0081: the driver's last day, written by the admin login as a hand-built row would be (still
+    // armed), so each gate's own active read is what refuses. NOW is Nov 2 in the carrier's zone.
+    const setLastDay = (day: string | null, driverId = A.driverId) =>
+      admin.withTenant(A.tenantId, (q) =>
+        q.execute("UPDATE drivers SET active_to = CAST($2 AS date) WHERE tenant_id = current_tenant_id() AND id = CAST($1 AS uuid)", [
+          driverId,
+          day,
+        ]),
+      );
+
+    it("refuses a departed driver who is still armed before approving, and writes nothing", async () => {
+      await setLastDay("2026-11-01");
+      const id = await addProposal();
+      expect(await approve(id)).toEqual({ ok: false, category: "driver_inactive", retryable: false });
+      expect(await proposalRow(id)).toMatchObject({ status: "proposed", decided_by: null, money_action_id: null });
+      expect(await flowAdvances()).toEqual([]);
+      expect(await ledger()).toEqual([]);
+      expect(mock.sendCount).toBe(0);
+      // The last day itself is still a working day: with it set to today, the approval pays.
+      await setLastDay("2026-11-02");
+      expect(await approve(id)).toMatchObject({ ok: true, status: "done" });
+      expect(mock.sendCount).toBe(1);
+    });
+
+    it("asks again at the executor: a driver who leaves after the precheck is refused, and nothing is reserved", async () => {
+      const id = await addProposal();
+      const racing: ExecutorRegistry = {
+        advance_payout: Object.assign((...args: Parameters<Executor>) => executeAdvanceProposal(...args), {
+          precheck: async (...args: Parameters<typeof precheckAdvanceProposal>) => {
+            const answer = await precheckAdvanceProposal(...args);
+            await setLastDay("2026-11-01");
+            return answer;
+          },
+        }),
+      };
+      expect(await approve(id, false, { ...deps(), executors: racing })).toEqual({
+        ok: false,
+        category: "driver_inactive",
+        retryable: false,
+      });
+      expect(await flowAdvances()).toEqual([]);
+      expect(await ledger()).toEqual([]);
+      expect(mock.sendCount).toBe(0);
+    });
+
+    it("asks again at a retry: a driver who leaves after a failed payout is not paid until active again", async () => {
+      const id = await addProposal();
+      mock.failNext("rate_limited");
+      expect(await approve(id)).toMatchObject({ ok: false, category: "payout_failed" });
+      const [adv] = await flowAdvances();
+      await setLastDay("2026-11-01");
+      expect(await retryAdvancePayout(A.session, adv.id, deps())).toMatchObject({ ok: false, category: "driver_inactive" });
+      expect(await ledger()).toEqual([expect.objectContaining({ state: "failed", attempt: 1 })]);
+      await setLastDay(null);
+      expect(await retryAdvancePayout(A.session, adv.id, deps())).toMatchObject({ ok: true, status: "paid" });
+      expect(mock.sendCount).toBe(2);
+    });
+
+    it("refuses at the reserve too, on the carrier's date of the action, not the server's", async () => {
+      const proposalId = await addProposal();
+      const advanceId = randomUUID();
+      await admin.withTenant(A.tenantId, (q) =>
+        q.execute(
+          `INSERT INTO advances (id, tenant_id, driver_id, request_ref, requested_at, requested_on, amount_cents, status,
+             source, proposal_id)
+           VALUES (CAST($1 AS uuid), current_tenant_id(), CAST($2 AS uuid), $3, CAST('2026-11-02T03:00:00Z' AS timestamptz),
+             CAST('2026-11-01' AS date), 25000, 'requested', 'ui', CAST($4 AS uuid))`,
+          [advanceId, A.driverId, `REQ-RES-${advanceId.slice(0, 8)}`, proposalId],
+        ),
+      );
+      const card = await activeCard(A.driverId);
+      const action = (createdAt: string) =>
+        ({ subjectId: advanceId, approverMembershipId: A.memberId, createdAt, proposalId: null }) as unknown as MoneyAction;
+      const reserve = (createdAt: string) =>
+        app.withTenant(A.tenantId, (q) => payoutHooksFor(card.id).onReserved(q, action(createdAt)));
+      const status = async () =>
+        (
+          await admin.withTenant(A.tenantId, (q) =>
+            q.query<{ status: string }>("SELECT status FROM advances WHERE tenant_id = current_tenant_id() AND id = CAST($1 AS uuid)", [
+              advanceId,
+            ]),
+          )
+        )[0].status;
+      await setLastDay("2026-11-01");
+      // 16:00 UTC on Nov 2 is Nov 2 in Chicago, a day past the last one.
+      await expect(reserve("2026-11-02T16:00:00.000Z")).rejects.toBeInstanceOf(MoneyError);
+      expect(await status()).toBe("requested");
+      // 04:00 UTC on Nov 2 is still Nov 1 in Chicago, the last day.
+      await reserve("2026-11-02T04:00:00.000Z");
+      expect(await status()).toBe("approved");
+    });
+
+    it("deactivating on the driver's page disarms them; reactivating does not arm, so nothing is paid until an admin arms them", async () => {
+      flags.driverAdmin = { enabled: true };
+      await makeAdmin();
+      const id = await addProposal();
+      expect(
+        await setDriverStatus(A.session, A.driverId, { active: false, effectiveOn: "2026-11-01" }, services()),
+      ).toMatchObject({ ok: true, changed: true, armed: false });
+      expect(await approve(id)).toMatchObject({ ok: false, category: "driver_inactive" });
+      // Armed again by an admin while gone: still refused, by the last day.
+      await armDriver(A.session, A.driverId, { armed: true }, services());
+      expect(await approve(id)).toMatchObject({ ok: false, category: "driver_inactive" });
+      await armDriver(A.session, A.driverId, { armed: false }, services());
+      expect(await setDriverStatus(A.session, A.driverId, { active: true }, services())).toMatchObject({
+        ok: true,
+        changed: true,
+        active: true,
+        armed: false,
+      });
+      expect(await approve(id)).toMatchObject({ ok: false, category: "driver_not_armed" });
+      expect(await ledger()).toEqual([]);
+      await armDriver(A.session, A.driverId, { armed: true }, services());
+      expect(await approve(id)).toMatchObject({ ok: true, status: "done" });
+      expect(mock.sendCount).toBe(1);
+    });
+
     it("pays the card the proposal names, never the default in its place, and refuses one that is not the driver's", async () => {
       await makeAdmin();
       const added = await addDriverCard(
@@ -1411,6 +1536,94 @@ describe("the advance flow", () => {
       expect(await approve(second)).toEqual({ ok: false, category: "stale_eligibility", retryable: false });
       expect(await proposalRow(second)).toMatchObject({ status: "failed", decision_note: "stale_eligibility: over_load_cap" });
       expect(await flowAdvances()).toHaveLength(1);
+      expect(mock.sendCount).toBe(1);
+    });
+
+    it("refuses as stale an advance on a load cancelled since, before the approval and after it, paying nothing", async () => {
+      const mine = await loadOf("L-1");
+      const cancelLoad = () =>
+        admin.withTenant(A.tenantId, (q) =>
+          q.execute("UPDATE loads SET status = 'cancelled' WHERE tenant_id = current_tenant_id() AND id = CAST($1 AS uuid)", [mine]),
+        );
+      // Cancelled between the approval and the payout: the executor asks again and pays nothing.
+      const before = await addProposal({ loadId: mine, amountCents: 10_000 });
+      const cancelling: ExecutorRegistry = {
+        advance_payout: Object.assign(
+          async (...args: Parameters<Executor>) => {
+            await cancelLoad();
+            return executeAdvanceProposal(...args);
+          },
+          { precheck: precheckAdvanceProposal },
+        ),
+      };
+      expect(await approve(before, false, { ...deps(), executors: cancelling })).toEqual({
+        ok: false,
+        category: "stale",
+        retryable: false,
+      });
+      // The proposal ends as failed, so the card is never left waiting on a load that cannot come back.
+      expect(await proposalRow(before)).toMatchObject({ status: "failed", decision_note: "load_cancelled" });
+      expect(await flowAdvances()).toEqual([]);
+
+      // Already cancelled: the precheck refuses, and the card stays proposed.
+      const after = await addProposal({ loadId: mine, amountCents: 10_000 });
+      expect(await approve(after)).toEqual({ ok: false, category: "stale", retryable: false });
+      expect(await proposalRow(after)).toMatchObject({ status: "proposed", decided_by: null });
+      expect(await flowAdvances()).toEqual([]);
+      expect(mock.sendCount).toBe(0);
+    });
+
+    it("ends as failed a proposal whose load is cancelled after it moved to executing and before the reserve", async () => {
+      const mine = await loadOf("L-1");
+      const id = await addProposal({ loadId: mine, amountCents: 10_000 });
+      // The load is cancelled once the approval's own transaction has committed (the proposal
+      // executing, the advance requested), before the payout's: the reserve refuses and rolls back.
+      const racing: ExecutorRegistry = {
+        advance_payout: Object.assign(
+          async (...[db, ...rest]: Parameters<Executor>) => {
+            let n = 0;
+            const wrapped: TenantDb = {
+              withTenant: async (tenantId, fn) => {
+                const result = await db.withTenant(tenantId, fn);
+                n += 1;
+                if (n === 1) {
+                  await admin.withTenant(A.tenantId, (q) =>
+                    q.execute("UPDATE loads SET status = 'cancelled' WHERE tenant_id = current_tenant_id() AND id = CAST($1 AS uuid)", [mine]),
+                  );
+                }
+                return result;
+              },
+            };
+            return executeAdvanceProposal(wrapped, ...rest);
+          },
+          { precheck: precheckAdvanceProposal },
+        ),
+      };
+      expect(await approve(id, false, { ...deps(), executors: racing })).toEqual({
+        ok: false,
+        category: "stale",
+        retryable: false,
+      });
+      expect(await proposalRow(id)).toMatchObject({ status: "failed", decision_note: "load_cancelled" });
+      const [adv] = await flowAdvances();
+      expect(await advanceRow(adv.id)).toMatchObject({ status: "requested", load_id: mine });
+      expect(await ledger()).toEqual([]);
+      expect(mock.sendCount).toBe(0);
+    });
+
+    it("refuses as stale a retry of a failed payout once its load is cancelled, sending nothing", async () => {
+      const mine = await loadOf("L-1");
+      const id = await addProposal({ loadId: mine, amountCents: 10_000 });
+      mock.failNext("rate_limited");
+      expect(await approve(id)).toEqual({ ok: false, category: "payout_failed", retryable: true });
+      const [adv] = await flowAdvances();
+      expect(await advanceRow(adv.id)).toMatchObject({ status: "approved", load_id: mine });
+      await admin.withTenant(A.tenantId, (q) =>
+        q.execute("UPDATE loads SET status = 'cancelled' WHERE tenant_id = current_tenant_id() AND id = CAST($1 AS uuid)", [mine]),
+      );
+      expect(await retryAdvancePayout(A.session, adv.id, deps())).toMatchObject({ ok: false, category: "stale" });
+      expect(await ledger()).toEqual([expect.objectContaining({ state: "failed", attempt: 1 })]);
+      expect(await advanceRow(adv.id)).toMatchObject({ status: "approved" });
       expect(mock.sendCount).toBe(1);
     });
 
