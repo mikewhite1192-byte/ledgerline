@@ -35,6 +35,7 @@ export function sampleArgs(plan: CarrierPlan): Record<string, Record<string, unk
     )
     .sort((a, b) => (a.issued_on === b.issued_on ? (a.id < b.id ? 1 : -1) : a.issued_on < b.issued_on ? 1 : -1))[0];
   return {
+    find_driver: { name: "Vasquez" },
     get_driver: { driverId: hero.id },
     get_loads: { driverId: hero.id, from: paid.period_start, to: open.period_end },
     get_pay_items: { driverId: hero.id, periodStart: paid.period_start, periodEnd: open.period_end },

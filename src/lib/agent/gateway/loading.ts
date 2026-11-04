@@ -4,6 +4,8 @@
 // schema before calling it. A tool is deferred unless this list names it, so a tool added later
 // is deferred without a change here. Whole names only. Imports nothing.
 export const ALWAYS_LOADED: readonly string[] = Object.freeze([
+  // A question that names a driver starts here: every other lookup takes the driver's id.
+  "find_driver",
   "get_driver",
   "get_loads",
   "get_pay_items",

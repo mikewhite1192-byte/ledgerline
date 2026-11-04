@@ -23,6 +23,7 @@ const EXPECTED: Record<string, { tier: string; roles: AgentRole[] }> = {
   get_payments_in: { tier: "read", roles: ["operator"] },
   get_document: { tier: "read", roles: ["operator", "auditor"] },
   get_voice_note: { tier: "read", roles: ["operator"] },
+  find_driver: { tier: "read", roles: ["operator", "auditor"] },
   propose_advance: { tier: "propose", roles: ["operator"] },
   propose_pay_correction: { tier: "propose", roles: ["operator"] },
   propose_invoice_fix: { tier: "propose", roles: ["operator"] },
@@ -174,10 +175,10 @@ describe("tool registry", () => {
 
   it("offers each role only its own tools, as copies", () => {
     const counts = Object.fromEntries(AGENT_ROLES.map((r) => [r, toolsFor(r).length]));
-    expect(counts).toEqual({ operator: 21, auditor: 12, triage: 2 });
+    expect(counts).toEqual({ operator: 22, auditor: 13, triage: 2 });
     const first = toolsFor("operator");
     first.pop();
-    expect(toolsFor("operator")).toHaveLength(21);
+    expect(toolsFor("operator")).toHaveLength(22);
     expect(toolsFor("nobody" as AgentRole)).toEqual([]);
   });
 
@@ -186,15 +187,15 @@ describe("tool registry", () => {
     for (const role of AGENT_ROLES) for (const n of DETENTION_TOOLS) expect(names(role)).not.toContain(n);
     flags.detentionEnabled = true;
     expect(Object.fromEntries(AGENT_ROLES.map((r) => [r, toolsFor(r).length]))).toEqual({
-      operator: 23,
-      auditor: 13,
+      operator: 24,
+      auditor: 14,
       triage: 2,
     });
     expect(names("operator")).toEqual(expect.arrayContaining(DETENTION_TOOLS));
     expect(names("auditor")).toContain("find_unbilled_detention");
     expect(names("auditor")).not.toContain("propose_detention_charge");
     flags.detentionEnabled = false;
-    expect(toolsFor("operator")).toHaveLength(21);
+    expect(toolsFor("operator")).toHaveLength(22);
   });
 
   it("offers the money code tools only while their switch is on, read on every offer", () => {
@@ -202,8 +203,8 @@ describe("tool registry", () => {
     for (const role of AGENT_ROLES) for (const n of MONEY_CODE_TOOLS) expect(names(role)).not.toContain(n);
     flags.moneyCodes.enabled = true;
     expect(Object.fromEntries(AGENT_ROLES.map((r) => [r, toolsFor(r).length]))).toEqual({
-      operator: 23,
-      auditor: 13,
+      operator: 24,
+      auditor: 14,
       triage: 2,
     });
     expect(names("operator")).toEqual(expect.arrayContaining(MONEY_CODE_TOOLS));
@@ -211,7 +212,7 @@ describe("tool registry", () => {
     expect(names("auditor")).not.toContain("propose_money_code");
     expect(toolNamed("propose_money_code")?.limit).toBeTypeOf("function");
     flags.moneyCodes.enabled = false;
-    expect(toolsFor("operator")).toHaveLength(21);
+    expect(toolsFor("operator")).toHaveLength(22);
   });
 
   it("offers the card check tools only while its switch is on, read on every offer", () => {
@@ -219,8 +220,8 @@ describe("tool registry", () => {
     for (const role of AGENT_ROLES) for (const n of CARD_TOOLS) expect(names(role), `${role} ${n}`).not.toContain(n);
     flags.cardRecon.enabled = true;
     expect(Object.fromEntries(AGENT_ROLES.map((r) => [r, toolsFor(r).length]))).toEqual({
-      operator: 23,
-      auditor: 13,
+      operator: 24,
+      auditor: 14,
       triage: 2,
     });
     expect(names("operator")).toEqual(expect.arrayContaining(CARD_TOOLS));
@@ -228,7 +229,7 @@ describe("tool registry", () => {
     expect(names("auditor")).not.toContain("propose_card_match");
     for (const n of CARD_TOOLS) expect(names("triage"), n).not.toContain(n);
     flags.cardRecon.enabled = false;
-    expect(toolsFor("operator")).toHaveLength(21);
+    expect(toolsFor("operator")).toHaveLength(22);
   });
 
   it("offers the card load read to the operator and the auditor only while the ruling's switch is on", () => {
@@ -236,8 +237,8 @@ describe("tool registry", () => {
     for (const role of AGENT_ROLES) expect(names(role), role).not.toContain("get_card_loads");
     flags.cardLoadRuling.enabled = true;
     expect(Object.fromEntries(AGENT_ROLES.map((r) => [r, toolsFor(r).length]))).toEqual({
-      operator: 22,
-      auditor: 13,
+      operator: 23,
+      auditor: 14,
       triage: 2,
     });
     expect(names("operator")).toContain("get_card_loads");
@@ -245,8 +246,8 @@ describe("tool registry", () => {
     expect(names("triage")).not.toContain("get_card_loads");
     expect(ALWAYS_LOADED).not.toContain("get_card_loads");
     flags.cardLoadRuling.enabled = false;
-    expect(toolsFor("operator")).toHaveLength(21);
-    expect(toolsFor("auditor")).toHaveLength(12);
+    expect(toolsFor("operator")).toHaveLength(22);
+    expect(toolsFor("auditor")).toHaveLength(13);
   });
 
   it("offers the invoice and customer payment tools only while their switches are on, read on every offer", () => {
@@ -255,18 +256,18 @@ describe("tool registry", () => {
     flags.invoicesEnabled = true;
     expect(names()).toEqual(expect.arrayContaining(INVOICE_TOOLS));
     for (const n of PAYMENT_TOOLS) expect(names(), n).not.toContain(n);
-    expect(toolsFor("operator")).toHaveLength(22);
+    expect(toolsFor("operator")).toHaveLength(23);
     flags.invoicesEnabled = false;
     flags.customerPaymentsEnabled = true;
     expect(names()).toEqual(expect.arrayContaining(PAYMENT_TOOLS));
     for (const n of INVOICE_TOOLS) expect(names(), n).not.toContain(n);
-    expect(toolsFor("operator")).toHaveLength(24);
+    expect(toolsFor("operator")).toHaveLength(25);
     flags.customerPaymentsEnabled = false;
-    expect(toolsFor("operator")).toHaveLength(21);
+    expect(toolsFor("operator")).toHaveLength(22);
     // Neither is ever offered to the auditor or triage.
     flags.invoicesEnabled = true;
     flags.customerPaymentsEnabled = true;
-    expect(toolsFor("auditor")).toHaveLength(12);
+    expect(toolsFor("auditor")).toHaveLength(13);
     expect(toolsFor("triage")).toHaveLength(2);
   });
 
@@ -274,14 +275,14 @@ describe("tool registry", () => {
     const names = (role: AgentRole) => toolsFor(role).map((t) => t.name);
     expect(flags.cashFridayEnabled).toBe(false);
     for (const role of AGENT_ROLES) expect(names(role)).not.toContain("get_cash_friday");
-    expect(toolsFor("operator")).toHaveLength(21);
+    expect(toolsFor("operator")).toHaveLength(22);
     flags.cashFridayEnabled = true;
     expect(names("operator")).toContain("get_cash_friday");
-    expect(toolsFor("operator")).toHaveLength(22);
+    expect(toolsFor("operator")).toHaveLength(23);
     expect(names("auditor")).not.toContain("get_cash_friday");
     expect(toolsFor("operator", { defer: true }).find((t) => t.name === "get_cash_friday")?.deferLoading).toBe(true);
     flags.cashFridayEnabled = false;
-    expect(toolsFor("operator")).toHaveLength(21);
+    expect(toolsFor("operator")).toHaveLength(22);
   });
 
   it("offers the pay rule change tools only to the operator and only while their switch is on, read on every offer", () => {
@@ -289,11 +290,11 @@ describe("tool registry", () => {
     expect(flags.rulesByTalkingEnabled).toBe(false);
     // Off: the operator's list is today's, name for name, so the recorded demo path still matches.
     for (const role of AGENT_ROLES) for (const n of RULE_TOOLS) expect(names(role), n).not.toContain(n);
-    expect(toolsFor("operator")).toHaveLength(21);
+    expect(toolsFor("operator")).toHaveLength(22);
     flags.rulesByTalkingEnabled = true;
     expect(Object.fromEntries(AGENT_ROLES.map((r) => [r, toolsFor(r).length]))).toEqual({
-      operator: 23,
-      auditor: 12,
+      operator: 24,
+      auditor: 13,
       triage: 2,
     });
     expect(names("operator")).toEqual(expect.arrayContaining(RULE_TOOLS));
@@ -302,7 +303,7 @@ describe("tool registry", () => {
       expect(names("triage"), n).not.toContain(n);
     }
     flags.rulesByTalkingEnabled = false;
-    expect(toolsFor("operator")).toHaveLength(21);
+    expect(toolsFor("operator")).toHaveLength(22);
   });
 
   it("offers the factoring tools only while the factoring switch is on, read on every offer, all deferred", () => {
@@ -310,22 +311,22 @@ describe("tool registry", () => {
     // Off: the lists hold none of its tools.
     flags.factoring.enabled = false;
     for (const role of AGENT_ROLES) for (const n of FACTORING_TOOLS) expect(names(role), `${role} ${n}`).not.toContain(n);
-    expect(toolsFor("operator")).toHaveLength(21);
-    expect(toolsFor("auditor")).toHaveLength(12);
+    expect(toolsFor("operator")).toHaveLength(22);
+    expect(toolsFor("auditor")).toHaveLength(13);
     flags.factoring.enabled = true;
     for (const n of FACTORING_TOOLS) expect(names("operator"), n).toContain(n);
     expect(names("auditor")).toEqual(expect.arrayContaining(["get_factoring_packet", "get_factoring_requests"]));
     expect(names("auditor")).not.toContain("propose_factoring");
     for (const n of FACTORING_TOOLS) expect(names("triage"), n).not.toContain(n);
-    expect(toolsFor("operator")).toHaveLength(24);
-    expect(toolsFor("auditor")).toHaveLength(14);
+    expect(toolsFor("operator")).toHaveLength(25);
+    expect(toolsFor("auditor")).toHaveLength(15);
     for (const n of FACTORING_TOOLS) {
       expect(ALWAYS_LOADED, n).not.toContain(n);
       expect(toolsFor("operator", { defer: true }).find((t) => t.name === n)?.deferLoading, n).toBe(true);
     }
     flags.factoring.enabled = false;
-    expect(toolsFor("operator")).toHaveLength(21);
-    expect(toolsFor("auditor")).toHaveLength(12);
+    expect(toolsFor("operator")).toHaveLength(22);
+    expect(toolsFor("auditor")).toHaveLength(13);
   });
 
   it("offers the dispatch mirror tools only while its switch is on, to the operator and the auditor, all deferred", () => {
@@ -339,11 +340,11 @@ describe("tool registry", () => {
       expect(ALWAYS_LOADED, n).not.toContain(n);
       expect(toolsFor("operator", { defer: true }).find((t) => t.name === n)?.deferLoading, n).toBe(true);
     }
-    expect(toolsFor("operator")).toHaveLength(24);
-    expect(toolsFor("auditor")).toHaveLength(15);
+    expect(toolsFor("operator")).toHaveLength(25);
+    expect(toolsFor("auditor")).toHaveLength(16);
     flags.tmsSync.enabled = false;
-    expect(toolsFor("operator")).toHaveLength(21);
-    expect(toolsFor("auditor")).toHaveLength(12);
+    expect(toolsFor("operator")).toHaveLength(22);
+    expect(toolsFor("auditor")).toHaveLength(13);
   });
 
   it("holds no get_tms_* tool that is not a read, and no tms tool of any other tier", () => {
@@ -362,19 +363,19 @@ describe("tool registry", () => {
     // Off: the lists hold none of its tools.
     flags.escrowRelease.enabled = false;
     for (const role of AGENT_ROLES) for (const n of ESCROW_TOOLS) expect(names(role), `${role} ${n}`).not.toContain(n);
-    expect(toolsFor("operator")).toHaveLength(21);
-    expect(toolsFor("auditor")).toHaveLength(12);
+    expect(toolsFor("operator")).toHaveLength(22);
+    expect(toolsFor("auditor")).toHaveLength(13);
     flags.escrowRelease.enabled = true;
     for (const n of ESCROW_TOOLS) expect(names("operator"), n).toContain(n);
     expect(names("auditor")).toEqual(expect.arrayContaining(["list_escrow_releases_due", "get_escrow_statement"]));
     expect(names("auditor")).not.toContain("propose_escrow_release");
     for (const n of ESCROW_TOOLS) expect(names("triage"), n).not.toContain(n);
-    expect(toolsFor("operator")).toHaveLength(24);
-    expect(toolsFor("auditor")).toHaveLength(14);
+    expect(toolsFor("operator")).toHaveLength(25);
+    expect(toolsFor("auditor")).toHaveLength(15);
     expect(toolNamed("propose_escrow_release")?.limit).toBeTypeOf("function");
     flags.escrowRelease.enabled = false;
-    expect(toolsFor("operator")).toHaveLength(21);
-    expect(toolsFor("auditor")).toHaveLength(12);
+    expect(toolsFor("operator")).toHaveLength(22);
+    expect(toolsFor("auditor")).toHaveLength(13);
   });
 
   it("offers the card pull-back proposal to the operator alone, only while its switch is on", () => {
@@ -384,12 +385,12 @@ describe("tool registry", () => {
     expect(names("operator")).toContain("propose_card_pullback");
     expect(names("auditor")).not.toContain("propose_card_pullback");
     expect(names("triage")).not.toContain("propose_card_pullback");
-    expect(toolsFor("operator")).toHaveLength(22);
-    expect(toolsFor("auditor")).toHaveLength(12);
+    expect(toolsFor("operator")).toHaveLength(23);
+    expect(toolsFor("auditor")).toHaveLength(13);
     expect(ALWAYS_LOADED).not.toContain("propose_card_pullback");
     expect(toolNamed("propose_card_pullback")?.limit).toBeTypeOf("function");
     flags.cardPullback.enabled = false;
-    expect(toolsFor("operator")).toHaveLength(21);
+    expect(toolsFor("operator")).toHaveLength(22);
   });
 
   it("offers the deficits read to the operator and the auditor, only while deficit recovery is on", () => {
@@ -399,12 +400,12 @@ describe("tool registry", () => {
     expect(names("operator")).toContain("get_driver_deficits");
     expect(names("auditor")).toContain("get_driver_deficits");
     expect(names("triage")).not.toContain("get_driver_deficits");
-    expect(toolsFor("operator")).toHaveLength(22);
-    expect(toolsFor("auditor")).toHaveLength(13);
+    expect(toolsFor("operator")).toHaveLength(23);
+    expect(toolsFor("auditor")).toHaveLength(14);
     expect(ALWAYS_LOADED).not.toContain("get_driver_deficits");
     flags.deficitRecovery.enabled = false;
-    expect(toolsFor("operator")).toHaveLength(21);
-    expect(toolsFor("auditor")).toHaveLength(12);
+    expect(toolsFor("operator")).toHaveLength(22);
+    expect(toolsFor("auditor")).toHaveLength(13);
   });
 
   it("offers the invoice review tools to the operator and the auditor only while both switches are on", () => {
@@ -436,14 +437,14 @@ describe("tool registry", () => {
     for (const role of AGENT_ROLES) for (const n of COLLECTIONS_TOOLS) expect(names(role), `${role} ${n}`).not.toContain(n);
     flags.collectionsEnabled = true;
     expect(names("operator")).toEqual(expect.arrayContaining(COLLECTIONS_TOOLS));
-    expect(toolsFor("operator")).toHaveLength(22);
-    expect(toolsFor("auditor")).toHaveLength(12);
+    expect(toolsFor("operator")).toHaveLength(23);
+    expect(toolsFor("auditor")).toHaveLength(13);
     expect(toolsFor("triage")).toHaveLength(2);
     // Deferred like the other receivables reads: few questions need it.
     expect(ALWAYS_LOADED).not.toContain("get_collections");
     expect(toolsFor("operator", { defer: true }).find((t) => t.name === "get_collections")?.deferLoading).toBe(true);
     flags.collectionsEnabled = false;
-    expect(toolsFor("operator")).toHaveLength(21);
+    expect(toolsFor("operator")).toHaveLength(22);
   });
 
   it("offers and finds the report tools only while their switch is on, read on every call", () => {
@@ -452,15 +453,15 @@ describe("tool registry", () => {
     expect(toolsFor("operator").map((t) => t.name).filter((n) => n.startsWith("report_"))).toEqual([]);
 
     flags.reportsEnabled = true;
-    expect(toolsFor("operator")).toHaveLength(27);
-    expect(toolsFor("auditor")).toHaveLength(12);
+    expect(toolsFor("operator")).toHaveLength(28);
+    expect(toolsFor("auditor")).toHaveLength(13);
     expect(toolsFor("triage")).toHaveLength(2);
     for (const name of REPORT_TOOLS) expect(toolNamed(name)?.tier, name).toBe("read");
     expect(toolsFor("operator").map((t) => t.name)).toEqual(expect.arrayContaining(REPORT_TOOLS));
 
     flags.reportsEnabled = false;
     for (const name of REPORT_TOOLS) expect(toolNamed(name), name).toBeNull();
-    expect(toolsFor("operator")).toHaveLength(21);
+    expect(toolsFor("operator")).toHaveLength(22);
   });
 
   it("offers and finds the IFTA quarter report only while the reports and its own switch are both on", () => {
@@ -468,13 +469,13 @@ describe("tool registry", () => {
     flags.iftaEnabled = false;
     flags.reportsEnabled = true;
     // Reports on, IFTA off: the six reports as before, and the IFTA tool neither offered nor found.
-    expect(toolsFor("operator")).toHaveLength(27);
+    expect(toolsFor("operator")).toHaveLength(28);
     expect(names()).not.toContain(IFTA_TOOL);
     expect(toolNamed(IFTA_TOOL)).toBeNull();
     expect(isToolEnabled(TOOL_REGISTRY[IFTA_TOOL])).toBe(false);
 
     flags.iftaEnabled = true;
-    expect(toolsFor("operator")).toHaveLength(28);
+    expect(toolsFor("operator")).toHaveLength(29);
     expect(names()).toContain(IFTA_TOOL);
     expect(toolNamed(IFTA_TOOL)?.tier).toBe("read");
     expect(toolNamed(IFTA_TOOL)?.roles).toEqual(["operator"]);
@@ -495,16 +496,16 @@ describe("tool registry", () => {
     flags.yearEndEnabled = false;
     flags.reportsEnabled = true;
     // Reports on, year-end off: the reports as before, and the year-end tool neither offered nor found.
-    expect(toolsFor("operator")).toHaveLength(27);
-    expect(toolsFor("auditor")).toHaveLength(12);
+    expect(toolsFor("operator")).toHaveLength(28);
+    expect(toolsFor("auditor")).toHaveLength(13);
     for (const role of AGENT_ROLES) expect(names(role), role).not.toContain(YEAR_END_TOOL);
     expect(toolNamed(YEAR_END_TOOL)).toBeNull();
     expect(isToolEnabled(TOOL_REGISTRY[YEAR_END_TOOL])).toBe(false);
 
     flags.yearEndEnabled = true;
     expect(Object.fromEntries(AGENT_ROLES.map((r) => [r, toolsFor(r).length]))).toEqual({
-      operator: 28,
-      auditor: 13,
+      operator: 29,
+      auditor: 14,
       triage: 2,
     });
     expect(names("operator")).toContain(YEAR_END_TOOL);
@@ -528,7 +529,7 @@ describe("tool registry", () => {
     flags.trustMeterEnabled = false;
     flags.reportsEnabled = true;
     // Reports on, trust meter off: the reports as before, and the tool neither offered nor found.
-    expect(toolsFor("operator")).toHaveLength(27);
+    expect(toolsFor("operator")).toHaveLength(28);
     for (const role of AGENT_ROLES) expect(names(role), role).not.toContain(TRUST_TOOL);
     expect(toolNamed(TRUST_TOOL)).toBeNull();
     expect(isToolEnabled(TOOL_REGISTRY[TRUST_TOOL])).toBe(false);
@@ -541,8 +542,8 @@ describe("tool registry", () => {
 
     flags.trustMeterEnabled = true;
     expect(Object.fromEntries(AGENT_ROLES.map((r) => [r, toolsFor(r).length]))).toEqual({
-      operator: 28,
-      auditor: 12,
+      operator: 29,
+      auditor: 13,
       triage: 2,
     });
     expect(names("operator")).toContain(TRUST_TOOL);
@@ -567,11 +568,11 @@ describe("tool registry", () => {
     expect(flags.carrierMemoryEnabled).toBe(false);
     // Off: the default operator list, and so the demo turn's tool names, are unchanged.
     for (const role of AGENT_ROLES) expect(names(role)).not.toContain("remember_note");
-    expect(toolsFor("operator")).toHaveLength(21);
+    expect(toolsFor("operator")).toHaveLength(22);
     flags.carrierMemoryEnabled = true;
     expect(Object.fromEntries(AGENT_ROLES.map((r) => [r, toolsFor(r).length]))).toEqual({
-      operator: 22,
-      auditor: 12,
+      operator: 23,
+      auditor: 13,
       triage: 2,
     });
     expect(names("operator")).toContain("remember_note");
@@ -579,7 +580,7 @@ describe("tool registry", () => {
     expect(toolNamed("remember_note")?.tier).toBe("record");
     flags.carrierMemoryEnabled = false;
     expect(names("operator")).not.toContain("remember_note");
-    expect(toolsFor("operator")).toHaveLength(21);
+    expect(toolsFor("operator")).toHaveLength(22);
   });
 
   it("serializes every schema as a closed JSON object schema with no tenant field", () => {
@@ -602,8 +603,8 @@ describe("tool registry", () => {
     flags.trustMeterEnabled = true;
     // Every switch on: every registered tool is offered to each of its roles.
     expect(Object.fromEntries(AGENT_ROLES.map((r) => [r, toolsFor(r).length]))).toEqual({
-      operator: 52,
-      auditor: 21,
+      operator: 53,
+      auditor: 22,
       triage: 2,
     });
     for (const role of AGENT_ROLES) {
@@ -698,10 +699,10 @@ describe("deferred loading for tool search", () => {
     const names = (role: AgentRole) => toolsFor(role).map((t) => t.name);
     expect(flags.profitBriefEnabled).toBe(false);
     expect(names("operator")).not.toContain("get_profit_brief");
-    expect(toolsFor("operator")).toHaveLength(21);
+    expect(toolsFor("operator")).toHaveLength(22);
     flags.profitBriefEnabled = true;
     expect(names("operator")).toContain("get_profit_brief");
-    expect(toolsFor("operator")).toHaveLength(22);
+    expect(toolsFor("operator")).toHaveLength(23);
     for (const role of ["auditor", "triage"] as const) expect(names(role)).not.toContain("get_profit_brief");
     expect(ALWAYS_LOADED).not.toContain("get_profit_brief");
     expect(toolsFor("operator", { defer: true }).find((t) => t.name === "get_profit_brief")?.deferLoading).toBe(true);
@@ -722,11 +723,11 @@ describe("deferred loading for tool search", () => {
     flags.quarterReviewEnabled = false;
     // Off: the operator's list is unchanged.
     expect(names("operator")).not.toContain("get_quarter_review");
-    expect(toolsFor("operator")).toHaveLength(21);
+    expect(toolsFor("operator")).toHaveLength(22);
     expect(toolNamed("get_quarter_review")).not.toBeNull();
     flags.quarterReviewEnabled = true;
     expect(names("operator")).toContain("get_quarter_review");
-    expect(toolsFor("operator")).toHaveLength(22);
+    expect(toolsFor("operator")).toHaveLength(23);
     for (const role of ["auditor", "triage"] as const) expect(names(role)).not.toContain("get_quarter_review");
     expect(ALWAYS_LOADED).not.toContain("get_quarter_review");
     expect(toolsFor("operator", { defer: true }).find((t) => t.name === "get_quarter_review")?.deferLoading).toBe(true);
@@ -752,6 +753,7 @@ describe("deferred loading for tool search", () => {
 
   it("names only registered tools offered to the operator as always loaded, and nothing else", () => {
     expect(ALWAYS_LOADED).toEqual([
+      "find_driver",
       "get_driver",
       "get_loads",
       "get_pay_items",

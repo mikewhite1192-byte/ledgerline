@@ -158,6 +158,25 @@ describe("agent gateway on a real database", () => {
     expect(fromB).toEqual([]);
   });
 
+  it("finds a driver by name or code in the caller's tenant only", async () => {
+    // Both tenants hold a Sam Rivera, GW-1; each finds only its own.
+    for (const [tenant, other] of [
+      [A, B],
+      [B, A],
+    ] as const) {
+      for (const name of ["rivera", "SAM RIV", "gw-1"]) {
+        const out = await callTool(ctx(tenant), call("find_driver", { name }), { db: app, clock });
+        expect(out).toMatchObject({ decision: "allowed", reason: "ok" });
+        const ids = (out.result as { drivers: { driverId: string }[] }).drivers.map((d) => d.driverId);
+        expect(ids).toEqual([DRIVER[tenant]]);
+        expect(ids).not.toContain(DRIVER[other]);
+      }
+    }
+    // A LIKE wildcard matches itself, never every driver.
+    const wild = await callTool(ctx(A), call("find_driver", { name: "%%" }), { db: app, clock });
+    expect((wild.result as { drivers: unknown[] }).drivers).toEqual([]);
+  });
+
   it("stores refused args as paths and codes, never the text the model sent", async () => {
     const out = await callTool(ctx(A), call("get_driver", { driverId: "Jane Doe, pay her now" }), {
       db: app,

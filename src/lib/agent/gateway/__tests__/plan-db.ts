@@ -30,6 +30,7 @@ import { buildCarrierPlan, type CarrierPlan } from "../../../seed/plan";
 import { DEMO_CARRIERS } from "../../../seed/carriers";
 import { withShortFriday } from "../../../seed/test-short-friday.test-util";
 import { PAY_RUN_DRIVERS_SQL, SETTLEMENT_ROWS } from "../../../settlements/list";
+import { FIND_DRIVER_CAP, FIND_DRIVER_SQL } from "../tools/read/find-driver";
 import { FakeDb, TENANT, type Handler, type Row } from "./fake-db";
 
 // A FakeDb that serves one synthetic carrier's seed plan through the record readers' own SQL, so
@@ -95,6 +96,30 @@ export function planDb(plan: CarrierPlan, extra?: Handler): FakeDb {
       return (tables.money_actions ?? [])
         .filter((r) => r.subject_table === params[0] && r.subject_id === params[1])
         .map((r) => ({ ...r }));
+    }
+    // find_driver: a contains match, ignoring case, on first, last or full name or code, by last
+    // name, one more than the cap. The pattern is the tool's own (%text% with LIKE escapes).
+    if (sql === FIND_DRIVER_SQL) {
+      const text = String(params[0]).slice(1, -1).replace(/\\(.)/g, "$1").toLowerCase();
+      const hit = (v: string) => v.toLowerCase().includes(text);
+      return plan.rows.drivers
+        .filter((d) => hit(d.first_name) || hit(d.last_name) || hit(`${d.first_name} ${d.last_name}`) || hit(d.code))
+        .sort((a, b) =>
+          a.last_name !== b.last_name
+            ? a.last_name < b.last_name ? -1 : 1
+            : a.first_name !== b.first_name
+              ? a.first_name < b.first_name ? -1 : 1
+              : a.code < b.code ? -1 : a.code > b.code ? 1 : 0,
+        )
+        .slice(0, FIND_DRIVER_CAP + 1)
+        .map((d) => ({
+          id: d.id,
+          code: d.code,
+          first_name: d.first_name,
+          last_name: d.last_name,
+          active_from: d.active_from,
+          active_to: d.active_to,
+        }));
     }
     // The drivers Run the week drafts for (PAY_RUN_DRIVERS_SQL), over the plan's rows: a delivered
     // load, a day worked or a pay item in the week, an advance still owed, or a draft in the week.
