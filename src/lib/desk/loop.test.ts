@@ -623,6 +623,39 @@ describe("wakeDesk", () => {
     expect(ofKind("done")).toHaveLength(1);
   });
 
+  it("lets a held first piece step aside when the slice is short, so the work behind it still runs", async () => {
+    const key = "sweep:2026-11-04";
+    const at = new Date(START - 3_600_000).toISOString();
+    const base = { wakeId: uuid(1), at, eventKey: key, source: "sweep" as const, subjectId: null, by: "schedule" as const };
+    store.lines.push({ ...base, id: uuid(2), kind: "seen", detail: {} });
+    store.lines.push({ ...base, id: uuid(3), kind: "claimed", detail: {} });
+    store.lines.push({ ...base, id: uuid(4), kind: "carried", detail: { runId: uuid(4444) } });
+    ids = 100;
+    store.pending = [{ eventKey: cardKey(1), source: "card_transaction" }];
+    // The dispatch walk eats 8 s of the 20 s slice: 12 s are left, short of the sweep's 15 s.
+    store.sync = async () => {
+      now += 8_000;
+    };
+    const run = vi.fn<Run>(async () => done());
+    const handlers = handlersWith(run, { sweep: { needsMs: 15_000, firstNeedsMs: true } });
+    now += 60_000;
+    const out = await wake(handlers, uuid(700));
+    expect(run).toHaveBeenCalledTimes(1);
+    expect(run.mock.calls[0][1]).toMatchObject({ eventKey: cardKey(1) });
+    // The card was found and done this wake, but only the sweep is left: no wake now.
+    expect(out).toMatchObject({ ok: true, status: "done", reason: "deadline" });
+    expect(out.ok && out.counts.left).toBe(1);
+    // The sweep spent no carry and no try, and is still open for a wake with its time.
+    expect(ofKind("carried")).toHaveLength(1);
+    expect(ofKind("failed")).toEqual([]);
+
+    // With nothing else to do, a short wake leaves it waiting and asks for no wake now.
+    now += 60_000;
+    const quiet = await wake(handlers, uuid(701));
+    expect(run).toHaveBeenCalledTimes(1);
+    expect(quiet).toMatchObject({ ok: true, status: "done", reason: "deadline" });
+  });
+
   it("holds only the real sweep's first piece to its needsMs, the second opinion's minimum", () => {
     const real = deskHandlers();
     expect(real.sweep).toMatchObject({ needsMs: MIN_WONDER_MS, firstNeedsMs: true });
