@@ -1375,7 +1375,8 @@ export const flags: Flags = {
     purgePerCall: 2,
     deskDayCents: 100,
     startSweep: true,
-    sweepDayCents: 3000,
+    // Raised by the owner (2026-11-03): 60 copies a day, each counted at its run's whole cap.
+    sweepDayCents: 30_000,
   },
   // Off until the owner turns it on in its own PR (D-104). Sandbox posts only, each through the
   // ledger; the kinds stay off until their own PRs.
