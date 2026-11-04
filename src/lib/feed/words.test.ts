@@ -194,10 +194,11 @@ describe("doneLine", () => {
 
   it("says what the coworker finished, in the first person, with the amount once", () => {
     expect(done({ title: "Advance for Dana Reyes", direction: "out", cents: 20_000 })).toBe(
-      "Drafted for you to approve: Advance for Dana Reyes, $200.00.",
+      "Drafted a card for you: Advance for Dana Reyes, $200.00.",
     );
-    expect(done({ title: "Fix a paystub" })).toBe("Drafted for you to approve: Fix a paystub.");
-    expect(done({})).toBe("Drafted for you to approve: a card.");
+    expect(done({ title: "Fix a paystub" })).toBe("Drafted a card for you: Fix a paystub.");
+    expect(done({ title: "Approve weekly pay" })).toBe("Drafted a card for you: Approve weekly pay.");
+    expect(done({})).toBe("Drafted a card for you to approve.");
     expect(
       done({ event: "proposal_decided", actor: "autopilot", code: "approved", title: "Invoice 1042", direction: "in", cents: 435_000, limitCents: 500_000 }),
     ).toBe("Approved within your limit: Invoice 1042, $4,350.00.");

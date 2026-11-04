@@ -65,7 +65,6 @@ export function evalCardData(r: EvalResults | null): EvalCardProps | null {
   if (!r?.run || !s || s.arms.length === 0) return null;
   const rows = s.arms.map((a) => ({
     label: armLabel(a.arm),
-    modelId: a.modelId,
     scored: `${a.scored} of ${a.cases}`,
     rightAnswer: tallyText(a.rightAnswer),
     rightAmount: tallyText(a.rightAmount),

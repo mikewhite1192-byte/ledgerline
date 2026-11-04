@@ -1257,7 +1257,7 @@ const PAGES: PageCase[] = [
           "Checked every driver's pay for the week of Oct 26 to Nov 1.",
           "Read 3 documents, 1 voice note and 2 messages from drivers.",
           "Read a message from a driver.",
-          "Drafted for you to approve: Advance for Dana Reyes, $125.00.",
+          "Drafted a card for you: Advance for Dana Reyes, $125.00.",
           "Approved within your limit: Advance for Dana Reyes, $125.00.",
           "See everything",
           "Needs you",

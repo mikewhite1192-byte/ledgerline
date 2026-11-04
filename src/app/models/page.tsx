@@ -138,7 +138,11 @@ export default async function ModelsPage() {
       <div className="mx-auto grid w-full max-w-[1080px] gap-6">
         <PageHeader
           title="Models and spend"
-          description="Which Meta model did what for this carrier, how long it took and what it cost. Open How this was worked out under any answer to see one turn's calls."
+          description={
+            flags.plainTrace.enabled
+              ? "Which Meta model did what for this carrier, how long it took and what it cost. Open How I checked under any answer to see the steps behind it."
+              : "Which Meta model did what for this carrier, how long it took and what it cost. Open How this was worked out under any answer to see one turn's calls."
+          }
         />
         {spend ? (
           <SpendCard

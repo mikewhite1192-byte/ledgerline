@@ -7,7 +7,6 @@ import { Card, CardBody, CardDescription, CardHeader, CardTitle } from "@/compon
 
 export type EvalCardRow = {
   label: string;
-  modelId: string | null;
   scored: string;
   rightAnswer: string;
   rightAmount: string;
@@ -56,7 +55,6 @@ export function EvalCard({ rows, agreement, planted, openWeights, stoppedAtCap }
                 <tr key={r.label}>
                   <th scope="row" className="py-2 pr-3 font-medium text-foreground">
                     {r.label}
-                    {r.modelId ? <span className="block font-mono text-caption text-muted-foreground">{r.modelId}</span> : null}
                   </th>
                   {[r.scored, r.rightAnswer, r.rightAmount, r.rightFix, r.seconds, r.cents, r.centsInAll].map((v, i) => (
                     <td key={COLUMNS[i + 1]} className="py-2 pr-3 tabular-nums text-foreground">

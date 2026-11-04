@@ -26,9 +26,9 @@ export function FridayPay({ home, today, className }: { home: CashHome | null; t
         }
         hint={
           home === null
-            ? "Check it on the Cash page"
+            ? "Check it on Friday's cash"
             : outOfDate
-              ? `The last check was for ${dayWords(home.payDay)}. Check it on the Cash page`
+              ? `The last check was for ${dayWords(home.payDay)}. Check it on Friday's cash`
               : `For ${dayWords(home.payDay)}. See the figures and ways to cover it`
         }
         href="/cash"
