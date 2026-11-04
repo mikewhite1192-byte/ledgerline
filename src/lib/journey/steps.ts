@@ -662,6 +662,18 @@ export function onTheRoad(facts: JourneyFacts, steps: readonly JourneyStep[]): b
   return !(paid?.state === "done" && (booked?.state === "done" || booked?.state === "skipped"));
 }
 
+// The loads the board shows, from its candidates in their read order: the finished ones drop out
+// first, then the board's cap applies. capped: some load still on the road is not shown, or more
+// candidates matched than were read (more).
+export function boardPick<J extends { facts: JourneyFacts; steps: readonly JourneyStep[] }>(
+  journeys: readonly J[],
+  more: boolean,
+  limit: number,
+): { shown: J[]; capped: boolean } {
+  const onBoard = journeys.filter((j) => onTheRoad(j.facts, j.steps));
+  return { shown: onBoard.slice(0, limit), capped: onBoard.length > limit || more };
+}
+
 // The newest done steps across the board's loads, as feed lines, newest first.
 export function journeyEvents(
   journeys: readonly { facts: JourneyFacts; steps: readonly JourneyStep[] }[],

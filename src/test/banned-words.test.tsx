@@ -577,7 +577,7 @@ vi.mock("@/lib/feed/read", async (importOriginal) => ({
 // The journey reads: the loads named, in order, from the variant's facts.
 vi.mock("@/lib/journey/read", async (importOriginal) => ({
   ...(await importOriginal<typeof import("@/lib/journey/read")>()),
-  readBoardLoadIds: async () => ({ ids: (get<JourneyFacts[]>("journeys") ?? []).map((f) => f.load.id), capped: false }),
+  readBoardLoadIds: async () => ({ ids: (get<JourneyFacts[]>("journeys") ?? []).map((f) => f.load.id), more: false }),
   readJourneys: async (_q: unknown, ids: readonly string[]) => {
     const all = get<JourneyFacts[]>("journeys") ?? [];
     return new Map(ids.map((id, i) => [id, all[i]] as const).filter((e): e is readonly [string, JourneyFacts] => e[1] !== undefined));

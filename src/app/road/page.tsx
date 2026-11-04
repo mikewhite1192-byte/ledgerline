@@ -8,8 +8,8 @@ import { RoadBoard, RoadStream } from "@/components/journey/road-board";
 import { Card } from "@/components/ui/card";
 import { DbError } from "@/lib/db";
 import type { FeedLine } from "@/lib/feed/words";
-import { BOARD_LIMIT, readBoardLoadIds, readJourneys } from "@/lib/journey/read";
-import { boardRowOf, journeyEvents, journeyStepsOf, onTheRoad, sortBoard, type BoardRow } from "@/lib/journey/steps";
+import { BOARD_DAYS, BOARD_LIMIT, readBoardLoadIds, readJourneys } from "@/lib/journey/read";
+import { boardPick, boardRowOf, journeyEvents, journeyStepsOf, sortBoard, type BoardRow } from "@/lib/journey/steps";
 import { ForbiddenError, withRequestTenant } from "@/lib/tenant/context";
 import { readShell, type ShellTenant } from "@/lib/tenant/shell";
 
@@ -35,15 +35,21 @@ export default async function RoadPage() {
       const shell = await readShell(q, session);
       if (!flags.journey.enabled) return { shell, board: null };
       const now = new Date();
-      const { ids, capped } = await readBoardLoadIds(q, now, shell.timezone);
+      const { ids, more } = await readBoardLoadIds(q, now, shell.timezone);
       const facts = await readJourneys(q, ids, now);
       const opts = {
         zone: shell.timezone,
         books: { enabled: flags.books.enabled, startDate: flags.books.startDate, maxAttempts: flags.books.maxAttempts },
       };
-      const journeys = [...facts.values()].map((f) => ({ facts: f, steps: journeyStepsOf(f, opts) }));
-      const onBoard = journeys.filter((j) => onTheRoad(j.facts, j.steps));
-      const rows = sortBoard(onBoard.map((j) => boardRowOf(j.facts, j.steps, { zone: shell.timezone, now: now.getTime() })));
+      // In the candidates' own order (on the way, then delivered, then planned): the map does not
+      // keep it. The finished loads drop out before the board's cap applies; the stream keeps them,
+      // since a load's last step belongs in it.
+      const journeys = ids.flatMap((id) => {
+        const f = facts.get(id);
+        return f === undefined ? [] : [{ facts: f, steps: journeyStepsOf(f, opts) }];
+      });
+      const { shown, capped } = boardPick(journeys, more, BOARD_LIMIT);
+      const rows = sortBoard(shown.map((j) => boardRowOf(j.facts, j.steps, { zone: shell.timezone, now: now.getTime() })));
       return {
         shell,
         board: { rows, events: journeyEvents(journeys, shell.timezone, STREAM_LINES), capped },
@@ -62,7 +68,7 @@ export default async function RoadPage() {
     <SignedInPage tenant={view.shell} current="/road" title="On the road">
       <PageHeader
         title="On the road"
-        description="Every load on its way to being paid and recorded, soonest delivery first. Read only."
+        description={`Loads planned, on the way, or delivered in the last ${BOARD_DAYS} days and not yet paid and recorded, soonest delivery first. Read only.`}
         actions={board && board.rows.length > 0 ? <LiveRefresh pollSeconds={flags.journey.boardPollSeconds} /> : undefined}
       />
       {!board ? (

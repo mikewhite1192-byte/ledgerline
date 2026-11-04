@@ -418,15 +418,17 @@ async function readDispatch(q: Queryable, loads: readonly JourneyLoad[]): Promis
 }
 
 // How far back a delivered load still shows on the board while its paystub is not yet paid and
-// recorded, and the most loads the board reads at once.
+// recorded, the most loads the board shows, and the most candidates it reads to find them (the
+// steps drop the finished ones before the board's own cap applies).
 export const BOARD_DAYS = 14;
 export const BOARD_LIMIT = 100;
+export const BOARD_CANDIDATES = 300;
 
 // The board's candidate loads: planned with a driver, on the way, or delivered in the last
 // BOARD_DAYS days (the steps then drop the ones already paid and recorded). Loads on the way come
-// first, then delivered, then planned, so the cap never drops a truck still out for a newer plan.
-// capped: more loads matched than the board reads.
-export async function readBoardLoadIds(q: Queryable, now: Date, zone: string): Promise<{ ids: string[]; capped: boolean }> {
+// first, then delivered, then planned, so a cap never drops a truck still out for a newer plan.
+// more: more loads matched than the board reads.
+export async function readBoardLoadIds(q: Queryable, now: Date, zone: string): Promise<{ ids: string[]; more: boolean }> {
   const since = addDays(localDateOf(now.toISOString(), zone), -BOARD_DAYS);
   const rows = await q.query<{ id: string }>(
     `SELECT CAST(id AS text) AS id FROM loads
@@ -435,8 +437,8 @@ export async function readBoardLoadIds(q: Queryable, now: Date, zone: string): P
           OR (status IN ('delivered', 'invoiced') AND delivered_on >= CAST($1 AS date)))
       ORDER BY CASE status WHEN 'in_transit' THEN 0 WHEN 'delivered' THEN 1 WHEN 'invoiced' THEN 1 ELSE 2 END,
         pickup_on DESC, id
-      LIMIT ${BOARD_LIMIT + 1}`,
+      LIMIT ${BOARD_CANDIDATES + 1}`,
     [since],
   );
-  return { ids: rows.slice(0, BOARD_LIMIT).map((r) => r.id), capped: rows.length > BOARD_LIMIT };
+  return { ids: rows.slice(0, BOARD_CANDIDATES).map((r) => r.id), more: rows.length > BOARD_CANDIDATES };
 }

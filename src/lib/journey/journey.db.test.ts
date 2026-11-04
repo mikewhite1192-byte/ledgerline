@@ -7,8 +7,8 @@ import { DEMO_CARRIERS, type DemoCarrier } from "../seed/carriers";
 import golden from "../seed/golden.json";
 import { buildCarrierPlan } from "../seed/plan";
 import { replaceTenantData } from "../seed/run";
-import { BOARD_LIMIT, readBoardLoadIds, readJourneys } from "./read";
-import { boardRowOf, journeyStepsOf, onTheRoad, sortBoard } from "./steps";
+import { BOARD_CANDIDATES, BOARD_LIMIT, readBoardLoadIds, readJourneys } from "./read";
+import { boardPick, boardRowOf, journeyStepsOf, onTheRoad, sortBoard } from "./steps";
 
 // The journey reads against a real database, as the app's role: one carrier seeded with the demo
 // plan under its own slug, every one of its loads read back in one pass (one statement per table),
@@ -161,10 +161,10 @@ describe("readJourneys", () => {
 
 describe("readBoardLoadIds", () => {
   it("names the loads with a driver still on the road, and the board keeps only those not yet paid and recorded", async () => {
-    const { ids, capped } = await app.withTenant(T, (q) => readBoardLoadIds(q, NOW, CARRIER.timezone));
-    // At most the cap, and the cap reported when it bites; loads on the way are never the ones cut.
-    expect(ids.length).toBeLessThanOrEqual(BOARD_LIMIT);
-    if (capped) expect(ids).toHaveLength(BOARD_LIMIT);
+    const { ids, more } = await app.withTenant(T, (q) => readBoardLoadIds(q, NOW, CARRIER.timezone));
+    // At most the candidate cap, and more reported only when it bites.
+    expect(ids.length).toBeLessThanOrEqual(BOARD_CANDIDATES);
+    if (more) expect(ids).toHaveLength(BOARD_CANDIDATES);
     const byId = new Map(rows.loads.map((l) => [l.id, l]));
     expect(ids.length).toBeGreaterThan(0);
     for (const id of ids) {
@@ -172,17 +172,23 @@ describe("readBoardLoadIds", () => {
       expect(l, "every id is this carrier's load").toBeDefined();
       expect(l!.status === "in_transit" || l!.status === "delivered" || l!.status === "invoiced" || (l!.status === "planned" && l!.driver_id !== null)).toBe(true);
     }
+    // Loads on the way come first, then delivered, then planned.
+    const rank = (id: string) => ({ in_transit: 0, delivered: 1, invoiced: 1 })[byId.get(id)!.status as string] ?? 2;
+    expect(ids.map(rank)).toEqual(ids.map(rank).sort((a, b) => a - b));
     const onWay = rows.loads.filter((l) => l.status === "in_transit").map((l) => l.id);
     expect(ids).toEqual(expect.arrayContaining(onWay));
-    expect(await app.withTenant(OTHER, (q) => readBoardLoadIds(q, NOW, CARRIER.timezone))).toEqual({ ids: [], capped: false });
+    expect(await app.withTenant(OTHER, (q) => readBoardLoadIds(q, NOW, CARRIER.timezone))).toEqual({ ids: [], more: false });
 
+    // As the board page builds it: candidates in their read order, the finished ones out, then the cap.
     const facts = await app.withTenant(T, (q) => readJourneys(q, ids, NOW));
-    const board = sortBoard(
-      [...facts.values()]
-        .map((f) => ({ f, steps: journeyStepsOf(f, OPTS) }))
-        .filter(({ f, steps }) => onTheRoad(f, steps))
-        .map(({ f, steps }) => boardRowOf(f, steps, { zone: CARRIER.timezone, now: NOW.getTime() })),
-    );
+    const journeys = ids.map((id) => ({ facts: facts.get(id)!, steps: journeyStepsOf(facts.get(id)!, OPTS) }));
+    const { shown, capped } = boardPick(journeys, more, BOARD_LIMIT);
+    const stillOut = journeys.filter((j) => onTheRoad(j.facts, j.steps));
+    expect(shown).toEqual(stillOut.slice(0, BOARD_LIMIT));
+    expect(capped).toBe(stillOut.length > BOARD_LIMIT || more);
+    // A finished load never takes a place on the board.
+    expect(shown.every((j) => onTheRoad(j.facts, j.steps))).toBe(true);
+    const board = sortBoard(shown.map((j) => boardRowOf(j.facts, j.steps, { zone: CARRIER.timezone, now: NOW.getTime() })));
     expect(board.map((r) => r.loadId)).toEqual(expect.arrayContaining(onWay));
     expect(board.every((r) => r.steps.length === 8 && r.where.length > 0)).toBe(true);
   });

@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { formatInstant } from "../format/dates";
 import {
+  boardPick,
   boardRowOf,
   currentStep,
   journeyEvents,
@@ -250,6 +251,21 @@ describe("the On the road board", () => {
     expect(onTheRoad(cancelled, journeyStepsOf(cancelled, OPTS))).toBe(false);
     const moving = atAdvanceCard();
     expect(onTheRoad(moving, journeyStepsOf(moving, OPTS))).toBe(true);
+  });
+
+  it("drops finished loads before the cap, so a delivered load still waiting on pay is kept", () => {
+    const finished = () => {
+      const f = fullChain();
+      return { facts: f, steps: journeyStepsOf(f, OPTS) };
+    };
+    const waiting = fullChain();
+    waiting.settlement = null;
+    const unpaid = { facts: waiting, steps: journeyStepsOf(waiting, OPTS) };
+    const picked = boardPick([finished(), finished(), finished(), unpaid], false, 1);
+    expect(picked.shown).toEqual([unpaid]);
+    expect(picked.capped).toBe(false);
+    expect(boardPick([unpaid, unpaid], false, 1)).toMatchObject({ shown: [unpaid], capped: true });
+    expect(boardPick([unpaid], true, 1).capped).toBe(true);
   });
 
   it("streams the newest done steps across loads, newest first, capped", () => {
