@@ -176,7 +176,7 @@ export function HowPayWorks({ paystub, signedIn }: { paystub: HeroPaystubLink; s
             </Link>
             {paystub.draft ? null : (
               <p className="text-small text-foreground-2">
-                This week&apos;s paystub is drafted when you run the week on Settlements.
+                This week&apos;s paystub is drafted when you run the week on the Pay page.
               </p>
             )}
           </div>

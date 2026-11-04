@@ -546,7 +546,7 @@ const NEEDS_ROWS = [
     what: "paystubs waiting for approval",
     amounts: [{ cents: 582_000, label: "to pay drivers" }],
     href: "/settlements",
-    linkLabel: "Open settlements",
+    linkLabel: "Open Pay",
   },
   {
     key: "advances",

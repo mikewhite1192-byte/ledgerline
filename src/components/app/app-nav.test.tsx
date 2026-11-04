@@ -73,7 +73,7 @@ describe("appNav", () => {
       ["Today", "/profit", "Profit brief", false],
       ["Today", "/quarter", "Quarter review", false],
       ["Pay", "/sweep", "Pay check", false],
-      ["Pay", "/settlements", "Settlements", false],
+      ["Pay", "/settlements", "Pay", false],
       ["Pay", "/driver-notes", "Driver notes", false],
       ["Pay", "/advances", "Advances", false],
       ["Pay", "/money-codes", "Driver codes", false],
@@ -214,7 +214,7 @@ describe("the menu registry", () => {
         "Live feed",
         "Driver codes",
         "Pay check",
-        "Settlements",
+        "Pay",
         "Voice notes",
       ].sort(),
     );
@@ -296,7 +296,7 @@ describe("NavList", () => {
     setAll(true);
     render(<NavList items={appNav("/advances")} />);
     const pay = screen.getByRole("list", { name: "Pay" });
-    expect(Array.from(pay.querySelectorAll("a")).map((a) => a.textContent)).toEqual(["Pay check", "Settlements", "Driver notes", "Advances", "Driver codes", "Card charges"]);
+    expect(Array.from(pay.querySelectorAll("a")).map((a) => a.textContent)).toEqual(["Pay check", "Pay", "Driver notes", "Advances", "Driver codes", "Card charges"]);
     expect(screen.getByRole("link", { name: "Advances" }).getAttribute("aria-current")).toBe("page");
     expect(screen.getByRole("link", { name: "Home" }).getAttribute("aria-current")).toBeNull();
     expect(screen.getAllByText("Money in")).toHaveLength(1);

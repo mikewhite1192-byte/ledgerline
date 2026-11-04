@@ -132,7 +132,7 @@ export function paystubsRow(rows: readonly SettlementListRow[]): NeedsYouRow | n
     what: `${plural(waiting.length, "paystub", "paystubs")} waiting for approval`,
     amounts: [{ cents: net, label: "to pay drivers" }],
     href: "/settlements",
-    linkLabel: "Open settlements",
+    linkLabel: "Open Pay",
   };
 }
 

@@ -114,7 +114,7 @@ export default async function QuarterPage() {
           <EmptyState
             icon={<CalendarRange aria-hidden />}
             title="The quarter's figures appear after its first pay run or invoice."
-            body="Run a pay week under Settlements or send an invoice; its figures show here."
+            body="Run a pay week on the Pay page or send an invoice; its figures show here."
           />
         </Card>
       ) : (

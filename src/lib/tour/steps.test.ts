@@ -34,7 +34,7 @@ const NEEDS: NeedsYouView = {
       what: "paystubs waiting for approval",
       amounts: [{ cents: 150_000, label: "to pay drivers" }],
       href: "/settlements",
-      linkLabel: "Open settlements",
+      linkLabel: "Open Pay",
     },
     {
       key: "advances",

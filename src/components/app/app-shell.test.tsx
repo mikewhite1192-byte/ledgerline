@@ -45,7 +45,7 @@ afterEach(() => {
 const TENANT = { name: "Test Carrier", email: "office@example.test", timezone: "America/Chicago", role: "staff" as const };
 const NAV: NavItem[] = [
   { group: "Today", area: "primary", href: "/", label: "Home", icon: null },
-  { group: "Pay", area: "pay", href: "/settlements", label: "Settlements", icon: null },
+  { group: "Pay", area: "pay", href: "/settlements", label: "Pay", icon: null },
   { group: "Pay", area: "pay", href: "/advances", label: "Advances", icon: null },
   { group: "Money in", area: "billing", href: "/invoices", label: "Invoices", icon: null },
   { group: "Settings", area: "books", href: "/models", label: "Models and spend", icon: null },
@@ -172,7 +172,7 @@ describe("the sidebar", () => {
 const SIMPLE_NAV: NavItem[] = [
   { group: "Today", area: "primary", section: "home", sectionOrder: 0, href: "/", label: "Home", icon: null },
   { group: "Today", area: "pay", section: "home", sectionOrder: 10, href: "/activity", label: "Live feed", icon: null },
-  { group: "Pay", area: "pay", section: "pay", sectionOrder: 10, sectionLabel: "Paystubs", href: "/settlements", label: "Settlements", icon: null },
+  { group: "Pay", area: "pay", section: "pay", sectionOrder: 10, sectionLabel: "Paystubs", href: "/settlements", label: "Pay", icon: null },
   { group: "Pay", area: "pay", section: "pay", sectionOrder: 20, sectionLabel: "Pay check", href: "/sweep", label: "Pay check", icon: null },
   { group: "Pay", area: "pay", section: "pay", sectionOrder: 30, href: "/advances", label: "Advances", icon: null },
   { group: "Money in", area: "billing", section: "billing", sectionOrder: 10, href: "/invoices", label: "Invoices", icon: null },

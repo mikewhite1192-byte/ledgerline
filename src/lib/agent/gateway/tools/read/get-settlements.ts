@@ -14,7 +14,7 @@ export const getSettlements = defineTool({
     "verdict, whether it is clean for Approve all clean, and parkedReason when it no longer " +
     "matches its records. noPaystubsYet true means only that this open week has no paystubs " +
     "yet. With runTheWeek true it is the week paid next and has pay: say plainly that pressing " +
-    "Run the week on the Paystubs page under Pay runs it and makes paystubs for the drivers with " +
+    "Run the week on the Pay page runs it and makes paystubs for the drivers with " +
     "payable work; never say it was not run. With noPayYet true it has no pay yet: say so and " +
     "never point at Run the week. With waitsForWeekPaidNext true its pay runs after the week " +
     "paid next. weekPaidNext, when given, names the week paid next: say its dates. To preview " +
