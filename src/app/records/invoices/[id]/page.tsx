@@ -9,20 +9,21 @@ import { Card, CardBody } from "@/components/ui/card";
 import { BUCKET_WORDS, Day, Facts, RecordLink } from "@/components/invoices/cells";
 import { CheckButton } from "@/components/invoices/check-button";
 import { LedgerTable } from "@/components/invoices/ledger-table";
-import { PostButton } from "@/components/invoices/post-button";
 import { ReviewCard } from "@/components/invoices/review-card";
 import { readFactoredLine } from "@/lib/factoring/read";
 import { factoringOn } from "@/lib/factoring/switches";
 import { dayOf, requestStatusWords } from "@/lib/factoring/words";
-import { quickBooksStanding } from "@/lib/invoices/labels";
+import { booksStatus, onOrAfterBooksStart } from "@/lib/books/status";
+import { datedBeforeInvoicesStart } from "@/lib/invoices/post";
+import { flags } from "@/config/flags";
 import { invoiceRecordActions, readInvoiceRecordPage } from "@/lib/invoices/record-page";
 import { readRecordPage } from "../../read-record";
 
 export const dynamic = "force-dynamic";
 
 // One invoice: who owes it, what it is for, what came in against it, and every attempt to post
-// it to QuickBooks. "Post to QuickBooks" shows until a post is confirmed, for an invoice the
-// invoice queue made (record-page.ts).
+// it to QuickBooks. There is no post button: the books step posts an invoice the queue made by
+// itself (D-104), and the QuickBooks line says where it stands (record-page.ts).
 export default async function InvoiceRecord({ params }: { params: Promise<{ id: string }> }) {
   const { id } = await params;
   // With factoring on, the invoice's live factoring line too (off, it is never read).
@@ -44,6 +45,23 @@ export default async function InvoiceRecord({ params }: { params: Promise<{ id: 
   const review = page.record.review;
   const actions = invoiceRecordActions(page.record);
   const factored = page.record.factored;
+  // "Posting by itself" only for an invoice the step posts (dated on or after both start dates);
+  // older ones wait for the backfill.
+  const booksText = booksStatus(
+    inv.ledger.map((r) => ({ ...r, kind: "invoice" as const })),
+    ["invoice"],
+    {
+      on:
+        flags.books.enabled &&
+        page.record.queueMade &&
+        inv.status !== "void" &&
+        !datedBeforeInvoicesStart(inv.issuedOn) &&
+        onOrAfterBooksStart(inv.issuedOn, flags.books.startDate),
+      maxAttempts: flags.books.maxAttempts,
+      inBooks: inv.qboTail !== null,
+      tail: inv.qboTail,
+    },
+  ).text;
   return (
     <SignedInPage
       tenant={page.shell}
@@ -77,7 +95,7 @@ export default async function InvoiceRecord({ params }: { params: Promise<{ id: 
                     "Opening balance"
                   ),
               },
-              { label: "QuickBooks", value: quickBooksStanding(inv.qboTail, inv.ledger.map((r) => r.state)) },
+              { label: "QuickBooks", value: booksText },
               ...(factored
                 ? [
                     {
@@ -100,7 +118,6 @@ export default async function InvoiceRecord({ params }: { params: Promise<{ id: 
           />
         </CardBody>
       </Card>
-      {actions.post ? <PostButton url={`/api/invoices/${encodeURIComponent(inv.id)}/post`} /> : null}
       {actions.check ? <CheckButton url={`/api/invoices/${encodeURIComponent(inv.id)}/reconcile`} /> : null}
       {inv.lines ? (
         <DataTable

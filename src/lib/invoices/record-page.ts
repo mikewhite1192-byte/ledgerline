@@ -37,8 +37,9 @@ export async function readInvoiceRecordPage(
 
 export type InvoiceRecordActions = { post: boolean; check: boolean };
 
-// "Post to QuickBooks" shows until a post is confirmed, and only for an invoice the queue made on
-// or after the invoices start: anything else is history, and its post is refused (post.ts).
+// post: the invoice still waits on a confirmed post, and only for an invoice the queue made on or
+// after the invoices start: anything else is history, and its post is refused (post.ts). No page
+// shows a post button since D-104: the books step posts by itself.
 // While the Review card is on a post that needs a retry or a check, its buttons are the ones.
 export function invoiceRecordActions(page: InvoiceRecordPage): InvoiceRecordActions {
   const inv = page.record;

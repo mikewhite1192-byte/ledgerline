@@ -177,6 +177,8 @@ const KEPT_OFF = [
   // Read only, but it changes where sign-in lands and adds a panel on Home: the owner turns it on in
   // its own PR.
   "signInTour.enabled",
+  // Sandbox posts with no button (D-104): the owner turns it on in its own PR.
+  "books.enabled",
 ] as const;
 
 // The on/off switches in flags.ts, by path: every top-level boolean and every boolean inside a
@@ -468,6 +470,24 @@ describe("flags", () => {
     expect(LOCAL_OFF_ONLY as readonly string[]).toContain("plainTrace.enabled");
   });
 
+  it("ships the books step off, with its start date, budget and kinds, off for the local demo run", () => {
+    expect(flags.books).toEqual({
+      enabled: false,
+      startDate: "2026-11-04",
+      perWake: 3,
+      wakeBudgetMs: 9_000,
+      maxAttempts: 3,
+      kinds: { moneyCodes: false, escrow: false, pullbacks: false, factoring: false },
+    });
+    expect(isLocalDate(flags.books.startDate)).toBe(true);
+    // The step's share stays well inside the desk's slice, so the wake keeps most of its time.
+    expect(flags.books.wakeBudgetMs).toBeLessThan(flags.deskLoop.limits.sliceMs / 2);
+    // And past the step's own 3-second floor (BOOKS_MIN_LEFT_MS) by more than that floor again, so
+    // a wake has time for its posts and a read-back.
+    expect(flags.books.wakeBudgetMs).toBeGreaterThan(2 * 3_000);
+    expect(LOCAL_OFF_ONLY as readonly string[]).toContain("books.enabled");
+  });
+
   it("releases deficit recovery, with a start date, off for the local demo run", () => {
     expect(flags.deficitRecovery).toEqual({ enabled: true, startDate: "2026-11-02" });
     expect(isLocalDate(flags.deficitRecovery.startDate)).toBe(true);
@@ -610,6 +630,7 @@ describe("flags", () => {
       "simpleShape.enabled",
       "visitCopies.enabled",
       "plainTrace.enabled",
+      "books.enabled",
     ];
     const offOnly = LOCAL_OFF_ONLY as readonly string[];
     expect(KEPT_OFF.filter((k) => offOnly.includes(k))).toEqual(KEPT_OFF.filter((k) => armedAhead.includes(k)));

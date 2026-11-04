@@ -174,6 +174,7 @@ function testBooks() {
     createBill: unused,
     payBill: unused,
     createExpense: unused,
+    createCheck: unused,
     recordCustomerPayment: async (_q, p): Promise<SendOutcome> => {
       seen.payments.push(p.paymentRef);
       if (paymentAnswer === "timeout") return { kind: "unknown", category: "timeout" };

@@ -165,6 +165,8 @@ export type MoneyCodeDetail = {
   // The pay week the two lines land in, for the paystub link.
   settlementId: string | null;
   actions: MoneyAction[];
+  // The code's QuickBooks purchase attempts (money_code_expense, D-104), oldest first.
+  books?: MoneyAction[];
 };
 
 async function payLine(q: Queryable, id: string | null): Promise<MoneyCodeLine | null> {
@@ -222,6 +224,8 @@ export async function readMoneyCode(q: Queryable, id: string): Promise<MoneyCode
     );
     settlementId = rows[0]?.id ?? null;
   }
-  const actions = (await readBySubject(q, "money_codes", code.id)).filter((a) => a.kind === "money_code_issue");
-  return { code, charge, reimbursement, accessorial, receipt, settlementId, actions };
+  const all = await readBySubject(q, "money_codes", code.id);
+  const actions = all.filter((a) => a.kind === "money_code_issue");
+  const books = all.filter((a) => a.kind === "money_code_expense");
+  return { code, charge, reimbursement, accessorial, receipt, settlementId, actions, books };
 }

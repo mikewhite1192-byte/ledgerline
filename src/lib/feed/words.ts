@@ -125,6 +125,8 @@ const MONEY_WORDS: Readonly<Record<string, string>> = {
   money_code_issue: "Money code",
   escrow_release: "Escrow release",
   card_pullback: "Card pull-back",
+  money_code_expense: "Money code expense",
+  escrow_release_expense: "Escrow release expense",
 };
 
 function moneyThing(kind: string | null, system: string | null): string {

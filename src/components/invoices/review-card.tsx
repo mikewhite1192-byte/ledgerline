@@ -9,7 +9,6 @@ import type { InvoiceReviewView, ReviewReasonView } from "@/lib/invoices/review-
 import { recordHref } from "@/lib/records/href";
 import { CheckButton } from "./check-button";
 import { RecordLink } from "./cells";
-import { PostButton } from "./post-button";
 import { MarkReviewedForm, MarkSentForm } from "./review-actions";
 
 // The Review card at the top of an invoice: the engine's status, every reason as a sentence with
@@ -112,9 +111,8 @@ export function ReviewCard({
         </dl>
         {live ? (
           <div className="grid gap-4">
-            {status === "sync_error" && reasons.includes("posting_failed") ? (
-              <PostButton url={`/api/invoices/${id}/post`} label="Retry post" />
-            ) : null}
+            {/* A failed post has no button: the books step tries it again by itself, and the
+                record page's QuickBooks line says when it needs a person (D-104). */}
             {status === "sync_error" && reasons.includes("posting_unknown") ? (
               <CheckButton url={`/api/invoices/${id}/reconcile`} label="Check pending" />
             ) : null}

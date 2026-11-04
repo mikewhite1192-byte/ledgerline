@@ -21,6 +21,7 @@ const mocks = vi.hoisted(() => ({
   serviceSession: vi.fn(),
   internalKey: vi.fn(),
   wakeDesk: vi.fn(),
+  postPendingBooks: vi.fn(),
   assertMembership: vi.fn(),
   staffGate: vi.fn(),
 }));
@@ -31,6 +32,7 @@ vi.mock("@/lib/auth/session", () => ({ getSession: mocks.getSession }));
 vi.mock("@/lib/auth/staff-gate", () => ({ staffGate: mocks.staffGate }));
 vi.mock("@/lib/db", () => ({ getDb: () => ({ withTenant: (_t: string, fn: (q: unknown) => unknown) => fn({}) }) }));
 vi.mock("@/lib/desk/loop", () => ({ wakeDesk: mocks.wakeDesk }));
+vi.mock("@/lib/books/pending", () => ({ postPendingBooks: mocks.postPendingBooks }));
 vi.mock("@/lib/sweep/service-session", () => ({ serviceSession: mocks.serviceSession }));
 vi.mock("@/lib/tenant/context", async (importOriginal) => ({
   ...(await importOriginal<typeof import("@/lib/tenant/context")>()),
@@ -42,6 +44,7 @@ vi.mock("@/lib/sweep/internal-key", async (importOriginal) => ({
 }));
 
 const saved = flags.deskLoop.enabled;
+const savedArmed = flags.deskLoop.armed;
 
 function post(path: string, body: unknown, headers: Record<string, string> = {}) {
   return new Request(`https://app.example${path}`, {
@@ -53,18 +56,21 @@ function post(path: string, body: unknown, headers: Record<string, string> = {})
 
 beforeEach(() => {
   flags.deskLoop.enabled = true;
+  flags.deskLoop.armed = true;
   mocks.getSession.mockResolvedValue(SESSION);
   mocks.serviceSession.mockResolvedValue(SERVICE);
   mocks.internalKey.mockResolvedValue(KEY);
   mocks.assertMembership.mockResolvedValue(undefined);
   mocks.staffGate.mockResolvedValue(null);
   mocks.wakeDesk.mockResolvedValue({ ok: true, wakeId: WAKE, status: "done", reason: "no_work", counts: COUNTS });
+  mocks.postPendingBooks.mockResolvedValue({ ok: false, category: "disabled" });
   vi.spyOn(console, "info").mockImplementation(() => {});
   vi.spyOn(console, "error").mockImplementation(() => {});
 });
 
 afterEach(() => {
   flags.deskLoop.enabled = saved;
+  flags.deskLoop.armed = savedArmed;
   vi.clearAllMocks();
   vi.restoreAllMocks();
 });
@@ -86,6 +92,51 @@ describe("POST /api/internal/desk", () => {
     expect(input.deadlineMs).toBeLessThanOrEqual(Date.now() + flags.deskLoop.limits.sliceMs);
     expect(mocks.getSession).not.toHaveBeenCalled();
     expect(mocks.staffGate).not.toHaveBeenCalled();
+  });
+
+  it("runs the books step first, inside the same slice, and the wake keeps its own deadline", async () => {
+    const order: string[] = [];
+    mocks.postPendingBooks.mockImplementationOnce(async () => {
+      order.push("books");
+      return { ok: false, category: "disabled" };
+    });
+    mocks.wakeDesk.mockImplementationOnce(async () => {
+      order.push("wake");
+      return { ok: true, wakeId: WAKE, status: "done", reason: "no_work", counts: COUNTS };
+    });
+    const before = Date.now();
+    expect((await call({ action: "wake", tenantId: TENANT, wakeId: WAKE })).status).toBe(200);
+    expect(order).toEqual(["books", "wake"]);
+    const [session, opts] = mocks.postPendingBooks.mock.calls[0];
+    expect(session).toBe(SERVICE);
+    expect(opts).toMatchObject({ maxItems: flags.books.perWake, since: flags.books.startDate });
+    const wakeDeadline = mocks.wakeDesk.mock.calls[0][1].deadlineMs;
+    expect(opts.deadlineMs).toBeLessThanOrEqual(wakeDeadline);
+    expect(opts.deadlineMs).toBeLessThanOrEqual(Date.now() + flags.books.wakeBudgetMs);
+    expect(wakeDeadline).toBeGreaterThanOrEqual(before + flags.deskLoop.limits.sliceMs);
+  });
+
+  it("still wakes the desk when the books step throws, and logs only the error's name", async () => {
+    mocks.postPendingBooks.mockRejectedValueOnce(new TypeError("invoice for Acme Freight"));
+    const res = await call({ action: "wake", tenantId: TENANT, wakeId: WAKE });
+    expect(res.status).toBe(200);
+    expect(mocks.wakeDesk).toHaveBeenCalledTimes(1);
+    expect(console.error).toHaveBeenCalledWith("books step did not finish:", "TypeError");
+  });
+
+  it("runs no books step when the carrier has no sweep login or the loop is off", async () => {
+    mocks.serviceSession.mockResolvedValueOnce(null);
+    await call({ action: "wake", tenantId: TENANT, wakeId: WAKE });
+    flags.deskLoop.enabled = false;
+    await call({ action: "wake", tenantId: TENANT, wakeId: WAKE });
+    expect(mocks.postPendingBooks).not.toHaveBeenCalled();
+  });
+
+  it("runs no books step on a wake that is not armed, and still wakes the desk", async () => {
+    flags.deskLoop.armed = false;
+    expect((await call({ action: "wake", tenantId: TENANT, wakeId: WAKE })).status).toBe(200);
+    expect(mocks.postPendingBooks).not.toHaveBeenCalled();
+    expect(mocks.wakeDesk).toHaveBeenCalledTimes(1);
   });
 
   it("names a fresh wake when the kicker sends none, and answers busy and more as 200", async () => {

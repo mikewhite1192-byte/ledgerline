@@ -112,6 +112,7 @@ export const LOCAL_OFF_ONLY = [
   // own PR.
   "plainTrace.enabled",
   "visitCopies.enabled",
+  "books.enabled",
 ] as const;
 
 type Overridable = (typeof LOCAL_OVERRIDABLE)[number];

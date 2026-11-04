@@ -8,8 +8,7 @@ import { Card, CardBody } from "@/components/ui/card";
 import { Day, Facts, RecordLink } from "@/components/invoices/cells";
 import { CheckButton } from "@/components/invoices/check-button";
 import { LedgerTable } from "@/components/invoices/ledger-table";
-import { PostButton } from "@/components/invoices/post-button";
-import { quickBooksStanding } from "@/lib/invoices/labels";
+import { booksStatus, onOrAfterBooksStart } from "@/lib/books/status";
 import { readPaymentRecord } from "@/lib/invoices/views";
 import { readRecordPage } from "../../read-record";
 
@@ -18,7 +17,8 @@ export const dynamic = "force-dynamic";
 const METHOD_WORDS: Readonly<Record<string, string>> = { check: "Check", ach: "ACH", wire: "Wire" };
 
 // One customer payment: what came in, where it was applied, the credit left, and every attempt to
-// post it. Posting waits until each invoice it applies to is in QuickBooks.
+// post it. There is no post button: the books step posts a payment a person recorded by itself
+// (D-104), once each invoice it applies to is in QuickBooks.
 export default async function PaymentRecord({ params }: { params: Promise<{ id: string }> }) {
   const { id } = await params;
   const page = await readRecordPage(id, (q, rid) => readPaymentRecord(q, rid));
@@ -33,7 +33,21 @@ export default async function PaymentRecord({ params }: { params: Promise<{ id: 
   }
   const p = page.record;
   const confirmed = p.posted || p.ledger.some((r) => r.state === "confirmed");
-  const canPost = flags.customerPaymentsEnabled && !confirmed && p.invoicesPosted;
+  // "Posting by itself" only for a payment the step posts; older ones wait for the backfill.
+  const booksText = booksStatus(
+    p.ledger.map((r) => ({ ...r, kind: "customer_payment" as const })),
+    ["customer_payment"],
+    {
+      on:
+        flags.books.enabled &&
+        p.source === "ui" &&
+        p.invoicesPosted &&
+        onOrAfterBooksStart(p.receivedOn, flags.books.startDate),
+      maxAttempts: flags.books.maxAttempts,
+      inBooks: p.qboTail !== null,
+      tail: p.qboTail,
+    },
+  ).text;
   // A post nobody confirmed yet (unknown, or sent with no answer) is read back from here.
   const canCheck = flags.customerPaymentsEnabled && !confirmed && p.ledger.some((r) => r.state === "unknown" || r.state === "sent");
   return (
@@ -51,12 +65,11 @@ export default async function PaymentRecord({ params }: { params: Promise<{ id: 
               { label: "Credit left", value: <Money cents={p.creditCents} tone="plain" /> },
               { label: "Received", value: <Day value={p.receivedOn} /> },
               { label: "Method", value: METHOD_WORDS[p.method] ?? p.method },
-              { label: "QuickBooks", value: quickBooksStanding(p.qboTail, p.ledger.map((r) => r.state)) },
+              { label: "QuickBooks", value: booksText },
             ]}
           />
         </CardBody>
       </Card>
-      {canPost ? <PostButton url={`/api/customer-payments/${encodeURIComponent(p.id)}/post`} /> : null}
       {canCheck ? <CheckButton url={`/api/customer-payments/${encodeURIComponent(p.id)}/reconcile`} /> : null}
       {!confirmed && !p.invoicesPosted ? (
         <p className="text-body text-foreground-2">

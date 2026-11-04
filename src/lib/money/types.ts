@@ -23,6 +23,12 @@ export const MONEY_ACTION_KINDS = [
   // Money pulled back off a driver's fuel card (RECOVERY, 0080). Payment channel, no rail: the
   // caller sends through its own hook, the simulated card provider's pull member.
   "card_pullback",
+  // A money code's QuickBooks record (D-104, 0092): one Purchase paid from LedgerLine Clearing to
+  // the driver's vendor, Dr driver reimbursements. Accounting channel, sent through its own hook.
+  "money_code_expense",
+  // A released escrow balance's QuickBooks record (D-104, 0092): one Purchase paid from LedgerLine
+  // Clearing to the driver's vendor, Dr driver escrow. Accounting channel, its own hook.
+  "escrow_release_expense",
 ] as const;
 export type MoneyActionKind = (typeof MONEY_ACTION_KINDS)[number];
 
@@ -153,6 +159,16 @@ export const KIND_SHAPES: Readonly<Record<MoneyActionKind, KindShape>> = {
     subjectTable: "card_pullbacks",
     counterpartyTable: "drivers",
   },
+  money_code_expense: {
+    channel: "accounting",
+    subjectTable: "money_codes",
+    counterpartyTable: "drivers",
+  },
+  escrow_release_expense: {
+    channel: "accounting",
+    subjectTable: "escrow_releases",
+    counterpartyTable: "drivers",
+  },
 };
 
 // The statuses each subject table allows (0005). customer_payments has none. money_codes lists
@@ -160,13 +176,15 @@ export const KIND_SHAPES: Readonly<Record<MoneyActionKind, KindShape>> = {
 // try is not confirmed yet. escrow_releases only from a release being sent (0069): its one try is
 // replayed, never a second, and an 'unknown' release is a confirmed payout whose balance had moved,
 // which a person settles by hand. card_pullbacks the same way, only from a pull being sent (0080).
+// The QuickBooks record of a money code starts only from an issued code, and of an escrow release
+// only from a released one (D-104).
 export const SUBJECT_STATUSES = {
   advances: ["requested", "approved", "paid", "rejected", "cancelled"],
   settlements: ["draft", "approved", "paid"],
   invoices: ["open", "partially_paid", "paid", "void"],
   customer_payments: [],
-  money_codes: ["issuing", "unknown"],
-  escrow_releases: ["issuing"],
+  money_codes: ["issuing", "unknown", "issued"],
+  escrow_releases: ["issuing", "released"],
   card_pullbacks: ["issuing"],
 } as const satisfies Record<SubjectTable, readonly string[]>;
 export type SubjectStatus<T extends SubjectTable> = (typeof SUBJECT_STATUSES)[T][number];

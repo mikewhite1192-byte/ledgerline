@@ -3,14 +3,14 @@ import { accountingAdapter } from "../adapters";
 import type { AccountingAdapter, SendContext, SendOutcome } from "../adapters/types";
 import type { Session } from "../auth/claims";
 import { getDb, type Queryable, type TenantDb } from "../db";
-import { executeMoneyAction, type MoneyDeps, type MoneyHooks } from "../money/execute";
+import { executeMoneyAction, type ExecuteResult, type MoneyDeps, type MoneyHooks } from "../money/execute";
 import { readBySubject } from "../money/read";
 import type { ReconcileHooks } from "../money/reconcile";
 import { MAX_ATTEMPT, MoneyError, type MoneyAction } from "../money/types";
 import type { ExecuteDeps } from "../proposals/execute";
 import { assertMembership } from "../tenant/context";
 import { expenseAmountCents } from "./request";
-import { readFlowAdvance, type FlowAdvance } from "./rows";
+import { readAdvanceView, readFlowAdvance, type AdvanceView, type FlowAdvance } from "./rows";
 import { advancesOn } from "./switches";
 
 // The QuickBooks leg of a paid advance: one Purchase in the sandbox company, the advance and its
@@ -70,7 +70,7 @@ function sendHook(
   db: TenantDb,
   tenantId: string,
   accounting: AccountingAdapter,
-  advance: FlowAdvance,
+  advance: AdvanceView,
   vendor: Vendor,
 ): NonNullable<MoneyHooks["send"]> {
   return (action: MoneyAction, ctx: SendContext): Promise<SendOutcome> =>
@@ -100,6 +100,69 @@ async function onExpenseReserved(q: Queryable, action: MoneyAction): Promise<voi
     [action.subjectId],
   );
   if (rows.length !== 1 || rows[0].status !== "paid") throw new MoneyError("validation");
+}
+
+// The books step's reserve check (src/lib/books/pending.ts): the advance is still paid, asked again
+// in the reserve transaction. A seeded advance has no proposal, so none is required here.
+async function onPaidReserved(q: Queryable, action: MoneyAction): Promise<void> {
+  const rows = await q.query<{ status: string }>(
+    `SELECT status FROM advances WHERE tenant_id = current_tenant_id() AND id = CAST($1 AS uuid)`,
+    [action.subjectId],
+  );
+  if (rows.length !== 1 || rows[0].status !== "paid") throw new MoneyError("validation");
+  if (flags.books.enabled !== true) throw new MoneyError("disabled");
+}
+
+// The books step's post of a paid advance: the same purchase, key and read-back as the advance's
+// own post, as the attempt the step picked from the ledger (it checks books.enabled, the attempt
+// limit and the cool-down itself). Null, with nothing written, when the advance is gone or not
+// paid. Throws MoneyError before any write when a switch is off or the adapter is not ready.
+export async function postPaidAdvanceExpense(
+  db: TenantDb,
+  session: Session,
+  advanceId: string,
+  attempt: number,
+  money: Partial<MoneyDeps>,
+): Promise<ExecuteResult | null> {
+  if (flags.books.enabled !== true || flags.accountingEnabled !== true) throw new MoneyError("disabled");
+  let picked: { advance: AdvanceView; vendor: Vendor } | null;
+  try {
+    picked = await db.withTenant(session.tenantId, async (q) => {
+      const advance = await readAdvanceView(q, advanceId);
+      if (!advance || advance.status !== "paid") return null;
+      return { advance, vendor: await readVendor(q, advance.driverId) };
+    });
+  } catch (err) {
+    if (err instanceof Stop) return null;
+    throw err;
+  }
+  if (!picked) return null;
+  const { advance, vendor } = picked;
+  return executeMoneyAction(
+    db,
+    session,
+    {
+      kind: "advance_expense",
+      subjectId: advance.id,
+      counterpartyId: advance.driverId,
+      amountCents: expenseAmountCents(advance),
+      attempt,
+      proposedBy: "agent",
+      proposalId: advance.proposalId,
+      traceId: null,
+      subjectStatuses: ["paid"],
+    },
+    {
+      onReserved: onPaidReserved,
+      // The books switch is asked again at the send itself: a replayed reserve skips onReserved,
+      // and sendHook is shared with the person's own post, which has no books switch.
+      send: (action: MoneyAction, ctx: SendContext): Promise<SendOutcome> =>
+        flags.books.enabled === true
+          ? sendHook(db, session.tenantId, accountingOf(money), advance, vendor)(action, ctx)
+          : Promise.resolve({ kind: "failed", category: "disabled" }),
+    },
+    money,
+  );
 }
 
 // The reconcile pass's read-back for a post left unknown, by its id or document number.

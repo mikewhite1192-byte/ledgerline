@@ -30,6 +30,8 @@ export type LedgerRow = {
   failureCategory: string | null;
   amountCents: number;
   createdAt: string;
+  // How many read-backs the reconcile pass made (the books status line reads it).
+  checkCount?: number;
 };
 
 export type InvoiceListRow = {
@@ -66,6 +68,7 @@ function ledgerRows(actions: Awaited<ReturnType<typeof readBySubject>>, kind: st
       failureCategory: a.failureCategory,
       amountCents: a.amountCents,
       createdAt: a.createdAt,
+      checkCount: a.checkCount,
     }));
 }
 

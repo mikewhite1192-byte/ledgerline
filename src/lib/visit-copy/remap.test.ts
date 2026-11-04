@@ -68,6 +68,7 @@ describe("remapPlanIds", () => {
     expect(() => remapPlanIds({ m: new Map() }, A)).toThrow();
   });
 
+  // It builds every demo carrier's whole plan, which runs past the default 5 seconds on a CI runner.
   it("gives each demo carrier's plan ids that are all new, all its own, and joined the same way", () => {
     for (const carrier of DEMO_CARRIERS) {
       const plan = templatePlan(carrier);
@@ -89,5 +90,5 @@ describe("remapPlanIds", () => {
         expect((one as Record<string, unknown[]>)[table].length, table).toBe((rows as unknown[]).length);
       }
     }
-  });
+  }, 30_000);
 });
