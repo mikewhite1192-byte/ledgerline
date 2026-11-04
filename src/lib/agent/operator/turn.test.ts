@@ -1762,6 +1762,65 @@ describe("runTurn near the end of its clock", () => {
     expect(out).toMatchObject({ status: "done", endedReason: null, text: "Pay is $1,500.00 this week." });
   });
 
+  it("keeps nothing in hand as done when the answer call's checklist write is dropped", async () => {
+    const now = { t: 1_000_000 };
+    const h = harness(
+      [
+        result({ toolCalls: [call("l1", "set_checklist", { items: [{ text: "Read the week", state: "doing" }] })] }),
+        result({
+          text: "Here is the week.",
+          toolCalls: [call("l2", "set_checklist", { items: [{ text: "Read the week", state: "done" }] })],
+        }),
+      ],
+      (c) => {
+        now.t += LIMITS.wallClockMs - CALL_MARGIN_MS - ANSWER_NOW_MS + 1;
+        return gateway(c);
+      },
+      { now },
+    );
+    const out = await h.run();
+    expect(h.calls.map((c) => c.id)).toEqual(["l1"]);
+    expect(out).toMatchObject({ status: "done", endedReason: null, text: "Here is the week." });
+    expect(h.finished()?.checklist?.items.map((i) => i.state)).toEqual(["not_done"]);
+  });
+
+  it("shows the text from before the answer call's dropped calls, never words written beside them", async () => {
+    const now = { t: 1_000_000 };
+    const h = harness(
+      [
+        result({ text: "Reading.", toolCalls: [call("c1", "get_pay_items")] }),
+        result({ text: "A card is ready.", toolCalls: [call("p1", "propose_advance", { driverId: DRIVER })] }),
+      ],
+      (c) => {
+        now.t += LIMITS.wallClockMs - CALL_MARGIN_MS - ANSWER_NOW_MS + 1;
+        return gateway(c);
+      },
+      { now },
+    );
+    const out = await h.run();
+    expect(h.calls.map((c) => c.id)).toEqual(["c1"]);
+    expect(out).toMatchObject({ status: "partial", endedReason: "clock" });
+    expect(out.text).toBe(`${LOOP_TEXT.stopped}\n\nReading.`);
+    expect(out.text).not.toContain("A card is ready.");
+  });
+
+  it("reads the call window again after the step is written, and sends no call that could not answer", async () => {
+    const now = { t: 1_000_000 };
+    const h = harness([result({ text: "never sent" })], gateway, { now });
+    const startStep = h.deps.store.startStep.bind(h.deps.store);
+    h.deps.store.startStep = async (turnId, s) => {
+      if (s.kind === "model") now.t += LIMITS.wallClockMs - CALL_MARGIN_MS - MIN_MODEL_CALL_MS + 1;
+      return startStep(turnId, s);
+    };
+    const out = await h.run();
+    expect(h.requests).toHaveLength(0);
+    expect(out).toMatchObject({ status: "partial", endedReason: "clock", modelCallCount: 0 });
+    expect(out.text).toBe(LOOP_TEXT.stopped);
+    const model = h.steps.filter((s) => s.kind === "model");
+    expect(model).toHaveLength(1);
+    expect(model[0]).toMatchObject({ state: "failed", detail: { category: "clock" } });
+  });
+
   it("tells the model to read next after a checklist sent alone, and only then", async () => {
     const h = harness(
       [

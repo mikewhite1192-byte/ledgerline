@@ -10,6 +10,8 @@ import { feedLine, readFeedState } from "../../../tms/read";
 import { isAuditConcern } from "../../auditor/words";
 import { STATE_HEADER } from "../../policy";
 import { focusLine, type FocusSubject } from "../focus";
+import { TOOL_REGISTRY } from "../registry";
+import { TIERS, type Tier } from "../types";
 
 // The compact state summary (design 2.3, tip 5): Muse Spark never sees the chat history, only
 // this one system message rebuilt from the database on every turn. Sections in a fixed order,
@@ -66,20 +68,31 @@ const DOW = ["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "
 
 type PriorRow = { seq: number; summary: string; tools?: string | null };
 
-// The tools an earlier answer read, by their registry names (codes only), at most four; the
-// checklist is not a read.
+// The tools an earlier answer ran, by their registry names (codes only), at most four, each
+// under its own registry tier: a read, a proposal or a note. A name the registry does not hold is
+// dropped; the checklist is not counted.
 const TOOL_CODE = /^[a-z_]{2,40}$/;
-function readTools(raw: string | null | undefined): string[] {
+const TIER_WORD: Readonly<Record<Tier, string>> = { read: "read", propose: "proposed", record: "noted" };
+function toolsByTier(raw: string | null | undefined): string[] {
   if (!raw) return [];
-  return raw.split(" ").filter((t) => TOOL_CODE.test(t)).slice(0, 4);
+  const known = raw
+    .split(" ")
+    .filter((t) => TOOL_CODE.test(t) && Object.hasOwn(TOOL_REGISTRY, t))
+    .slice(0, 4);
+  return TIERS.flatMap((tier) => {
+    const names = known.filter((t) => TOOL_REGISTRY[t].tier === tier);
+    return names.length > 0 ? [`${TIER_WORD[tier]} ${names.join(", ")}`] : [];
+  });
 }
 
-// One earlier answer's line: what it read (so "what did you do" has the lookups to say), then
-// its own first words.
+// One earlier answer's line: what it read, proposed or noted (so "what did you do" has the steps
+// to say), then its own first words.
 export function priorLine(t: PriorRow): string {
-  const tools = readTools(t.tools);
+  const groups = toolsByTier(t.tools);
   const said = cut(t.summary, 120);
-  return tools.length > 0 ? `- Read ${tools.join(", ")}; answered: ${said}` : `- ${said}`;
+  if (groups.length === 0) return `- ${said}`;
+  const did = groups.join("; ");
+  return `- ${did.charAt(0).toUpperCase()}${did.slice(1)}; answered: ${said}`;
 }
 type ProposalRow = {
   id: string;

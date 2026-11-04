@@ -209,6 +209,9 @@ export async function runTurn(input: TurnInput, deps: TurnDeps): Promise<TurnOut
   let response = 0;
   let listResponse = 0;
   let refusedResponse = 0;
+  // The answer call's own checklist write was dropped: the list on hand is older than the answer,
+  // so nothing still in hand on it is shown as done.
+  let listDropped = false;
 
   const emitStep = (s: StepView) => deps.emit?.({ event: "step", data: s });
   const start = async (kind: StepView["kind"], label: string) => {
@@ -600,11 +603,16 @@ export async function runTurn(input: TurnInput, deps: TurnDeps): Promise<TurnOut
       if (cap) return stopped(cap);
       // The time this call would get. Too little to answer at all: stop with what was found, never
       // a call sent only to time out (its reservation is kept). Too little for another tool round
-      // and then an answer: this call is the answer, and its tool calls are not run.
-      const callMs = budget.remainingMs() - CALL_MARGIN_MS;
-      if (callMs < MIN_MODEL_CALL_MS) return stopped("clock");
-      const answerNow = callMs < ANSWER_NOW_MS;
+      // and then an answer: this call is the answer, and its tool calls are not run. Read again
+      // once the step is written, since that write spends the same clock.
+      if (budget.remainingMs() - CALL_MARGIN_MS < MIN_MODEL_CALL_MS) return stopped("clock");
       const step = await start("model", MODEL_LABEL);
+      const callMs = budget.remainingMs() - CALL_MARGIN_MS;
+      if (callMs < MIN_MODEL_CALL_MS) {
+        await finish(step, "failed", { detail: { category: "clock" } });
+        return stopped("clock");
+      }
+      const answerNow = callMs < ANSWER_NOW_MS;
       const called = await modelCall("spark", deps.tools, answerNow);
       if ("error" in called) {
         await finish(step, "failed", { detail: { category: called.error } });
@@ -631,15 +639,19 @@ export async function runTurn(input: TurnInput, deps: TurnDeps): Promise<TurnOut
           ...(answerNow ? { answerNow: true } : {}),
         },
       });
-      if (shown.text) lastText = shown.text;
       // The answer call's tool calls are never run: there is no time left to answer after them. A
       // whole answer (not cut off) sent with only a checklist write is still the answer; the write
-      // is dropped.
+      // is dropped, so the list keeps nothing in hand as done. Any other stop shows the text from
+      // before these calls, never words written beside calls that did not run.
       if (answerNow && result.toolCalls.length > 0) {
         const checklistOnly = result.toolCalls.every((c) => c.name === CHECKLIST_TOOL);
-        if (shown.text && checklistOnly && result.status === "ok") return { status: "done", endedReason: null, text: shown.text };
+        if (shown.text && checklistOnly && result.status === "ok") {
+          listDropped = true;
+          return { status: "done", endedReason: null, text: shown.text };
+        }
         return stopped("clock");
       }
+      if (shown.text) lastText = shown.text;
       if (result.toolCalls.length === 0) {
         if (!shown.text) {
           const reason = result.status === "incomplete" ? "incomplete" : "empty";
@@ -703,10 +715,11 @@ export async function runTurn(input: TurnInput, deps: TurnDeps): Promise<TurnOut
   // The checklist as the answer ended: the item in hand is done when it finished and not done
   // when it stopped; one never started is not done. A call refused, or a proposal that made no
   // card, after the list was last sent leaves the item in hand not done even on a finished answer:
-  // never a check beside a card that does not exist. A stop then says what was done and what is
-  // left in place of the plain stop line, still followed by what was found. Its count is the
-  // tool steps the step cap counted, not the model calls.
-  const unsettled = refusedResponse > 0 && refusedResponse >= listResponse;
+  // never a check beside a card that does not exist; so does a list the answer call tried to
+  // change and could not. A stop then says what was done and what is left in place of the plain
+  // stop line, still followed by what was found. Its count is the tool steps the step cap
+  // counted, not the model calls.
+  const unsettled = listDropped || (refusedResponse > 0 && refusedResponse >= listResponse);
   const finalList = checklist ? finalChecklist(checklist, ended.status === "done" && unsettled ? "partial" : ended.status) : null;
   // An escalation to a person keeps its own line, followed by the same summary.
   const ending: Ending =
