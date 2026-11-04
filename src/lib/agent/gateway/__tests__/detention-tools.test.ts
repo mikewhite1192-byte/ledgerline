@@ -91,9 +91,9 @@ describe("find_unbilled_detention", () => {
 
   // Production, Nov 4: "Find detention we never billed last month" found the three charges, then
   // spent a response on the checklist alone and answered that it could not make the cards. The
-  // result asks for every card in the next response, beside the checklist; each is still a card a
+  // result asks for up to two cards in the next response, beside the checklist; each is still a card a
   // person approves.
-  it("tells the model to propose every ready row in its next response, beside the checklist", async () => {
+  it("tells the model to propose the first two ready rows in its next response, beside the checklist", async () => {
     flags.detentionEnabled = true;
     const { out } = await run("find_unbilled_detention", { month: "2026-10" });
     if (out.decision !== "allowed") throw new Error(`not allowed: ${out.reason}`);
