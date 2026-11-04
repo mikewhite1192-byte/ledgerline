@@ -1,7 +1,7 @@
 import { z } from "zod";
 import { flags } from "../../../../../config/flags";
 import { readCashFridayInput } from "../../../../data/read";
-import { computeCashFriday } from "../../../../rules-engine";
+import { computeCashFriday, sum } from "../../../../rules-engine";
 import { localDateOf } from "../../../../time/local-date";
 import { defineTool, type GatewayRef } from "../../types";
 import { OPERATOR } from "../shared";
@@ -14,7 +14,10 @@ export const getCashFriday = defineTool({
   description:
     "Work out whether the carrier can cover Friday's driver pay run, as the rules engine does on " +
     "the Friday's cash page: cash on hand, customer payments expected by pay day, the pay run, fuel card " +
-    "loads and vendor bills due, and the gap (below zero is a short), in integer cents. When short, " +
+    "loads and vendor bills due, and the gap (below zero is a short), in integer cents. cashByPayDayCents " +
+    "is cash on hand plus the payments expected and dueByPayDayCents is the pay run plus fuel loads and " +
+    "bills due: quote those for what comes in and what goes out, and gapCents for covered or short " +
+    "by how much. When short, " +
     "options are the moves the engine found (factor invoices, move a flexible bill, chase a late " +
     "payer), each with its figures. Also the latest stored check's id and the open cards' ids. " +
     "This only reads; a person runs a check and decides each card on the Friday's cash page.",
@@ -49,6 +52,10 @@ export const getCashFriday = defineTool({
         periodId: r.periodId,
         payRunSource: r.payRunSource,
         figures: r.figures,
+        // The two sides the gap compares, summed here in integer cents so an answer quotes them
+        // instead of adding figures itself: cashByPayDayCents minus dueByPayDayCents is gapCents.
+        cashByPayDayCents: sum([r.figures.cashOnHandCents, r.figures.expectedReceiptsCents]),
+        dueByPayDayCents: sum([r.figures.payRunCents, r.figures.fuelLoadsCents, r.figures.vendorBillsDueCents]),
         linesTotal: r.lines.length,
         // rows are the receipt lines, counted ones first; the gateway cuts a long list from the end.
         rows: r.lines.slice(0, CASH_LINES_MAX).map((l) => ({
