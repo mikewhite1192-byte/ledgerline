@@ -439,7 +439,8 @@ export async function planPhase(fx: FanoutCtx): Promise<"plan" | "check" | "draf
       await writePlan(q, fx, defaultOrder(roster), "plan_skipped", callId);
       return "check";
     }
-    // Tried again by this slice or the next, while tries are left.
+    // Tried again by this slice or the next, while tries are left. With MAX_ATTEMPTS 1 (D-106)
+    // every try is the last, so this path never runs; it is kept for a later raise.
     if (callId) {
       await q.execute(
         "UPDATE sweep_fanout SET plan_call_id = COALESCE(plan_call_id, CAST($2 AS uuid)) WHERE run_id = CAST($1 AS uuid) AND tenant_id = current_tenant_id()",
@@ -490,8 +491,9 @@ export async function checkPhase(fx: FanoutCtx): Promise<"check" | "reconcile" |
   const nowIso = now.toISOString();
 
   const start = await fx.leased(async (q): Promise<CheckStart> => {
-    // The turn of a check a dead slice left running is closed: that check is leased again below
-    // or, on its last lease, ends here.
+    // The turn of a check a dead slice left running is closed, and the check ends here on its last
+    // lease. With MAX_ATTEMPTS 1 (D-106) every lease is the last, so no check is leased again below;
+    // that path is kept for a later raise.
     await q.execute(
       `UPDATE turns SET status = 'failed', ended_reason = 'abandoned', finished_at = CAST($2 AS timestamptz)
         WHERE tenant_id = current_tenant_id() AND status = 'running' AND id IN (
@@ -654,6 +656,8 @@ export async function checkPhase(fx: FanoutCtx): Promise<"check" | "reconcile" |
       const known = out.costKnown ? centsOf(out.costNanocents) : null;
       // What the run counts for this check: the real cost, or the whole hold when unknown.
       const counted = known === null ? l.driverCents : known;
+      // A timed-out or failed check goes back to 'queued' while tries are left. With MAX_ATTEMPTS 1
+      // (D-106) none are, so this never queues a check again; it is kept for a later raise.
       const retry = (out.status === "timed_out" || out.status === "error") && Number(row.attempts) < MAX_ATTEMPTS;
       await q.execute(
         `UPDATE sweep_fanout_checks
