@@ -40,7 +40,7 @@ export default async function LoadJourney({ params }: { params: Promise<{ id: st
   if (page.kind === "problem") return <NoCarrierPage problem={page.problem} />;
   if (page.kind === "missing") {
     return (
-      <SignedInPage tenant={page.shell} current="/invoices" title="Load journey">
+      <SignedInPage tenant={page.shell} current="/road" title="Load journey">
         <PageHeader title="Load journey" />
         <ErrorState category="not_found" />
       </SignedInPage>
@@ -49,7 +49,7 @@ export default async function LoadJourney({ params }: { params: Promise<{ id: st
   const read = page.record;
   if (read.off) {
     return (
-      <SignedInPage tenant={page.shell} current="/invoices" title="Load journey">
+      <SignedInPage tenant={page.shell} current="/road" title="Load journey">
         <PageHeader title="Load journey" />
         <Card>
           <FeatureOff name="The load journey" />
@@ -70,7 +70,7 @@ export default async function LoadJourney({ params }: { params: Promise<{ id: st
   return (
     <SignedInPage
       tenant={page.shell}
-      current="/invoices"
+      current="/road"
       title={`Load ${load.number} journey`}
       focus={{ table: "loads", id: load.id, label: `Load ${load.number}` }}
     >
