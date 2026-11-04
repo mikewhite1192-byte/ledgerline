@@ -2,7 +2,7 @@ import type { Queryable } from "../../db";
 import { SEE_THE_RECORD } from "./check";
 import { SEE_THE_RECORDS } from "./plan";
 import type { FanoutCounts } from "./reconcile";
-import { BRIEF_MAX, DISAGREEMENT_MAX, NOTE_MAX, SUMMARY_MAX, isRecordTable, parseJson, scrubFigures } from "./schemas";
+import { DISAGREEMENT_MAX, NOTE_MAX, STORED_BRIEF_MAX, SUMMARY_MAX, isRecordTable, parseJson, scrubFigures } from "./schemas";
 
 // The run page's "How the week was checked" (design 3.8): the ordering, one node per driver's
 // check and the comparison, from the run's own rows. Each node names its turn, whose steps the
@@ -171,7 +171,7 @@ export function treeOf(row: FanoutRow, checks: FanoutCheckRow[], names: DriverNa
         focus: arrayOf(parseJson(c.focus))
           .filter((f): f is string => typeof f === "string" && CODE.test(f))
           .slice(0, 4),
-        brief: textOr(c.brief, SEE_THE_RECORDS, BRIEF_MAX),
+        brief: textOr(c.brief, SEE_THE_RECORDS, STORED_BRIEF_MAX),
         status: (CHECK_STATUSES as readonly string[]).includes(c.status) ? (c.status as FanoutCheckStatus) : "error",
         confidence: confidence === "high" || confidence === "medium" || confidence === "low" ? confidence : null,
         issues: issuesOf(result),

@@ -22,7 +22,21 @@ import {
   type EngineFinding,
 } from "./reconcile";
 import { MIN_WONDER_MS, openLeasedTurn, PLAN_CALL, RECONCILE_CALL, type FanoutCtx, type FanoutDeps } from "./run";
-import { CHECK_CATEGORIES, MAX_ISSUES, MAX_SOURCES, OTHER_CATEGORY, PLAN_FORMAT, RECONCILE_FORMAT, parseJson, scrubFigures } from "./schemas";
+import {
+  BRIEF_MAX,
+  CHECK_CATEGORIES,
+  MAX_DISAGREEMENTS,
+  MAX_FOCUS,
+  MAX_ISSUES,
+  MAX_SOURCES,
+  OTHER_CATEGORY,
+  PLAN_FOCUS_CATEGORIES,
+  PLAN_FORMAT,
+  PLAN_SUMMARY_MAX,
+  RECONCILE_FORMAT,
+  parseJson,
+  scrubFigures,
+} from "./schemas";
 import { treeOf, type FanoutCheckRow, type FanoutRow } from "./tree";
 
 // The second opinion's server rules, without a database or a model: the plan, check and
@@ -81,7 +95,7 @@ describe("validatePlan", () => {
   it("drops an unknown id, keeps each driver once, appends the missing ones last and scrubs figures", () => {
     const raw = answer(
       [
-        { driverId: B.toUpperCase(), priority: 1, focus: ["no_reimbursement", "made_up"], brief: "Owed $40 on a load." },
+        { driverId: B.toUpperCase(), priority: 1, focus: ["rate_missing", "no_reimbursement", "made_up"], brief: "Owed $40 on a load." },
         { driverId: UNKNOWN, priority: 1, focus: [], brief: "Not on the roster." },
         { driverId: B, priority: 2, focus: [], brief: "Twice." },
       ],
@@ -91,7 +105,7 @@ describe("validatePlan", () => {
     expect(got?.unknown).toBe(1);
     expect(got?.plan.summary).toBe("see the records");
     expect(got?.plan.order).toEqual([
-      { driverId: B, priority: 1, focus: ["no_reimbursement"], brief: "see the records" },
+      { driverId: B, priority: 1, focus: ["rate_missing"], brief: "see the records" },
       { driverId: A, priority: 3, focus: [], brief: null },
       { driverId: C, priority: 3, focus: [], brief: null },
     ]);
@@ -104,6 +118,38 @@ describe("validatePlan", () => {
     expect(validatePlan(JSON.stringify({ summary: "", order: [], skipped: [], extra: 1 }), roster)).toBeNull();
     expect(validatePlan(answer([]), roster)).toBeNull();
     expect(validatePlan(answer([{ driverId: A, priority: 4, focus: [], brief: "" }]), roster)).toBeNull();
+  });
+
+  it("keeps only the categories the check can judge, at most two, and cuts a long brief and summary to size", () => {
+    const long = "word ".repeat(80);
+    const got = validatePlan(
+      answer([{ driverId: A, priority: 1, focus: ["rate_missing", "rate_missing", "newer_is_duplicate", "no_reimbursement"], brief: long }], long),
+      roster,
+    );
+    expect(got?.plan.order[0].focus).toEqual(["rate_missing", "newer_is_duplicate"]);
+    expect(got?.plan.order[0].brief?.length).toBe(BRIEF_MAX);
+    expect(got?.plan.summary?.length).toBe(PLAN_SUMMARY_MAX);
+    expect(validatePlan(answer([{ driverId: A, priority: 1, focus: ["no_reimbursement"], brief: "" }]), roster)?.plan.order[0].focus).toEqual([]);
+  });
+
+  it("asks for a short plan: a few words a driver, at most two focus categories the check can judge, one sentence of summary", () => {
+    expect(BRIEF_MAX).toBe(100);
+    expect(MAX_FOCUS).toBe(2);
+    expect(PLAN_SUMMARY_MAX).toBe(200);
+    // The check names these two in CHECK_PROMPT; the plan may focus on nothing else.
+    expect([...PLAN_FOCUS_CATEGORIES]).toEqual(["newer_is_duplicate", "rate_missing"]);
+    for (const c of PLAN_FOCUS_CATEGORIES) {
+      expect(FINDING_CATEGORIES).toContain(c);
+      expect(CHECK_PROMPT).toContain(c);
+    }
+    const props = PLAN_FORMAT.schema.properties;
+    expect(props.summary.maxLength).toBe(PLAN_SUMMARY_MAX);
+    expect(props.order.items.properties.focus).toEqual({ type: "array", maxItems: 2, items: { type: "string", enum: ["newer_is_duplicate", "rate_missing"] } });
+    expect(props.order.items.properties.brief.maxLength).toBe(BRIEF_MAX);
+    expect(PLAN_PROMPT).toContain("name at most two focus categories, only from newer_is_duplicate and rate_missing");
+    expect(PLAN_PROMPT).toContain("write a brief of a few words, twelve at most");
+    expect(PLAN_PROMPT).toContain("Write the summary as one short sentence.");
+    expect(PLAN_PROMPT).not.toContain("up to four");
   });
 
   it("orders every driver at priority 3 by default", () => {
@@ -575,6 +621,18 @@ describe("computeCounts and validateReconcile", () => {
     });
     expect(validateReconcile("{}", new Set([A]))).toBeNull();
   });
+
+  it("asks for at most two sentences of summary and six disagreements, and keeps no more than six", () => {
+    expect(MAX_DISAGREEMENTS).toBe(6);
+    expect(RECONCILE_FORMAT.schema.properties.disagreements.maxItems).toBe(MAX_DISAGREEMENTS);
+    expect(RECONCILE_PROMPT).toContain("Write a summary of at most two sentences");
+    expect(RECONCILE_PROMPT).toContain("list at most six disagreements");
+    const raw = JSON.stringify({
+      summary: "They agree.",
+      disagreements: Array.from({ length: 9 }, () => ({ driverId: A, category: "rate_missing", text: "Look at the load." })),
+    });
+    expect(validateReconcile(raw, new Set([A]))?.disagreements).toHaveLength(6);
+  });
 });
 
 describe("treeOf", () => {
@@ -720,6 +778,9 @@ describe("the ordering and comparison calls' caps", () => {
     const l = fanoutLimits();
     expect(PLAN_CALL.maxOutputTokens).toBeGreaterThanOrEqual(l.maxDrivers * 100 * 2);
     expect(RECONCILE_CALL.maxOutputTokens).toBeGreaterThanOrEqual(4_000);
+    // Both short answers run at low effort, under caps no larger than before (8,192 and 6,000).
+    expect(PLAN_CALL).toEqual({ maxOutputTokens: 6_144, reasoningEffort: "low" });
+    expect(RECONCILE_CALL).toEqual({ maxOutputTokens: 4_000, reasoningEffort: "low" });
     const full: Roster = {
       rows: Array.from({ length: l.maxDrivers }, (_, n) => ({
         driverId: id(n),

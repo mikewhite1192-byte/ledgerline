@@ -6,9 +6,10 @@ import { FINDING_CATEGORIES, settleDriver } from "../../rules-engine";
 import {
   BRIEF_MAX,
   MAX_FOCUS,
+  PLAN_FOCUS_CATEGORIES,
   PLAN_FORMAT,
+  PLAN_SUMMARY_MAX,
   PlanAnswer,
-  SUMMARY_MAX,
   parseJson,
   scrubFigures,
 } from "./schemas";
@@ -151,12 +152,12 @@ export function defaultOrder(roster: Roster): ValidPlan {
   };
 }
 
-const FOCUS: ReadonlySet<string> = new Set(FINDING_CATEGORIES);
+const FOCUS: ReadonlySet<string> = new Set(PLAN_FOCUS_CATEGORIES);
 
 // The server's rules on the model's plan (design 3.2): ids whole-match the roster (an unknown one
 // is dropped and counted), each driver once, a roster driver left out is appended at priority 3,
-// skipped is the server's own list, focus only the engine's categories, and a summary or brief
-// with a figure in it becomes "see the records". Null when the answer does not parse or orders
+// skipped is the server's own list, focus only the categories the check can judge, and a summary
+// or brief with a figure in it becomes "see the records". Null when the answer does not parse or orders
 // nobody while the roster has drivers.
 export function validatePlan(raw: string, roster: Roster): { plan: ValidPlan; unknown: number } | null {
   const parsed = PlanAnswer.safeParse(parseJson(raw));
@@ -185,7 +186,7 @@ export function validatePlan(raw: string, roster: Roster): { plan: ValidPlan; un
   for (const r of roster.rows) {
     if (!seen.has(r.driverId)) order.push({ driverId: r.driverId, priority: 3, focus: [], brief: null });
   }
-  const summary = scrubFigures(parsed.data.summary, SEE_THE_RECORDS, SUMMARY_MAX);
+  const summary = scrubFigures(parsed.data.summary, SEE_THE_RECORDS, PLAN_SUMMARY_MAX);
   return { plan: { summary: summary === "" ? null : summary, order, skipped: roster.skipped }, unknown };
 }
 
@@ -194,10 +195,12 @@ export const PLAN_PROMPT =
   "pay bases in use, the finding categories, and a roster: each driver's id, counts of that " +
   "driver's records this week, and the categories the rules engine already found for them. Order " +
   "every roster driver for checking: priority 1 for the drivers most likely to have a pay problem " +
-  "worth a second look, 3 for the least. For each, name up to four finding categories to look at " +
-  "and write one short sentence of what to look at. Never state an amount or any figure. Put each " +
-  "roster driver in order exactly once; skipped lists only the drivers given to you as skipped. " +
-  "Answer as JSON.";
+  "worth a second look, 3 for the least. For each, name at most two focus categories, only from " +
+  PLAN_FOCUS_CATEGORIES.join(" and ") +
+  " (the only ones the second check can judge), or none, and write a brief of a few words, " +
+  "twelve at most, of what to look at. Write the summary as one short sentence. Never state an " +
+  "amount or any figure. Put each roster driver in order exactly once; skipped lists only the " +
+  "drivers given to you as skipped. Answer as JSON.";
 
 // The ordering call's user message: ids, counts and categories only.
 export function planInput(roster: Roster, window: Window): string {

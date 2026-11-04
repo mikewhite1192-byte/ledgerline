@@ -81,9 +81,9 @@ export function fanoutFindingKey(s: SparkOnly): string {
 export const RECONCILE_PROMPT =
   "You compare two checks of one trucking carrier's weekly driver pay: the rules engine's findings " +
   "and a second, per-driver check. You get the server's counts, the engine's findings and the " +
-  "second check's issues, as driver ids, categories and record ids. Write a short summary of " +
-  "where they agree and differ, and list the disagreements worth a person's look, one sentence " +
-  "each. Never state an amount or any figure. Answer as JSON.";
+  "second check's issues, as driver ids, categories and record ids. Write a summary of at most " +
+  "two sentences of where they agree and differ, and list at most six disagreements worth a " +
+  "person's look, one short sentence each. Never state an amount or any figure. Answer as JSON.";
 
 export function reconcileInput(counts: FanoutCounts, engine: EngineFinding[], checks: CheckRow[]): string {
   return JSON.stringify({

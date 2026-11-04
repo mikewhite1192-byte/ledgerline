@@ -11,13 +11,23 @@ export const CHECK_CATEGORIES = [...FINDING_CATEGORIES, OTHER_CATEGORY] as const
 export type CheckCategory = (typeof CHECK_CATEGORIES)[number];
 
 export const SUMMARY_MAX = 600;
-export const BRIEF_MAX = 240;
+// The ordering call's answer is kept short so the call finishes inside its time: a one-sentence
+// summary, and per driver a brief of a few words and at most two focus categories.
+export const PLAN_SUMMARY_MAX = 200;
+export const BRIEF_MAX = 100;
+// A brief as stored (sweep_fanout_checks.brief's own limit), so a page of an earlier run still
+// shows the longer briefs it asked for.
+export const STORED_BRIEF_MAX = 240;
 export const NOTE_MAX = 200;
 export const DISAGREEMENT_MAX = 240;
-export const MAX_FOCUS = 4;
+export const MAX_FOCUS = 2;
 export const MAX_ISSUES = 8;
 export const MAX_SOURCES = 4;
-export const MAX_DISAGREEMENTS = 12;
+export const MAX_DISAGREEMENTS = 6;
+
+// The categories the per-driver check can judge from the records it is given (check.ts
+// CHECK_PROMPT): the plan names its focus only from these.
+export const PLAN_FOCUS_CATEGORIES = ["newer_is_duplicate", "rate_missing"] as const satisfies readonly (typeof FINDING_CATEGORIES)[number][];
 
 // A dollar or cent sign, five digits in a row, a decimal of any length, a thousands group, or a
 // number with a currency word before or after it ("45 cents", "40 dollars", "USD 40"): a figure a
@@ -60,7 +70,7 @@ export const PLAN_FORMAT = {
     additionalProperties: false,
     required: ["summary", "order", "skipped"],
     properties: {
-      summary: { type: "string", maxLength: SUMMARY_MAX },
+      summary: { type: "string", maxLength: PLAN_SUMMARY_MAX },
       order: {
         type: "array",
         items: {
@@ -70,7 +80,7 @@ export const PLAN_FORMAT = {
           properties: {
             driverId: { type: "string" },
             priority: { type: "integer", enum: [1, 2, 3] },
-            focus: { type: "array", maxItems: MAX_FOCUS, items: { type: "string", enum: [...FINDING_CATEGORIES] } },
+            focus: { type: "array", maxItems: MAX_FOCUS, items: { type: "string", enum: [...PLAN_FOCUS_CATEGORIES] } },
             brief: { type: "string", maxLength: BRIEF_MAX },
           },
         },

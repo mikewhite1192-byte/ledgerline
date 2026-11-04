@@ -88,14 +88,17 @@ const SLICE_SLACK_MS = 6_000;
 const MAX_ATTEMPTS = 1;
 // Reasoning and the answer share these caps. Measured on muse-wonder-1.0 at medium effort
 // (2026-10-27): a two-driver plan spent 1,720 of 2,400 output tokens on reasoning and was cut off
-// before its JSON closed. A full roster's plan is a long answer (about 100 tokens a driver), so it
-// runs at low effort, which spends less of its time on reasoning, with the wrapper's largest cap;
-// the comparison's answer is short, so it keeps medium effort. Each cap is sized so its reserve
+// before its JSON closed. Measured on production (2026-11-04): about half of both calls ran past
+// their time (about 21 s); a plan that finished took 17 to 20 s for 2,900 to 3,500 output tokens
+// (about 1,250 reasoning, low effort) and a comparison 14 to 16 s (1,200 to 1,700 reasoning, medium
+// effort). So both run at low effort and ask for short answers (a few words a driver, a summary
+// of a sentence or two, at most six disagreements), and each cap still leaves room for a full
+// roster's answer at 100 tokens a driver plus its reasoning. Each cap is sized so its reserve
 // (output at the Wonder rate plus the input) still fits planCents and reconcileCents for a full
 // roster; a bigger request is refused too_expensive before anything is sent, and the run goes on
 // without that call.
-export const PLAN_CALL = { maxOutputTokens: 8_192, reasoningEffort: "low" } as const;
-export const RECONCILE_CALL = { maxOutputTokens: 6_000, reasoningEffort: "medium" } as const;
+export const PLAN_CALL = { maxOutputTokens: 6_144, reasoningEffort: "low" } as const;
+export const RECONCILE_CALL = { maxOutputTokens: 4_000, reasoningEffort: "low" } as const;
 
 // The wrapper refused these before anything was sent: the call cost nothing.
 const REFUSED_BEFORE_SENDING: ReadonlySet<string> = new Set([
