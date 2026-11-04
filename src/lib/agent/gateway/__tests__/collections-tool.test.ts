@@ -106,7 +106,7 @@ describe("get_collections", () => {
     expect(getCollections.enabled?.()).toBe(true);
   });
 
-  it("says it is only the 30+ day reminder list and sends every overdue question to get_ar_aging", () => {
+  it("says it is only the 30+ day reminder list and sends overdue balances to get_ar_aging", () => {
     expect(getCollections.description).toMatch(/^ONLY the 30\+ day reminder list/);
     expect(getCollections.description).toContain("use get_ar_aging");
   });

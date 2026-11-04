@@ -50,9 +50,9 @@ describe("figures", () => {
   });
 
   it("reads as plain words where a figure matched no record", () => {
-    expect(WITHHELD).toBe("an amount I could not check");
+    expect(WITHHELD).toBe("(an amount I could not check)");
     expect(maskFigures("The total is $999.99", new Set())).toEqual({
-      text: "The total is an amount I could not check",
+      text: "The total is (an amount I could not check)",
       masked: 1,
     });
   });

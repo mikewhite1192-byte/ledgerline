@@ -3,7 +3,7 @@
 // message. A dollar or cents figure in the final answer that matches none of them is replaced with
 // a fixed note, and the count goes on the turn's step detail.
 
-export const WITHHELD = "an amount I could not check";
+export const WITHHELD = "(an amount I could not check)";
 
 // A dollar figure takes every digit after its point, so a longer token (a per-gallon rate such as
 // "$0.2900") is judged whole, never read as "$0" with the rest left behind.
