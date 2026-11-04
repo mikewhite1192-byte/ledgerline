@@ -4,12 +4,13 @@ import { notFound } from "next/navigation";
 import { appNav } from "@/components/app/app-nav";
 import { AppShell } from "@/components/app/app-shell";
 import { PageHeader } from "@/components/app/page-header";
-import { Paystub } from "@/components/app/paystub";
+import { Paystub, yearToDateOf } from "@/components/app/paystub";
 import { ErrorState, FeatureOff } from "@/components/app/states";
 import { Card, CardBody } from "@/components/ui/card";
 import { flags } from "@/config/flags";
 import { readDriverView, type DriverView } from "@/lib/driver-notes/view";
 import { readDriverCard } from "@/lib/pay-cards/read";
+import { readPaystubYearForPage } from "@/lib/settlements/year-page";
 import { withRequestTenant } from "@/lib/tenant/context";
 import { isUuid } from "@/lib/uuid";
 import {
@@ -52,6 +53,9 @@ export default async function DriverViewPage({ params }: { params: Promise<{ set
   }
   if (!data) return <ShellProblemPage problem={problem ?? "unreadable"} />;
   const { shell, view, card } = data;
+  // What they were paid this year and their escrow balance, in its own read after the paystub's: a
+  // fault leaves the group out, never the paystub.
+  const year = view ? await readPaystubYearForPage(settlementId) : null;
 
   return (
     <AppShell
@@ -149,6 +153,7 @@ export default async function DriverViewPage({ params }: { params: Promise<{ set
               exceptions={[]}
               hrefFor={noRecordLinks}
               lineIdPrefix="line-"
+              yearToDate={year ? yearToDateOf(year) : undefined}
             />
           </>
         )}

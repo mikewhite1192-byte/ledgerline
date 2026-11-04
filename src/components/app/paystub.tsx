@@ -35,8 +35,27 @@ export type PaystubProps = {
   // The pay rules version the week was paid under, by the date it started ("Paid under rules from
   // Oct 19"), linked to the Pay rules page when href is given (a staff screen, never a driver's).
   payRules?: { from: string; href?: string };
+  // What the driver was paid this year and their escrow balance, from stored rows (yearToDateOf).
+  yearToDate?: PaystubYearToDate;
   className?: string;
 };
+
+export type PaystubYearToDate = { label: string; paidCents: number; escrowCents: number; escrowNote: string };
+
+// The "Year to date" group's words from the stored read (readPaystubYear). Pure.
+export function yearToDateOf(y: {
+  yearToDate: { year: number; paidCents: number; stubs: number };
+  escrow: { balanceCents: number; asOf: "paid" | "after_this_paystub" };
+}): PaystubYearToDate {
+  const { year, paidCents, stubs } = y.yearToDate;
+  const count = stubs === 0 ? "no paystubs yet" : `${stubs} ${stubs === 1 ? "paystub" : "paystubs"}`;
+  return {
+    label: `Paid in ${year}, ${count}`,
+    paidCents,
+    escrowCents: y.escrow.balanceCents,
+    escrowNote: y.escrow.asOf === "paid" ? "When this paystub was paid." : "If this paystub is paid now.",
+  };
+}
 
 const EARNINGS = new Set(["load_pay", "accessorial_pay", "reimbursement"]);
 const WORKER = { company: "Company driver", owner_operator: "Owner-operator" } as const;
@@ -125,9 +144,10 @@ function LineLabel({ line, hrefFor }: { line: PaystubLine; hrefFor: HrefFor }) {
   );
 }
 
-function Group({ title, children }: { title: string; children: ReactNode }) {
+// shown keeps the group's amounts in plain view under hide amounts (the stub a person approves).
+function Group({ title, shown, children }: { title: string; shown?: boolean; children: ReactNode }) {
   return (
-    <tbody>
+    <tbody data-amounts={shown ? "shown" : undefined}>
       <tr>
         <th scope="rowgroup" colSpan={2} className="pt-5 pb-1.5 text-left text-small font-semibold text-foreground-2">
           {title}
@@ -153,6 +173,7 @@ export function Paystub({
   hrefFor = recordHref,
   lineIdPrefix,
   payRules,
+  yearToDate,
   className,
 }: PaystubProps) {
   const bySeq = [...lines].sort((a, b) => a.seq - b.seq);
@@ -174,9 +195,9 @@ export function Paystub({
   );
 
   return (
-    // A paystub is approved as a whole, so its amounts never hide.
+    // A paystub is approved as a whole, so the stub's own amounts never hide; the year to date is
+    // not part of what is approved, so it blurs like any other amount.
     <section
-      data-amounts="shown"
       aria-label={`Paystub for ${driver.name}, ${formatPeriod(period.start, period.end)}`}
       className={cn("rounded-lg border border-border bg-card px-4 py-4 text-card-foreground sm:px-6 sm:py-5", className)}
     >
@@ -230,13 +251,14 @@ export function Paystub({
 
       <table className="mt-1 w-full border-collapse">
         <caption className="sr-only">
-          Earnings, deductions and net pay for {driver.name}, {formatPeriod(period.start, period.end)}
+          Earnings, deductions and net pay{yearToDate ? ", and the year to date," : ""} for {driver.name},{" "}
+          {formatPeriod(period.start, period.end)}
         </caption>
         <colgroup>
           <col />
           <col className="w-[8.5rem]" />
         </colgroup>
-        <Group title="Earnings">
+        <Group title="Earnings" shown>
           {earnings.map(row)}
           <tr className="align-baseline">
             <th scope="row" className="pt-2 pb-1 pr-4 text-left text-body font-semibold text-foreground">
@@ -247,7 +269,7 @@ export function Paystub({
             </td>
           </tr>
         </Group>
-        <Group title="Deductions">
+        <Group title="Deductions" shown>
           {deductions.map(row)}
           <tr className="align-baseline">
             <th scope="row" className="pt-2 pb-1 pr-4 text-left text-body font-semibold text-foreground">
@@ -258,7 +280,7 @@ export function Paystub({
             </td>
           </tr>
         </Group>
-        <tbody>
+        <tbody data-amounts="shown">
           {carryForwardCents !== 0 ? (
             // The engine carries the shortfall as a positive add-back, so "+" sums down the rail;
             // the caption says where it comes back from.
@@ -281,6 +303,27 @@ export function Paystub({
             </td>
           </tr>
         </tbody>
+        {yearToDate ? (
+          <Group title="Year to date">
+            <tr className="align-baseline">
+              <th scope="row" className="py-1.5 pr-4 text-left text-body font-normal text-foreground">
+                {yearToDate.label}
+              </th>
+              <td className="py-1.5 text-right text-body whitespace-nowrap" data-testid="ytd-paid">
+                <Money cents={yearToDate.paidCents} tone="plain" />
+              </td>
+            </tr>
+            <tr className="align-baseline">
+              <th scope="row" className="py-1.5 pr-4 text-left text-body font-normal text-foreground">
+                <span className="block">Escrow balance</span>
+                <span className="mt-0.5 block text-caption text-foreground-2">{yearToDate.escrowNote}</span>
+              </th>
+              <td className="py-1.5 text-right text-body whitespace-nowrap" data-testid="escrow-balance">
+                <Money cents={yearToDate.escrowCents} tone="plain" />
+              </td>
+            </tr>
+          </Group>
+        ) : null}
       </table>
     </section>
   );

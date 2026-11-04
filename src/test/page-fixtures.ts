@@ -59,6 +59,7 @@ import type {
   SettlementRecordView,
   SettlementsView,
 } from "@/lib/settlements/views";
+import type { PaystubYear } from "@/lib/settlements/year";
 import type { FanoutTree } from "@/lib/sweep/fanout/tree";
 import type { SweepCounts } from "@/lib/sweep/run";
 import { endSweep, sweepChecklist, tickSweep } from "@/lib/sweep/checklist";
@@ -1305,6 +1306,11 @@ const leg = (n: number, kind: SettlementRecordView["legs"][number]["kind"], stat
   createdAt: "2026-10-27T15:00:00.000Z",
   ...over,
 });
+
+export const PAYSTUB_YEAR: PaystubYear = {
+  yearToDate: { year: 2026, paidCents: 1_842_500, stubs: 9, zone: "America/Chicago" },
+  escrow: { balanceCents: 135_000, asOf: "after_this_paystub" },
+};
 
 export const SETTLEMENT_RECORD: SettlementRecordView = {
   settlement: {

@@ -490,6 +490,10 @@ vi.mock("@/lib/data/driver-insights", async (importOriginal) => ({
   readDriverInsightInput: async () => get("driverInsightInput"),
   readCardedDrivers: async () => new Set(get<string[]>("cardedDrivers")),
 }));
+vi.mock("@/lib/settlements/year-page", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("@/lib/settlements/year-page")>()),
+  readPaystubYearForPage: async () => get("paystubYear"),
+}));
 vi.mock("@/lib/settlements/views", async (importOriginal) => ({
   ...(await importOriginal<typeof import("@/lib/settlements/views")>()),
   readSettlementsView: async () => get("settlementsView"),
@@ -634,6 +638,7 @@ function defaults(): Record<string, unknown> {
     settlementRecord: fx.SETTLEMENT_RECORD,
     driverRecord: fx.DRIVER_RECORD,
     batchRecord: fx.BATCH_RECORD,
+    paystubYear: fx.PAYSTUB_YEAR,
     paystubAsk: null,
     reviewQueue: fx.REVIEW_QUEUE,
     invoiceReview: fx.INVOICE_REVIEW,
