@@ -187,6 +187,8 @@ const KEPT_OFF = [
   // Read only, but it changes where sign-in lands and adds a panel on Home: the owner turns it on in
   // its own PR.
   "signInTour.enabled",
+  // Read only, but it adds two pages and a menu item: the owner turns it on in its own PR.
+  "journey.enabled",
 ] as const;
 
 // The on/off switches in flags.ts, by path: every top-level boolean and every boolean inside a
@@ -436,6 +438,12 @@ describe("flags", () => {
     expect(LOCAL_OFF_ONLY as readonly string[]).toContain("activityFeed.enabled");
   });
 
+  it("ships the load journey off, the page refreshing every 5 seconds and the board every 10, off for the local demo run", () => {
+    expect(flags.journey).toEqual({ enabled: false, pollSeconds: 5, boardPollSeconds: 10 });
+    // Listed ahead of its release, so the demo-path run keeps it off once it ships on.
+    expect(LOCAL_OFF_ONLY as readonly string[]).toContain("journey.enabled");
+  });
+
   it("ships the sign-in walkthrough off, off for the local demo run", () => {
     expect(flags.signInTour).toEqual({ enabled: false });
     // Listed ahead of its release, so the demo-path run keeps it off once it ships on.
@@ -645,6 +653,7 @@ describe("flags", () => {
       "payWeekRoll.enabled",
       "autopilotRules.enabled",
       "activityFeed.enabled",
+      "journey.enabled",
       "signInTour.enabled",
       "driverPaperwork.enabled",
       "simpleShape.enabled",

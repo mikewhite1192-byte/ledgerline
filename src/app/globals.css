@@ -226,6 +226,15 @@
   --animate-rise: pc-rise 180ms ease-out;
   --animate-sheet-in: pc-sheet-in 200ms ease-out;
   --animate-sheet-in-right: pc-sheet-in-right 200ms ease-out;
+  /* The load journey: a step that just turned done fills its dot, grows the line below it and
+     glows once; a new line slides into the top of the road board's stream. Each runs once, on a
+     change between renders, never on every refresh. */
+  --animate-step-fill: pc-step-fill 450ms ease-out;
+  --animate-step-line: pc-step-line 700ms ease-out both;
+  --animate-step-glow: pc-step-glow 1.5s ease-out;
+  --animate-step-now: pc-step-now 2s ease-in-out infinite;
+  --animate-reveal: pc-rise 260ms ease-out both;
+  --animate-slide-in: pc-slide-in 420ms ease-out both;
 }
 
 @layer base {
@@ -295,6 +304,10 @@
       transition-duration: 0.01ms !important;
       scroll-behavior: auto !important;
     }
+    /* A staggered reveal waits on its delay even at a near-zero duration: start it at once. */
+    [data-motion] {
+      animation-delay: 0s !important;
+    }
   }
 }
 
@@ -362,5 +375,64 @@
   }
   to {
     transform: translateX(0);
+  }
+}
+
+@keyframes pc-step-fill {
+  from {
+    transform: scale(0.4);
+    opacity: 0.4;
+  }
+  60% {
+    transform: scale(1.2);
+    opacity: 1;
+  }
+  to {
+    transform: scale(1);
+  }
+}
+
+@keyframes pc-step-line {
+  from {
+    transform: scaleY(0);
+  }
+  to {
+    transform: scaleY(1);
+  }
+}
+
+@keyframes pc-step-glow {
+  from {
+    box-shadow: 0 0 0 0 transparent;
+    background-color: transparent;
+  }
+  20% {
+    box-shadow: 0 0 0 4px var(--success-soft);
+    background-color: var(--success-soft);
+  }
+  to {
+    box-shadow: 0 0 0 0 transparent;
+    background-color: transparent;
+  }
+}
+
+@keyframes pc-step-now {
+  0%,
+  100% {
+    box-shadow: 0 0 0 0 var(--info-soft);
+  }
+  50% {
+    box-shadow: 0 0 0 6px var(--info-soft);
+  }
+}
+
+@keyframes pc-slide-in {
+  from {
+    opacity: 0;
+    transform: translateY(-10px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
   }
 }
