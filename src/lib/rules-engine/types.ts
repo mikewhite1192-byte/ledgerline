@@ -219,8 +219,8 @@ export type DriverRecord = {
   moneyArmed: boolean;
 };
 
-// One row per state a load crossed, whole miles. For every load the miles sum to
-// loadedMiles + emptyMiles (assertStateMiles).
+// One row per state a load crossed, whole miles. For every load with a split recorded the miles
+// sum to loadedMiles + emptyMiles (assertStateMiles); a load may have none yet.
 export type StateMilesRecord = { id: string; state: string; miles: number };
 
 export type AccessorialRecord = {

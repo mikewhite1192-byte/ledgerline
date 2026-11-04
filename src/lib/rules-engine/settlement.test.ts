@@ -846,6 +846,13 @@ describe("settleDriver: the advance recovery note", () => {
 });
 
 describe("settleDriver: weeks that cross the clock change", () => {
+  it("pays a load with no state split recorded yet, as a new load has, the same as one with a split", () => {
+    const split = settleDriver(input({ loads: [load({ id: "a" })] }));
+    const none = settleDriver(input({ loads: [load({ id: "a", stateMiles: [] })] }));
+    expect(none.netCents).toBe(split.netCents);
+    expect(none.lines).toEqual(split.lines);
+  });
+
   it("puts loads delivered either side of Blue Ridge's Sunday midnight in the right week", () => {
     // 23:30 on Sunday Nov 1 in New York (after fall back) and 00:30 on Monday Nov 2.
     const sunday = localDateOf("2026-11-02T04:30:00Z", "America/New_York");
