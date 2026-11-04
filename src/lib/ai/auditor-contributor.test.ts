@@ -155,7 +155,7 @@ describe("the auditor in Contributor mode", () => {
     const body = JSON.parse(String(fetchFn.mock.calls[0][1]?.body));
     expect(body.model).toBe("muse-wonder-1.0");
     expect(body.max_output_tokens).toBe(2_400);
-    expect(body.reasoning).toEqual({ effort: "high" });
+    expect(body.reasoning).toEqual({ effort: "medium" });
     expect(body.text.format).toMatchObject({ type: "json_schema", name: "audit_verdict", strict: true });
   });
 
