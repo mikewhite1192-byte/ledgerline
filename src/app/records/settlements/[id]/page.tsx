@@ -23,6 +23,7 @@ import { codeToWords } from "@/lib/format/labels";
 import { formatCents } from "@/lib/format/money";
 import { LEG_LABELS, legFailureLabel, paidBeforeApp, settlementOutcome } from "@/lib/settlements/labels";
 import { readSettlementRecord, type SettlementRecordView } from "@/lib/settlements/views";
+import { readPaystubYearForPage } from "@/lib/settlements/year-page";
 import { weekEnding } from "@/components/agent/page-focus";
 import { readRecordPage } from "../../read-record";
 
@@ -61,6 +62,8 @@ export default async function SettlementRecord({ params }: { params: Promise<{ i
   }
   const { view, cards } = page.record;
   const s = view.settlement;
+  // Its own read after the stub's: a fault leaves the year to date out, never the paystub.
+  const year = await readPaystubYearForPage(s.id);
   const tz = page.shell.timezone;
   const payout = view.latest.settlement_payout;
   // Paid outside the app (seeded history): nothing was sent from here, so no books line and no legs.
@@ -128,7 +131,7 @@ export default async function SettlementRecord({ params }: { params: Promise<{ i
         netCents={s.netCents}
         carryForwardCents={s.carryForwardCents}
         exceptions={(view.proposal?.exceptions ?? []).map((e) => ({ ...e, sources: [] }))}
-        yearToDate={yearToDateOf(view)}
+        yearToDate={year ? yearToDateOf(year) : undefined}
       />
       <p className="text-small">
         <Link href={ask} className="text-link underline-offset-4 hover:underline">

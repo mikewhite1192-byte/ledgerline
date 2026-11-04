@@ -16,13 +16,11 @@ import {
 } from "./list";
 import { readStoredLines, readStoredSettlement, type StoredSettlement } from "./stored";
 import { readStubSent, type StubSent } from "./stub-sent";
-import { readPaystubYear, type PaystubYear } from "./year";
 
 // The settlement screens' reads, each inside the request's tenant transaction. Every value is
 // read from the stored rows; nothing here computes pay.
 
 export type { PeriodOption, SettlementListRow } from "./list";
-export { readPaystubYear, type PaystubYear } from "./year";
 
 export type SettlementsView = {
   periods: PeriodOption[];
@@ -119,7 +117,7 @@ export type SettlementRecordView = {
   parkedLabel: string | null;
   // A staff member's record that they sent the paid stub, named by role; null until then.
   stubSent: StubSent | null;
-} & PaystubYear;
+};
 
 export async function readSettlementRecord(q: Queryable, id: string): Promise<SettlementRecordView | null> {
   const settlement = await readStoredSettlement(q, id, false);
@@ -171,9 +169,6 @@ export async function readSettlementRecord(q: Queryable, id: string): Promise<Se
     MoneyActionState | null
   >;
   const categories = (p ? categoriesOf(p.exceptions) : null) ?? [];
-  // The settlement, its week and its driver were read above, so a missing row here is a fault.
-  const year = await readPaystubYear(q, id);
-  if (!year) throw new Error("the paystub's year to date could not be read");
   return {
     settlement,
     lines: await readStoredLines(q, id),
@@ -197,7 +192,6 @@ export async function readSettlementRecord(q: Queryable, id: string): Promise<Se
     latest,
     parkedLabel: settlement.parkedReason ? parkLabel(settlement.parkedReason) : null,
     stubSent: settlement.stubSentAt !== null ? await readStubSent(q, id) : null,
-    ...year,
   };
 }
 

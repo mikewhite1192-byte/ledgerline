@@ -19,9 +19,10 @@ import { readPaystubYear } from "./year";
 
 // The paystub's year to date and escrow balance against a real database seeded with a demo carrier
 // under its own slug, as the app's role. The hero's year to date is the sum of their seeded paid
-// nets whose paid time falls in the year in the carrier's own zone; a draft's escrow balance is the
-// driver's balance plus its escrow line; a paid stub's is the balance its booking stored. Another
-// carrier reads nothing. The clock is fixed. A moved paid time is put back in finally; both tenants
+// nets whose paid time falls in the year in the carrier's own zone (the year paid, or for a draft the
+// year its week ends), on a paid stub only those paid up to and including it; a draft's escrow
+// balance is the driver's balance plus its escrow line; a paid stub's is the balance its booking
+// stored. Another carrier reads nothing. The clock is fixed. A moved paid time is put back in finally; both tenants
 // made here are removed after.
 
 const NOW = Date.UTC(2026, 10, 2, 16, 0, 0);
@@ -133,19 +134,57 @@ describe("the paystub's year to date and escrow balance against a seeded databas
     const line = Number(escrowLines[0].amount);
     expect(line).toBeLessThan(0);
 
-    const view = await app.withTenant(T, (q) => readSettlementRecord(q, draft.id));
+    const view = await app.withTenant(T, (q) => readPaystubYear(q, draft.id));
     expect(view?.yearToDate).toEqual({ year: YEAR, paidCents: EXPECTED_YTD, stubs: inYear.length, zone: ZONE });
     expect(view?.escrow).toEqual({ balanceCents: Number(balance) + Math.abs(line), asOf: "after_this_paystub" });
   });
 
   it("shows a paid stub the balance its booking stored, and counts the stub in the year it was paid", async () => {
     const last = HERO_PAID[HERO_PAID.length - 1];
-    const view = await app.withTenant(T, (q) => readSettlementRecord(q, last.id));
+    const view = await app.withTenant(T, (q) => readPaystubYear(q, last.id));
     expect(view?.escrow).toEqual({ balanceCents: last.escrow_closing_cents, asOf: "paid" });
-    const year = Number(view!.period.end.slice(0, 4));
+    const year = Number(localDateOf(last.paid_at!, ZONE).slice(0, 4));
+    expect(view?.yearToDate.year).toBe(year);
     const paidThatYear = HERO_PAID.filter((s) => Number(localDateOf(s.paid_at!, ZONE).slice(0, 4)) === year);
     expect(paidThatYear.map((s) => s.id)).toContain(last.id);
     expect(view?.yearToDate.paidCents).toBe(paidThatYear.reduce((n, s) => n + s.net_cents, 0));
+    expect(view?.yearToDate.stubs).toBe(paidThatYear.length);
+  });
+
+  it("shows an older paid stub only what was paid up to and including it", async () => {
+    // A stub paid in YEAR with at least one paid after it in YEAR.
+    expect(inYear.length).toBeGreaterThan(1);
+    const older = inYear[Math.floor((inYear.length - 1) / 2)];
+    const upTo = inYear.filter((s) => s.paid_at! <= older.paid_at!);
+    expect(upTo.length).toBeLessThan(inYear.length);
+    const view = await app.withTenant(T, (q) => readPaystubYear(q, older.id));
+    expect(view?.yearToDate).toEqual({
+      year: YEAR,
+      paidCents: upTo.reduce((n, s) => n + s.net_cents, 0),
+      stubs: upTo.length,
+      zone: ZONE,
+    });
+    expect(view!.yearToDate.paidCents).toBeLessThan(EXPECTED_YTD);
+  });
+
+  it("labels a paid stub with the year it was paid and counts it in that year, not the year its week ends", async () => {
+    const last = HERO_PAID[HERO_PAID.length - 1];
+    // The seeded last stub is paid in YEAR; moved into the next local year, its week still ends in YEAR.
+    expect(Number(localDateOf(last.paid_at!, ZONE).slice(0, 4))).toBe(YEAR);
+    try {
+      await write("UPDATE settlements SET paid_at = CAST($2 AS timestamptz) WHERE tenant_id = current_tenant_id() AND id = CAST($1 AS uuid)", [
+        last.id,
+        instantAt(`${YEAR + 1}-01-01`, 0, 30, ZONE),
+      ]);
+      const view = await app.withTenant(T, (q) => readPaystubYear(q, last.id));
+      expect(view?.yearToDate).toEqual({ year: YEAR + 1, paidCents: last.net_cents, stubs: 1, zone: ZONE });
+    } finally {
+      await write("UPDATE settlements SET paid_at = CAST($2 AS timestamptz) WHERE tenant_id = current_tenant_id() AND id = CAST($1 AS uuid)", [
+        last.id,
+        last.paid_at,
+      ]);
+    }
+    expect((await app.withTenant(T, (q) => readPaystubYear(q, last.id)))?.yearToDate.year).toBe(YEAR);
   });
 
   it("reads the paid time in the carrier's zone, not in UTC", async () => {

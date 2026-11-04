@@ -55,11 +55,11 @@ import { exceptionLabel, parkLabel } from "@/lib/settlements/labels";
 import type {
   BatchRecordView,
   DriverRecordView,
-  PaystubYear,
   SettlementListRow,
   SettlementRecordView,
   SettlementsView,
 } from "@/lib/settlements/views";
+import type { PaystubYear } from "@/lib/settlements/year";
 import type { FanoutTree } from "@/lib/sweep/fanout/tree";
 import type { SweepCounts } from "@/lib/sweep/run";
 import { endSweep, sweepChecklist, tickSweep } from "@/lib/sweep/checklist";
@@ -1345,7 +1345,6 @@ export const SETTLEMENT_RECORD: SettlementRecordView = {
   latest: { settlement_payout: "unknown", settlement_bill: "reserved", settlement_bill_payment: null },
   parkedLabel: null,
   stubSent: null,
-  ...PAYSTUB_YEAR,
 };
 
 export const DRIVER_RECORD: DriverRecordView = {

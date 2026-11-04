@@ -103,17 +103,22 @@ export function planDb(plan: CarrierPlan, extra?: Handler): FakeDb {
       const driver = s && (tables.drivers ?? []).find((d) => d.id === s.driver_id);
       if (!s || !period || !driver) return [];
       const zone = plan.carrier.timezone;
-      const year = String(period.period_end).slice(0, 4);
+      // One year for label and sum: the year paid in the zone, or the year the week ends while unpaid.
+      const paidAt = s.paid_at === null || s.paid_at === undefined ? null : String(s.paid_at);
+      const year = (paidAt === null ? String(period.period_end) : localDateOf(paidAt, zone)).slice(0, 4);
       const paid = (tables.settlements ?? []).filter(
         (r) =>
           r.driver_id === s.driver_id &&
           r.status === "paid" &&
           r.paid_at !== null &&
+          r.paid_at !== undefined &&
+          (paidAt === null || Date.parse(String(r.paid_at)) <= Date.parse(paidAt)) &&
           localDateOf(String(r.paid_at), zone).slice(0, 4) === year,
       );
+      // Only withholding lines (negative amounts) count.
       const withheld = (tables.settlement_lines ?? [])
-        .filter((l) => l.settlement_id === s.id && l.kind === "escrow")
-        .reduce((n, l) => n + Math.abs(Number(l.amount_cents)), 0);
+        .filter((l) => l.settlement_id === s.id && l.kind === "escrow" && Number(l.amount_cents) < 0)
+        .reduce((n, l) => n - Number(l.amount_cents), 0);
       return [
         {
           status: s.status,

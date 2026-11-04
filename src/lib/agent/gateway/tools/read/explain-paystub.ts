@@ -59,8 +59,9 @@ export const explainPaystub = defineTool({
     "on a paid stub means no send is recorded yet. You cannot send a stub: a staff member sends it " +
     "and records it with the Mark stub sent button on the paystub's page. stub is null unless paid, " +
     "and absent when stub send records are off. On a stored paystub, ytdPaidCents is what the " +
-    "driver was paid in the calendar year this week ends in, and escrowBalanceCents their escrow " +
-    "balance as of this stub (escrowAsOf paid) or once it is paid (after_this_paystub). For why " +
+    "driver was paid in the stub's calendar year (the year it was paid, or the year this week ends in " +
+    "while unpaid), on a paid stub only up to and including it, and escrowBalanceCents their escrow " +
+    "balance as of this stub (escrowAsOf paid) or if it is paid now (after_this_paystub). For why " +
     "a driver's pay is short this week, send " +
     "it with the week paid next's periodId (the state summary names it) and the driverId from " +
     "find_driver, in the same response as get_settlements and run_checks: it previews a week " +

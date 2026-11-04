@@ -53,7 +53,7 @@ export function yearToDateOf(y: {
     label: `Paid in ${year}, ${count}`,
     paidCents,
     escrowCents: y.escrow.balanceCents,
-    escrowNote: y.escrow.asOf === "paid" ? "When this paystub was paid." : "After this paystub is paid.",
+    escrowNote: y.escrow.asOf === "paid" ? "When this paystub was paid." : "If this paystub is paid now.",
   };
 }
 
@@ -144,9 +144,10 @@ function LineLabel({ line, hrefFor }: { line: PaystubLine; hrefFor: HrefFor }) {
   );
 }
 
-function Group({ title, children }: { title: string; children: ReactNode }) {
+// shown keeps the group's amounts in plain view under hide amounts (the stub a person approves).
+function Group({ title, shown, children }: { title: string; shown?: boolean; children: ReactNode }) {
   return (
-    <tbody>
+    <tbody data-amounts={shown ? "shown" : undefined}>
       <tr>
         <th scope="rowgroup" colSpan={2} className="pt-5 pb-1.5 text-left text-small font-semibold text-foreground-2">
           {title}
@@ -194,9 +195,9 @@ export function Paystub({
   );
 
   return (
-    // A paystub is approved as a whole, so its amounts never hide.
+    // A paystub is approved as a whole, so the stub's own amounts never hide; the year to date is
+    // not part of what is approved, so it blurs like any other amount.
     <section
-      data-amounts="shown"
       aria-label={`Paystub for ${driver.name}, ${formatPeriod(period.start, period.end)}`}
       className={cn("rounded-lg border border-border bg-card px-4 py-4 text-card-foreground sm:px-6 sm:py-5", className)}
     >
@@ -257,7 +258,7 @@ export function Paystub({
           <col />
           <col className="w-[8.5rem]" />
         </colgroup>
-        <Group title="Earnings">
+        <Group title="Earnings" shown>
           {earnings.map(row)}
           <tr className="align-baseline">
             <th scope="row" className="pt-2 pb-1 pr-4 text-left text-body font-semibold text-foreground">
@@ -268,7 +269,7 @@ export function Paystub({
             </td>
           </tr>
         </Group>
-        <Group title="Deductions">
+        <Group title="Deductions" shown>
           {deductions.map(row)}
           <tr className="align-baseline">
             <th scope="row" className="pt-2 pb-1 pr-4 text-left text-body font-semibold text-foreground">
@@ -279,7 +280,7 @@ export function Paystub({
             </td>
           </tr>
         </Group>
-        <tbody>
+        <tbody data-amounts="shown">
           {carryForwardCents !== 0 ? (
             // The engine carries the shortfall as a positive add-back, so "+" sums down the rail;
             // the caption says where it comes back from.

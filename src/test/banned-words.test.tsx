@@ -490,13 +490,16 @@ vi.mock("@/lib/data/driver-insights", async (importOriginal) => ({
   readDriverInsightInput: async () => get("driverInsightInput"),
   readCardedDrivers: async () => new Set(get<string[]>("cardedDrivers")),
 }));
+vi.mock("@/lib/settlements/year-page", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("@/lib/settlements/year-page")>()),
+  readPaystubYearForPage: async () => get("paystubYear"),
+}));
 vi.mock("@/lib/settlements/views", async (importOriginal) => ({
   ...(await importOriginal<typeof import("@/lib/settlements/views")>()),
   readSettlementsView: async () => get("settlementsView"),
   readSettlementRecord: async () => get("settlementRecord"),
   readDriverRecord: async () => get("driverRecord"),
   readBatchRecord: async () => get("batchRecord"),
-  readPaystubYear: async () => get("paystubYear"),
 }));
 // Settings > Autopilot's read: the carrier's rules, each kind's picture and the pause.
 vi.mock("@/lib/autopilot/rules-admin", async (importOriginal) => ({
