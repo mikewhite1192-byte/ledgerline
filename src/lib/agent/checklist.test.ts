@@ -136,7 +136,7 @@ describe("an answer that says it could not check part of the work", () => {
     expect(answerLeftWork("Two paystubs are short. I could not check why.")).toBe(true);
     expect(answerLeftWork("The week has no paystubs, and I never located her driver record.")).toBe(true);
     expect(answerLeftWork("I couldn\u2019t confirm the fuel card loads.")).toBe(true);
-    expect(answerLeftWork("i was not able to read the rate confirmation.")).toBe(true);
+    expect(answerLeftWork("i was not able to verify the rate confirmation.")).toBe(true);
   });
 
   it("never counts a finished answer, an outside party's words or the withheld figure note", () => {
@@ -144,5 +144,8 @@ describe("an answer that says it could not check part of the work", () => {
     expect(answerLeftWork("The bank could not cover Friday, so factoring two invoices closes the gap.")).toBe(false);
     expect(answerLeftWork(`Rosa is owed ${WITHHELD}.`)).toBe(false);
     expect(answerLeftWork("I could not propose that.")).toBe(false);
+    expect(answerLeftWork("Everything checks out; I did not look further because all 4 are clean.")).toBe(false);
+    expect(answerLeftWork("The two drivers I could not reach are listed below.")).toBe(false);
+    expect(answerLeftWork("I did not read any problem in the week.")).toBe(false);
   });
 });

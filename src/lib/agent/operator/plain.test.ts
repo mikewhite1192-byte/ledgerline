@@ -49,6 +49,7 @@ describe("plainAnswer", () => {
     expect(plainAnswer("See the report shown above. The table is above.")).toBe("See the report shown below. The table is below.");
     expect(plainAnswer("The above table has 3 rows.")).toBe("The table below has 3 rows.");
     expect(plainAnswer("Two advances are above the limit.")).toBe("Two advances are above the limit.");
+    expect(plainAnswer("Drivers in the table above $2,000 gross.")).toBe("Drivers in the table above $2,000 gross.");
     expect(plainAnswer("Run `table above` then wait.")).toBe("Run `table above` then wait.");
   });
 

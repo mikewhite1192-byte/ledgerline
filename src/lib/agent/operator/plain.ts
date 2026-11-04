@@ -24,7 +24,8 @@ const KEPT = /(`[^`]*`|https?:\/\/[^\s`]+)/;
 // apostrophe.
 const THIS_WEEKS = /\b([Tt]his) weeks\b(?!['\u2019])/g;
 // A table or report said to be above: "the table above", "the report shown above", "the above table".
-const TABLE_ABOVE = /\b(tables?|report)((?:\s+(?:is|are|shown|listed))?)\s+above\b/gi;
+// "Above" before a figure is a comparison ("the table above $2,000"), never a place, so it stays.
+const TABLE_ABOVE = /\b(tables?|report)((?:\s+(?:is|are|shown|listed))?)\s+above\b(?!\s*[$\d])/gi;
 const ABOVE_TABLE = /\b([Tt]he) above (tables?|report)\b/g;
 
 function plainWords(part: string): string {

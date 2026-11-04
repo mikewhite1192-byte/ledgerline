@@ -107,8 +107,10 @@ export function finalChecklist(list: Checklist, ended: "done" | "partial" | "fai
 // An answer that says in its own words it could not check part of the work ("I could not check
 // why", "I never located her driver record"). Beside one, nothing still in hand reads as done. The
 // withheld figure note is the mask's words, not the answer's, so it never counts.
+// "Read", "look" and "reach" are left out: finished answers use them too ("the drivers I could not
+// reach are listed below").
 const LEFT_UNCHECKED =
-  /\bI (?:could not|couldn['\u2019]t|cannot|can['\u2019]t|was not able to|wasn['\u2019]t able to|was unable to|am unable to|did not|didn['\u2019]t|never) (?:check|confirm|verif|read|locat|reach|look|get to|got to)/i;
+  /\bI (?:could not|couldn['\u2019]t|cannot|can['\u2019]t|was not able to|wasn['\u2019]t able to|was unable to|am unable to|did not|didn['\u2019]t|never) (?:check|confirm|verif|locat|get to|got to)/i;
 
 export function answerLeftWork(text: string): boolean {
   return LEFT_UNCHECKED.test(text.split(WITHHELD).join(" "));
