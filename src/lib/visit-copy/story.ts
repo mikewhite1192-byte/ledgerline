@@ -10,6 +10,7 @@ import { isUuid } from "../uuid";
 // the week's mistakes and draft the fixes (Home carries the run on, src/components/sweep/carry-on.tsx).
 // Only the start happens here: no slice runs while the visitor waits. The run drafts fixes only;
 // nothing here approves, pays or writes a money row, and every write is in the copy's own tenant.
+// The day count alone reads the demo carrier: its own visit rows are where copy_ready_at lives.
 //
 // One run per copy: the run's id is the copy's own visit row id, so a second start for the same
 // copy replays the first run (startSweep returns it, existing) and never opens another, whatever

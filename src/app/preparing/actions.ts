@@ -73,10 +73,24 @@ export async function buildCopyAction(): Promise<BuildState> {
       return { state: "failed" };
     }
     console.info("visit copy: ready");
-    await startCopySweep(db, visit);
+    await startWithin(startCopySweep(db, visit), STORY_START_MS);
     return { state: "ready" };
   } catch (err) {
     console.error(`visit copy: a slice failed (${err instanceof Error ? err.name : "non-error"})`);
     return { state: "failed" };
   }
+}
+
+// The copy's pay check start may take this long before the visit is told it is ready anyway; a
+// start still going on is left to finish or fail on its own, and Home reads back what it made.
+const STORY_START_MS = 5_000;
+
+async function startWithin(start: Promise<unknown>, ms: number): Promise<void> {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const late = new Promise<"late">((resolve) => {
+    timer = setTimeout(() => resolve("late"), ms);
+  });
+  const won = await Promise.race([start.then(() => "done" as const, () => "done" as const), late]);
+  clearTimeout(timer);
+  if (won === "late") console.info("visit copy: sweep skipped timed_out");
 }

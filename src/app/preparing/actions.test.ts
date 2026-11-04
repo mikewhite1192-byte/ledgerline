@@ -29,6 +29,7 @@ const state = vi.hoisted(() => ({
   others: 0 as unknown,
   start: null as unknown,
   startThrows: false,
+  startHangs: false,
   starts: [] as { session: unknown; input: unknown }[],
   counts: [] as { tenant: string; params: unknown[] }[],
 }));
@@ -57,6 +58,7 @@ vi.mock("@/lib/sweep/run", () => ({
   startSweep: async (session: unknown, input: unknown) => {
     state.starts.push({ session, input });
     if (state.startThrows) throw new Error("boom");
+    if (state.startHangs) return new Promise(() => {});
     return state.start;
   },
 }));
@@ -76,7 +78,6 @@ vi.mock("@/lib/db", async (importOriginal) => ({
   }),
 }));
 
-
 const saved = { visitCopies: { ...flags.visitCopies }, sweepEnabled: flags.sweepEnabled };
 
 beforeEach(() => {
@@ -87,6 +88,7 @@ beforeEach(() => {
     others: 0,
     start: { ok: true, runId: COPY_VISIT, existing: false },
     startThrows: false,
+  startHangs: false,
     starts: [],
     counts: [],
   });
@@ -171,6 +173,19 @@ describe("buildCopyAction's pay check", () => {
     expect(await buildCopyAction()).toEqual({ state: "ready" });
     expect(console.info).toHaveBeenCalledWith("visit copy: sweep skipped failed (Error)");
     expect(state.starts).toHaveLength(2);
+  });
+
+  it("is ready after five seconds when the start has not answered", async () => {
+    vi.useFakeTimers();
+    try {
+      state.startHangs = true;
+      const answer = buildCopyAction();
+      await vi.advanceTimersByTimeAsync(5_000);
+      expect(await answer).toEqual({ state: "ready" });
+      expect(console.info).toHaveBeenCalledWith("visit copy: sweep skipped timed_out");
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it("says a replayed start kept the copy's one run", async () => {
