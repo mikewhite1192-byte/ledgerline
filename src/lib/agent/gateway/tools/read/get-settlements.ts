@@ -5,6 +5,13 @@ import { defineTool, type GatewayRef } from "../../types";
 import { idField } from "../../validate";
 import { OPERATOR } from "../shared";
 
+// What to read next on an open week with pay and no paystubs yet, as the result says it.
+export const READ_NEXT =
+  "No paystubs yet does not mean no problems or no pay: run_checks with this periodId lists " +
+  "this week's pay problems now, as the pay check lists them, and explain_paystub with this " +
+  "periodId and a driver's id (from run_checks, or from get_settlements for a week that has paystubs) previews that driver's pay for " +
+  "this week, computed by the rules engine.";
+
 export const getSettlements = defineTool({
   name: "get_settlements",
   description:
@@ -13,13 +20,15 @@ export const getSettlements = defineTool({
     "integer cents, status, the exception categories on its approval card, the auditor's " +
     "verdict, whether it is clean for Approve all clean, and parkedReason when it no longer " +
     "matches its records. noPaystubsYet true means only that this open week has no paystubs " +
-    "yet. With runTheWeek true it is the week paid next and has pay: say plainly that pressing " +
+    "yet, never no problems or no pay: for who has a problem call run_checks with this " +
+    "periodId, and for one driver's pay call explain_paystub with this periodId and the " +
+    "driver's id (from run_checks, or from get_settlements for a week that has paystubs), then answer from what they find. With runTheWeek true it is the week paid next and has pay: say " +
+    "plainly that pressing " +
     "Run the week on the Pay page runs it and makes paystubs for the drivers with " +
     "payable work; never say it was not run. With noPayYet true it has no pay yet: say so and " +
     "never point at Run the week. With waitsForWeekPaidNext true its pay runs after the week " +
-    "paid next. weekPaidNext, when given, names the week paid next: say its dates. To preview " +
-    "one driver, call explain_paystub with this periodId and the driver's id. This only reads; " +
-    "explain_paystub explains one paystub line by line.",
+    "paid next. weekPaidNext, when given, names the week paid next: say its dates. This only " +
+    "reads; explain_paystub explains one paystub line by line.",
   tier: "read",
   roles: OPERATOR,
   label: "Reading this week's paystubs",
@@ -57,11 +66,14 @@ export const getSettlements = defineTool({
       const hasPay = weeks.holdsPay(period);
       const next =
         due !== null && !isDue ? { weekPaidNext: { periodId: due.id, start: due.period_start, end: due.period_end } } : {};
+      // A week with pay and no paystubs still has problems to find and pay to preview: readNext
+      // names the reads that answer from the rules engine now, so an answer never stops at no
+      // paystubs. A week with no pay has nothing to preview, so it carries none.
       empty =
         isDue && hasPay
-          ? { noPaystubsYet: true, runTheWeek: true }
+          ? { noPaystubsYet: true, runTheWeek: true, readNext: READ_NEXT }
           : hasPay
-            ? { noPaystubsYet: true, waitsForWeekPaidNext: true, ...next }
+            ? { noPaystubsYet: true, waitsForWeekPaidNext: true, readNext: READ_NEXT, ...next }
             : { noPaystubsYet: true, noPayYet: true, ...next };
     }
     return {
