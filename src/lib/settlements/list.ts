@@ -5,6 +5,41 @@ import { parkLabel } from "./labels";
 // The pay run's list of paystubs for one week, shared by the settlements screen and the agent's
 // get_settlements tool. Reads only: nothing here reaches a money module.
 
+// Every driver with something in the period, as "Run the week" picks the drivers it drafts for: a
+// delivered load, a day worked, a pay item dated in it, an advance still owed, or a draft already
+// there. One statement, so the run and get_settlements' list of an open week's drivers read the
+// same drivers. $1 and $2 are the week's first and last day, $3 its id.
+export const PAY_RUN_DRIVERS_SQL =
+  `SELECT d.id, d.code, d.first_name, d.last_name FROM drivers d
+      WHERE d.tenant_id = current_tenant_id() AND (
+        EXISTS (SELECT 1 FROM loads l
+                 WHERE l.tenant_id = d.tenant_id AND l.driver_id = d.id
+                   AND l.status IN ('delivered', 'invoiced')
+                   AND l.delivered_on BETWEEN CAST($1 AS date) AND CAST($2 AS date))
+        OR EXISTS (SELECT 1 FROM driver_days x
+                    WHERE x.tenant_id = d.tenant_id AND x.driver_id = d.id
+                      AND x.day BETWEEN CAST($1 AS date) AND CAST($2 AS date))
+        OR EXISTS (SELECT 1 FROM pay_items i
+                    WHERE i.tenant_id = d.tenant_id AND i.driver_id = d.id
+                      AND i.item_date BETWEEN CAST($1 AS date) AND CAST($2 AS date))
+        OR EXISTS (SELECT 1 FROM advances a
+                    WHERE a.tenant_id = d.tenant_id AND a.driver_id = d.id
+                      AND a.status IN ('approved', 'paid')
+                      AND a.recovered_cents < a.amount_cents + a.fee_cents)
+        OR EXISTS (SELECT 1 FROM settlements s
+                    WHERE s.tenant_id = d.tenant_id AND s.driver_id = d.id
+                      AND s.period_id = CAST($3 AS uuid)))
+      ORDER BY d.code, d.id`;
+
+export type PayRunDriver = { id: string; code: string; first_name: string; last_name: string };
+
+export async function readPayRunDrivers(
+  q: Queryable,
+  period: { id: string; start: string; end: string },
+): Promise<PayRunDriver[]> {
+  return q.query<PayRunDriver>(PAY_RUN_DRIVERS_SQL, [period.start, period.end, period.id]);
+}
+
 export type PeriodOption = { id: string; start: string; end: string; status: string };
 
 export type SettlementListRow = {

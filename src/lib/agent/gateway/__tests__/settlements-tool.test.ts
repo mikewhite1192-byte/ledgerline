@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import type { CarrierPlan } from "../../../seed/plan";
-import { getSettlements, READ_NEXT } from "../tools/read/get-settlements";
+import { MAX_RESULT_CHARS } from "../index";
+import { getSettlements, PAYABLE_DRIVERS_CAP, READ_NEXT } from "../tools/read/get-settlements";
 import { context, TENANT } from "./fake-db";
 import { blueRidgePlan, planDb } from "./plan-db";
 
@@ -109,6 +110,34 @@ describe("get_settlements", () => {
     expect(out).not.toHaveProperty("notRunYet");
   });
 
+  // Production, Nov 4: "Why is Monique's pay short this week?" before Run the week had no way to
+  // her driver id, so it spent its clock on two reports. The empty week lists the drivers the run
+  // would draft for, by the run's own statement, with the ids explain_paystub takes.
+  it("lists an empty week's payable drivers with their ids and names, as the run would draft them", async () => {
+    const out = (await run({}, rolled)).result as Out & {
+      payableDrivers: { driverId: string; driverCode: string; driverName: string }[];
+      payableDriversTotal: number;
+    };
+    expect(out.payableDrivers.length).toBeGreaterThan(0);
+    expect(out.payableDriversTotal).toBe(out.payableDrivers.length);
+    const monique = out.payableDrivers.find((d) => d.driverCode === "BR-D07");
+    const row = plan.rows.drivers.find((d) => d.code === "BR-D07")!;
+    expect(monique).toEqual({ driverId: row.id, driverCode: "BR-D07", driverName: `${row.first_name} ${row.last_name}` });
+    // Each one is a driver with work in the week or an advance still owed, in code order.
+    const codes = out.payableDrivers.map((d) => d.driverCode);
+    expect([...codes].sort()).toEqual(codes);
+    expect(PAYABLE_DRIVERS_CAP).toBe(40);
+    expect(JSON.stringify(out).length).toBeLessThan(MAX_RESULT_CHARS);
+    expect(getSettlements.description).toContain("takes that driver's driverId from it to explain_paystub");
+    expect(READ_NEXT).toContain("takes that driver's driverId from payableDrivers here to explain_paystub");
+  });
+
+  it("lists no drivers for a week with no pay", async () => {
+    const out = (await run({ periodId: NEWER_ID }, rolled)).result as Out;
+    expect(out.noPayYet).toBe(true);
+    expect(out).not.toHaveProperty("payableDrivers");
+  });
+
   it("never says so for a week that has paystubs", async () => {
     const paid = plan.rows.settlement_periods.find((p) => p.status === "paid")!;
     const out = (await run({ periodId: paid.id })).result as Out;
@@ -117,6 +146,7 @@ describe("get_settlements", () => {
     expect(out).not.toHaveProperty("runTheWeek");
     expect(out).not.toHaveProperty("noPayYet");
     expect(out).not.toHaveProperty("readNext");
+    expect(out).not.toHaveProperty("payableDrivers");
   });
 
   it("answers no week when none is open", async () => {

@@ -182,6 +182,8 @@ export const CHECKLIST_RULE = [
   "- When the answer proposes more than one card, send every propose call in one response, beside",
   "  set_checklist, never one card per response: each card is still checked on its own, and the",
   "  answer has a short clock.",
+  "- set_checklist goes in the same response as your first reads, never alone in a response: a",
+  "  response with only the checklist reads nothing and spends the answer's clock.",
 ].join("\n");
 
 export const CHECKLIST_TOOL = "set_checklist";

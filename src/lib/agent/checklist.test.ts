@@ -167,4 +167,10 @@ describe("the checklist rule", () => {
     expect(CHECKLIST_RULE).toContain("send every propose call in one response");
     expect(CHECKLIST_RULE).toContain("never one card per response");
   });
+
+  // Production, Nov 4: "Who has a problem on this week's paystub?" sent the checklist alone first,
+  // so the pay check never fit before the answer.
+  it("sends the checklist with the first reads, never alone in a response", () => {
+    expect(CHECKLIST_RULE).toContain("set_checklist goes in the same response as your first reads, never alone in a response");
+  });
 });

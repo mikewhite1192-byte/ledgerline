@@ -29,7 +29,7 @@ import type { TenantRows } from "../../../data/rows";
 import { buildCarrierPlan, type CarrierPlan } from "../../../seed/plan";
 import { DEMO_CARRIERS } from "../../../seed/carriers";
 import { withShortFriday } from "../../../seed/test-short-friday.test-util";
-import { SETTLEMENT_ROWS } from "../../../settlements/list";
+import { PAY_RUN_DRIVERS_SQL, SETTLEMENT_ROWS } from "../../../settlements/list";
 import { FakeDb, TENANT, type Handler, type Row } from "./fake-db";
 
 // A FakeDb that serves one synthetic carrier's seed plan through the record readers' own SQL, so
@@ -95,6 +95,30 @@ export function planDb(plan: CarrierPlan, extra?: Handler): FakeDb {
       return (tables.money_actions ?? [])
         .filter((r) => r.subject_table === params[0] && r.subject_id === params[1])
         .map((r) => ({ ...r }));
+    }
+    // The drivers Run the week drafts for (PAY_RUN_DRIVERS_SQL), over the plan's rows: a delivered
+    // load, a day worked or a pay item in the week, an advance still owed, or a draft in the week.
+    if (sql === PAY_RUN_DRIVERS_SQL) {
+      const [start, end, periodId] = params as string[];
+      const inWeek = (day: unknown) => typeof day === "string" && day >= start && day <= end;
+      const has = (table: string, test: (r: Row) => boolean) => (tables[table] ?? []).some(test);
+      return plan.rows.drivers
+        .filter(
+          (d) =>
+            has("loads", (l) => l.driver_id === d.id && ["delivered", "invoiced"].includes(String(l.status)) && inWeek(l.delivered_on)) ||
+            has("driver_days", (x) => x.driver_id === d.id && inWeek(x.day)) ||
+            has("pay_items", (i) => i.driver_id === d.id && inWeek(i.item_date)) ||
+            has(
+              "advances",
+              (a) =>
+                a.driver_id === d.id &&
+                ["approved", "paid"].includes(String(a.status)) &&
+                Number(a.recovered_cents) < Number(a.amount_cents) + Number(a.fee_cents),
+            ) ||
+            has("settlements", (x) => x.driver_id === d.id && x.period_id === periodId),
+        )
+        .sort((a, b) => (a.code < b.code ? -1 : a.code > b.code ? 1 : a.id < b.id ? -1 : a.id > b.id ? 1 : 0))
+        .map((d) => ({ id: d.id, code: d.code, first_name: d.first_name, last_name: d.last_name }));
     }
     // get_settlements' list: the plan's stored paystubs for the week with their drivers. A seed
     // plan holds no approval cards, so every card column is null.

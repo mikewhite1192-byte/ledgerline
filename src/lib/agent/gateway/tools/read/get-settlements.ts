@@ -1,9 +1,14 @@
 import { z } from "zod";
 import { readDueWeekAndPay, readRowsWhereId } from "../../../../data/read";
-import { readSettlementRows } from "../../../../settlements/list";
+import { nameOf, readPayRunDrivers, readSettlementRows } from "../../../../settlements/list";
 import { defineTool, type GatewayRef } from "../../types";
 import { idField } from "../../validate";
 import { OPERATOR } from "../shared";
+
+// The most drivers an open week's list carries: about 100 characters each, so 40 with the rest of
+// the result stays well under the gateway's 8,000 (MAX_RESULT_CHARS), which would otherwise drop
+// the whole result. payableDriversTotal says how many there are.
+export const PAYABLE_DRIVERS_CAP = 40;
 
 // What to read next on an open week with pay and no paystubs yet, as the result says it.
 export const READ_NEXT =
@@ -11,7 +16,8 @@ export const READ_NEXT =
   "this week's pay problems now, as the pay check lists them (call it next unless it already " +
   "came back), and explain_paystub with this " +
   "periodId and a driver's id (from run_checks, or from get_settlements for a week that has paystubs) previews that driver's pay for " +
-  "this week, computed by the rules engine. Answer from those two: report_driver_pay_summary " +
+  "this week, computed by the rules engine. A question about one driver takes that driver's " +
+  "driverId from payableDrivers here to explain_paystub. Answer from those two: report_driver_pay_summary " +
   "has no rows for this week and report_driver_insights ranks drivers, so neither answers " +
   "this week's problems or one driver's pay.";
 
@@ -29,6 +35,9 @@ export const getSettlements = defineTool({
     "yet, never no problems or no pay: for who has a problem call run_checks with this " +
     "periodId, and for one driver's pay call explain_paystub with this periodId and the " +
     "driver's id (from run_checks, or from get_settlements for a week that has paystubs), then answer from what they find. " +
+    "Such a week lists payableDrivers, the drivers Run the week would draft a paystub for (driverId, " +
+    "driverCode, driverName; at most 40, payableDriversTotal counting them all): a question about " +
+    "one driver takes that driver's driverId from it to explain_paystub. " +
     "Never call report_driver_pay_summary or report_driver_insights for that week's problems " +
     "or one driver's pay: the summary has no rows before paystubs and the ranking explains no " +
     "one's pay. With runTheWeek true it is the week paid next and has pay: say " +
@@ -78,11 +87,22 @@ export const getSettlements = defineTool({
       // A week with pay and no paystubs still has problems to find and pay to preview: readNext
       // names the reads that answer from the rules engine now, so an answer never stops at no
       // paystubs. A week with no pay has nothing to preview, so it carries none.
+      // The drivers the run would draft for (the run's own statement), so a question about one
+      // driver has their id for explain_paystub without another read.
+      const payable = hasPay ? await readPayRunDrivers(q, period) : [];
+      const drivers = {
+        payableDrivers: payable.slice(0, PAYABLE_DRIVERS_CAP).map((d) => ({
+          driverId: d.id,
+          driverCode: d.code,
+          driverName: nameOf(d.first_name, d.last_name),
+        })),
+        payableDriversTotal: payable.length,
+      };
       empty =
         isDue && hasPay
-          ? { noPaystubsYet: true, runTheWeek: true, readNext: READ_NEXT }
+          ? { noPaystubsYet: true, runTheWeek: true, readNext: READ_NEXT, ...drivers }
           : hasPay
-            ? { noPaystubsYet: true, waitsForWeekPaidNext: true, readNext: READ_NEXT, ...next }
+            ? { noPaystubsYet: true, waitsForWeekPaidNext: true, readNext: READ_NEXT, ...drivers, ...next }
             : { noPaystubsYet: true, noPayYet: true, ...next };
     }
     return {

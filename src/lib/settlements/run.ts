@@ -7,6 +7,7 @@ import { persistEngineProposal, retireEngineProposalsExcept } from "../proposals
 import { runAllChecks, settleDriver, type Finding, type Period } from "../rules-engine";
 import { assertMembership } from "../tenant/context";
 import { linesHash } from "./hash";
+import { readPayRunDrivers } from "./list";
 import { readPeriod, tenantLock } from "./stored";
 
 // "Run the week": the rules engine drafts each driver's paystub for one open pay period and makes
@@ -36,32 +37,9 @@ export type RunResult =
 
 type Candidate = { id: string; code: string };
 
-// Every driver with something in the period: a delivered load, a day worked, a pay item dated in
-// it, an advance still owed, or a draft already there.
+// Every driver with something in the period (PAY_RUN_DRIVERS_SQL), the drivers a run drafts for.
 async function candidates(q: Queryable, period: Period & { id: string }): Promise<Candidate[]> {
-  return q.query<Candidate>(
-    `SELECT d.id, d.code FROM drivers d
-      WHERE d.tenant_id = current_tenant_id() AND (
-        EXISTS (SELECT 1 FROM loads l
-                 WHERE l.tenant_id = d.tenant_id AND l.driver_id = d.id
-                   AND l.status IN ('delivered', 'invoiced')
-                   AND l.delivered_on BETWEEN CAST($1 AS date) AND CAST($2 AS date))
-        OR EXISTS (SELECT 1 FROM driver_days x
-                    WHERE x.tenant_id = d.tenant_id AND x.driver_id = d.id
-                      AND x.day BETWEEN CAST($1 AS date) AND CAST($2 AS date))
-        OR EXISTS (SELECT 1 FROM pay_items i
-                    WHERE i.tenant_id = d.tenant_id AND i.driver_id = d.id
-                      AND i.item_date BETWEEN CAST($1 AS date) AND CAST($2 AS date))
-        OR EXISTS (SELECT 1 FROM advances a
-                    WHERE a.tenant_id = d.tenant_id AND a.driver_id = d.id
-                      AND a.status IN ('approved', 'paid')
-                      AND a.recovered_cents < a.amount_cents + a.fee_cents)
-        OR EXISTS (SELECT 1 FROM settlements s
-                    WHERE s.tenant_id = d.tenant_id AND s.driver_id = d.id
-                      AND s.period_id = CAST($3 AS uuid)))
-      ORDER BY d.code, d.id`,
-    [period.start, period.end, period.id],
-  );
+  return readPayRunDrivers(q, period);
 }
 
 type DriverOutcome =
