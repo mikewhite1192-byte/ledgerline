@@ -178,18 +178,13 @@ describe("POST /api/internal/sweep", () => {
 });
 
 describe("the person's sweep routes", () => {
-  it("start the sweep and run its first slice", async () => {
+  it("start the sweep and answer at once, leaving its slices to the run's page", async () => {
     const res = await start(post("/api/sweeps", { runId: RUN }, { "Sec-Fetch-Site": "same-origin" }));
     expect(res.status).toBe(202);
     expect(res.headers.get("cache-control")).toBe("no-store");
+    expect(await res.json()).toEqual({ runId: RUN, status: "running" });
     expect(mocks.startSweep.mock.calls[0][1]).toEqual({ runId: RUN, periodId: null, trigger: "button" });
-  });
-
-  it("answer 202 busy when another request holds the run", async () => {
-    mocks.advanceSweep.mockResolvedValueOnce({ ok: false, category: "busy" });
-    const res = await start(post("/api/sweeps", { runId: RUN }));
-    expect(res.status).toBe(202);
-    expect(await res.json()).toEqual({ runId: RUN, status: "running", busy: true });
+    expect(mocks.advanceSweep).not.toHaveBeenCalled();
   });
 
   it("refuse a cross-site request and a switched-off sweep before reading the session", async () => {

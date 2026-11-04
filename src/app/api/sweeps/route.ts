@@ -2,12 +2,12 @@ import { flags } from "@/config/flags";
 import { getSession } from "@/lib/auth/session";
 import { staffGate } from "@/lib/auth/staff-gate";
 import { isCrossSite } from "@/lib/http/same-site";
-import { advanceSweep, startSweep } from "@/lib/sweep/run";
+import { startSweep } from "@/lib/sweep/run";
 import { isUuid } from "@/lib/uuid";
 import { failed, objectBody, refused, reply } from "./reply";
 
 // POST: "Run sweep now". Body { runId (a uuid the page made), periodId? }. Opens the run (a
-// replay or a second press returns the running one) and runs its first slice; the page then calls
+// replay or a second press returns the running one) and answers; the run's page then calls
 // .../advance until the run is done. The sweep only drafts; nothing here approves or pays.
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
@@ -31,12 +31,8 @@ export async function POST(request: Request) {
       trigger: "button",
     });
     if (!started.ok) return refused(started.category);
-    const deadline = Date.now() + flags.sweepLimits.sliceMs;
-    const state = await advanceSweep(session, started.runId, deadline);
-    // Another request is carrying the run on: the page polls it like any other slice.
-    if (!state.ok && state.category === "busy") return reply({ runId: started.runId, status: "running", busy: true }, 202);
-    if (!state.ok) return refused(state.category);
-    return reply(state, 202);
+    // The run's own page carries it on from its first slice, so the button reaches it at once.
+    return reply({ runId: started.runId, status: "running" }, 202);
   } catch (err) {
     return failed("sweep start", err);
   }
