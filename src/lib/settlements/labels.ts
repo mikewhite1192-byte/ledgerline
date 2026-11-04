@@ -127,3 +127,8 @@ export function legFailureLabel(row: LegFacts, rows: readonly LegFacts[]): strin
     .reduce<LegFacts | null>((top, r) => (top === null || r.attempt > top.attempt ? r : top), null);
   return before?.state === "failed" ? LEG_NOT_SENT : null;
 }
+
+// A paystub paid outside the app (seeded history): no payment leg and no proposal were ever made here.
+export function paidBeforeApp(s: { status: string; legs: readonly unknown[]; proposal: unknown }): boolean {
+  return s.status === "paid" && s.legs.length === 0 && s.proposal === null;
+}

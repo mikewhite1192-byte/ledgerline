@@ -172,7 +172,12 @@ function SettlementTable({ rows, isOpen, label }: { rows: SettlementListRow[]; i
         { key: "deductions", header: "Deductions", align: "right", cell: (r) => <Money cents={r.deductionsCents} tone="plain" /> },
         { key: "net", header: "Net", align: "right", cell: (r) => <Money cents={r.netCents} tone="plain" /> },
         { key: "exceptions", header: "Exceptions", align: "right", cell: (r) => String(r.exceptionCount) },
-        { key: "auditor", header: "Second check", cell: (r) => (r.auditor ? (AUDITOR_WORDS[r.auditor] ?? "") : "Not checked") },
+        {
+          key: "auditor",
+          header: "Second check",
+          cell: (r) =>
+            r.auditor ? (AUDITOR_WORDS[r.auditor] ?? "") : r.status === "paid" && r.proposalId === null ? "Paid before LedgerLine" : "Not checked",
+        },
         {
           key: "status",
           header: "Status",
