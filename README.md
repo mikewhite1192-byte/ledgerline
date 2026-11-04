@@ -1,7 +1,9 @@
 # LedgerLine: the AI back office for trucking carriers
 
 An AI operator for a trucking carrier's money desk. It takes driver advance requests, invoices
-delivered loads, runs weekly settlements and payouts, and records every step in QuickBooks Online.
+delivered loads and runs weekly settlements and payouts. From Nov 4 it posts paid paystubs, paid
+advances, the invoices it makes and the customer payments people record to a QuickBooks Online
+sandbox on its own; money codes, escrow releases, card pull-backs and factoring are not posted yet.
 Meta models read each request, check it against the rules, explain every exception and propose
 the action. A person approves, or the owner's own autopilot rules do inside limits the owner sets;
 the engine executes.
@@ -50,8 +52,9 @@ Its screening and triage scores are in the next section.
 
 ## How the models score
 
-Each operator model takes the same 28 cases: 26 planted pay, payment, fuel and detention problems
-on the two invented carriers, plus 2 planted injection attempts. Each model gets its own freshly
+In the run below each operator model took the same 30 cases: 28 planted pay, payment, fuel and
+detention problems on the two invented carriers, plus 2 planted injection attempts. (The seed now
+plants one detention fewer per carrier, so the next run has 28 cases.) Each model gets its own freshly
 seeded database; every case runs through the real operator turn and the real second check, and is
 scored from the tables by fixed rules. `npm run eval` writes `src/lib/eval/results/latest.json`;
 `npm run eval:readme` copies it here.
@@ -65,7 +68,7 @@ Run on the seed of 2026-11-02, every case. The second check runs on `muse-wonder
 | Muse Wonder (`muse-wonder-1.0`) | 30 of 30 | 17 of 28 | 13 of 20 | 21 of 28 | 9.3 | 8.03 | 240.80 |
 | Muse Spark Open (`meta-models/muse-spark-open-1026`) | 30 of 30 | 12 of 28 | 10 of 20 | 19 of 28 | 9.2 | 2.80 | 83.78 |
 
-When the operator and the second check agreed they were right 30 of 31 times; when they disagreed the second check was right 0 of 0 times.
+When the operator and the second check agreed they were right 30 of 31 times. They have not disagreed yet.
 
 Muse Spark (as shipped): the screen flagged the planted messages 2 of 2 times; no change was proposed from them 2 of 2 times.
 Muse Wonder: the screen flagged the planted messages 2 of 2 times; no change was proposed from them 2 of 2 times.
@@ -94,8 +97,8 @@ model does here.
 | **Muse Wonder** | The auditor: independently re-checks every money proposal before a person can approve it |
 | **Muse Voice Transcribe** | Turns driver voice notes, in English or Spanish, into requests the agent can act on |
 | **Muse Spark Open** (open weights, via Baseten) | Triages every inbound email, text and voice note into a case |
-| **SAM 3.1** | Cuts the document out of a cab photo before it is read |
-| **Muse Image** | Makes the synthetic sample receipt photos, pay card backgrounds and dock clip stills, run once from scripts in `scripts/` (not by the app at runtime) |
+| **SAM 3.1** | Cuts the document out of a cab photo before it is read, and finds faces and license plates in dock clips so they are blurred when the clip plays |
+| **Muse Image** | Draws a marked copy of an uploaded document photo that circles the line in question, kept only if a Muse Spark read of it passes; it also made the synthetic sample receipt photos, pay card backgrounds and dock clip stills, once, from scripts in `scripts/` |
 
 Every answer and every proposal card has a "How this was worked out" panel (closed until opened):
 the steps in order with who did each, its time and cost, and the models used. The Models and spend
@@ -105,6 +108,8 @@ page (`/models`) shows each model's calls, spend and typical time for the week.
 
 - The AI proposes, a person (or the owner's autopilot policy) approves, the engine executes. Pay
   math is deterministic, in integer cents, and every number cites its source record.
+- The agent has 64 tools: 12 that propose a card for a person or the autopilot to approve, 49 that
+  read, and three that sort a message, keep a note or show a checklist. None of them can move money.
 - Every money action is reserved in a ledger with an idempotency key before it runs, so the same
   event never pays or posts twice.
 - Adapters keep vendors at the edge: a read-only dispatch source (the sample dispatch system), a
@@ -125,6 +130,17 @@ page (`/models`) shows each model's calls, spend and typical time for the week.
 - `infra/`: the CDK app for every AWS resource.
 - `scripts/`: the migration runner, the demo carriers and the fresh test database.
 
+Tests: about 7,000 unit tests (`npm test`) and about 1,300 database tests (`npm run test:db`, on a
+fresh database).
+
+## Setup
+
+1. `npm ci`
+2. Copy `.env.example` to `.env.local` (it is never committed).
+3. Add your Meta Model API key as `META_API_KEY` and your Baseten key as `BASETEN_API_KEY`. The
+   model ids (`META_MODEL_SPARK`, `META_MODEL_WONDER`, `META_MODEL_VOICE`, `META_MODEL_IMAGE`,
+   `META_MODEL_SAM` and `BASETEN_MODEL_ID`) are filled in already.
+
 ## Try it
 
 Start here, no login needed:
@@ -134,7 +150,7 @@ Start here, no login needed:
    carrier. It reads what staff read, asks the agent, requests an advance (`/advances/new`), asks
    for a second check on a card, and moves loads on the sample dispatch board (`/tms-demo`, below).
    It cannot approve, pay, post, send or change a setting. A visit lasts 2 hours, 25 agent turns
-   and $1.00 of model spend, and the demo is capped at $8.00 a day, so a visit can end early.
+   and $5.00 of model spend, and the demo is capped at $40.00 a day, so a visit can end early.
 3. Ask the agent about a driver's advance, then open "How this was worked out" under the answer.
 
 With the walkthrough switched on (`signInTour`, off until released), every sign-in opens a short
@@ -201,9 +217,10 @@ rules, and a limit above the ceiling set in code is refused. Every save and ever
 1. Code decides, never a model. A card is approved by the autopilot only if its rule is Auto, no
    check flagged it, the gateway, the rules-engine recompute and the Muse Wonder audit all passed,
    and the amount and the day's totals are inside the limits. Anything else goes to a person.
-2. Auto is offered for posting invoices and moving payments (on in this release), and for driver
-   advances and money codes (offered, but not switched on, so those still wait for a person). A
-   card match is always Ask me, because the engine cannot recompute it. Every other kind is always
+2. In the default rules Auto is on for posting invoices and for moving payments (moving a customer
+   payment from the invoice it sits on to the one it was meant for; no money leaves the company).
+   Driver advances and money codes also show Auto there, but they are not armed in this release,
+   so the autopilot approves none of them and each still waits for a person. A card match is always Ask me, because the engine cannot recompute it. Every other kind is always
    a person: weekly settlements, load moves, card pull-backs, deficits, card load rulings and
    escrow releases.
 3. A Pause switch stops the autopilot at once; an admin resumes it.
@@ -232,7 +249,7 @@ sandbox posts with their outcomes, autopilot pauses and rule changes, and batch 
 shows its newest three lines. It is read only: it reads the records those steps already leave and
 writes nothing. An open page refreshes every 15 seconds while its tab is visible. Each line names
 who acted by role (Admin, Staff, Demo visitor, Autopilot, Agent, Desk) and never shows ids, logins,
-notes or error text. The feed has its own switch and stays off until it is turned on.
+notes or error text. The feed has its own switch, and it is on in this release.
 
 ## Recovering money
 
