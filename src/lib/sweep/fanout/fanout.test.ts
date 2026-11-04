@@ -22,7 +22,7 @@ import {
   type EngineFinding,
 } from "./reconcile";
 import { MIN_WONDER_MS, openLeasedTurn, PLAN_CALL, RECONCILE_CALL, type FanoutCtx, type FanoutDeps } from "./run";
-import { MAX_ISSUES, MAX_SOURCES, OTHER_CATEGORY, PLAN_FORMAT, RECONCILE_FORMAT, parseJson, scrubFigures } from "./schemas";
+import { CHECK_CATEGORIES, MAX_ISSUES, MAX_SOURCES, OTHER_CATEGORY, PLAN_FORMAT, RECONCILE_FORMAT, parseJson, scrubFigures } from "./schemas";
 import { treeOf, type FanoutCheckRow, type FanoutRow } from "./tree";
 
 // The second opinion's server rules, without a database or a model: the plan, check and
@@ -418,6 +418,18 @@ describe("runChildCheck", () => {
     const out = await runChildCheck(input({ limits: { ...LIMITS, driverCents: 0 } }), h.deps);
     expect(out.status).toBe("budget");
     expect(h.complete).not.toHaveBeenCalled();
+  });
+
+  it("lets the check judge only the categories its records show, so a load with no pay item is never flagged", () => {
+    expect(CHECK_PROMPT).toContain("a load with no pay item is never an issue");
+    expect(CHECK_PROMPT).toContain("let you judge only two categories: newer_is_duplicate");
+    expect(CHECK_PROMPT).toContain("and rate_missing, a delivered or invoiced load");
+    expect(CHECK_PROMPT).toContain("so never report one");
+    // Every snake_case word the rule names, other than the pay_items table, is a real category.
+    const rule = CHECK_PROMPT.slice(CHECK_PROMPT.indexOf("These records let you judge"), CHECK_PROMPT.indexOf("Never state"));
+    const named = (rule.match(/\b[a-z]+(?:_[a-z]+)+\b/g) ?? []).filter((w) => w !== "pay_items");
+    expect(named).toEqual(["newer_is_duplicate", "rate_missing", OTHER_CATEGORY]);
+    for (const w of named) expect(CHECK_CATEGORIES).toContain(w);
   });
 
   it("caps one check call with room for every read at its cap beside its 3,000 output tokens, inside the driver's cents", () => {
