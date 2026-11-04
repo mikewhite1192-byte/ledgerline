@@ -184,6 +184,7 @@ function testBooks() {
     createBill: unused,
     payBill: unused,
     createExpense: unused,
+    createCheck: unused,
     recordCustomerPayment: unused,
     readBack: async () => {
       seen.readBacks += 1;

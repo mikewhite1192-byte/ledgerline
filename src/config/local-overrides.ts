@@ -113,6 +113,7 @@ export const LOCAL_OFF_ONLY = [
   "plainTrace.enabled",
   "visitCopies.enabled",
   "visitCopies.startSweep",
+  "books.enabled",
 ] as const;
 
 type Overridable = (typeof LOCAL_OVERRIDABLE)[number];

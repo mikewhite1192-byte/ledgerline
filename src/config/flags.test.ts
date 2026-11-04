@@ -180,6 +180,8 @@ const KEPT_OFF = [
   // A visit's copy starts its own pay check, which spends model cents: the owner turns it on in its
   // own PR.
   "visitCopies.startSweep",
+  // Sandbox posts with no button (D-104): the owner turns it on in its own PR.
+  "books.enabled",
 ] as const;
 
 // The on/off switches in flags.ts, by path: every top-level boolean and every boolean inside a
@@ -263,19 +265,19 @@ describe("flags", () => {
     expect(LOCAL_OVERRIDABLE as readonly string[]).not.toContain("groundedRatesEnabled");
   });
 
-  it("keeps a demo visit small: a dollar of model time, 25 turns, $8.00 a day across every visit", () => {
+  it("keeps a demo visit bounded: $5.00 of model time, 25 turns, $40.00 a day across every visit", () => {
     expect(flags.judgeAccess).toEqual({
       enabled: true,
-      sessionCapCents: 100,
+      sessionCapCents: 500,
       turnsPerSession: 25,
-      dayCapCents: 800,
+      dayCapCents: 4_000,
       sessionsPerIpPerHour: 5,
       sessionsPerHour: 12,
       sessionsPerDay: 60,
       cookieHours: 2,
     });
-    // Five judging days at the day cap fit the $40.00 reserve with nothing else drawing on it.
-    expect(flags.judgeAccess.dayCapCents * 5).toBeLessThanOrEqual(4_000);
+    // Five judging days at the day cap stay within $200.00 (D-102: the owner funds the model account).
+    expect(flags.judgeAccess.dayCapCents * 5).toBeLessThanOrEqual(20_000);
     expect(flags.judgeAccess.sessionCapCents).toBeLessThanOrEqual(flags.judgeAccess.dayCapCents);
     // The hour's limit across every address never lets more in than the day's.
     expect(flags.judgeAccess.sessionsPerHour).toBeLessThanOrEqual(flags.judgeAccess.sessionsPerDay);
@@ -483,6 +485,24 @@ describe("flags", () => {
     expect(LOCAL_OFF_ONLY as readonly string[]).toContain("plainTrace.enabled");
   });
 
+  it("ships the books step off, with its start date, budget and kinds, off for the local demo run", () => {
+    expect(flags.books).toEqual({
+      enabled: false,
+      startDate: "2026-11-04",
+      perWake: 3,
+      wakeBudgetMs: 9_000,
+      maxAttempts: 3,
+      kinds: { moneyCodes: false, escrow: false, pullbacks: false, factoring: false },
+    });
+    expect(isLocalDate(flags.books.startDate)).toBe(true);
+    // The step's share stays well inside the desk's slice, so the wake keeps most of its time.
+    expect(flags.books.wakeBudgetMs).toBeLessThan(flags.deskLoop.limits.sliceMs / 2);
+    // And past the step's own 3-second floor (BOOKS_MIN_LEFT_MS) by more than that floor again, so
+    // a wake has time for its posts and a read-back.
+    expect(flags.books.wakeBudgetMs).toBeGreaterThan(2 * 3_000);
+    expect(LOCAL_OFF_ONLY as readonly string[]).toContain("books.enabled");
+  });
+
   it("releases deficit recovery, with a start date, off for the local demo run", () => {
     expect(flags.deficitRecovery).toEqual({ enabled: true, startDate: "2026-11-02" });
     expect(isLocalDate(flags.deficitRecovery.startDate)).toBe(true);
@@ -626,6 +646,7 @@ describe("flags", () => {
       "visitCopies.enabled",
       "plainTrace.enabled",
       "visitCopies.startSweep",
+      "books.enabled",
     ];
     const offOnly = LOCAL_OFF_ONLY as readonly string[];
     expect(KEPT_OFF.filter((k) => offOnly.includes(k))).toEqual(KEPT_OFF.filter((k) => armedAhead.includes(k)));

@@ -3,10 +3,23 @@ import type { AdvanceListRow } from "@/lib/advances/read";
 import type { ProposalView, TurnView } from "@/lib/agent/view";
 import type { Queryable } from "@/lib/db";
 import type { InvoiceListRow } from "@/lib/invoices/views";
+import { MONEY_ACTION_KINDS } from "@/lib/money/types";
 import type { SettlementListRow } from "@/lib/settlements/views";
 import { carrierToday } from "@/lib/tenant/shell";
 import * as fx from "@/test/page-fixtures";
-import { advancesRow, cardsRow, escalatedRow, invoiceCardsRow, pastDueRow, paystubsRow, readNeedsYou } from "./needs-you";
+import {
+  advancesRow,
+  BOOKS_LINKED_KINDS,
+  booksHref,
+  booksRow,
+  cardsRow,
+  escalatedRow,
+  invoiceCardsRow,
+  pastDueRow,
+  paystubsRow,
+  readNeedsYou,
+  type BooksStuckRow,
+} from "./needs-you";
 
 // The reads the strip makes, answered from fixture rows, with what each was asked for.
 const reads = vi.hoisted(() => ({
@@ -215,5 +228,92 @@ describe("the escalated row", () => {
     expect(asked[0].sql).toContain("c.created_by = $1");
     expect(asked[0].sql).toContain("c.demo_session_id IS NOT DISTINCT FROM CAST($2 AS uuid)");
     expect(asked[0].sql).toContain("make_interval(days => 7)");
+  });
+});
+
+describe("Home's books row (D-104)", () => {
+  const SUB = "00000000-0000-4000-8000-000000000001";
+  const DRIVER = "00000000-0000-4000-8000-000000000002";
+  const stuck = (over: Partial<BooksStuckRow> = {}): BooksStuckRow => ({
+    kind: "advance_expense",
+    subjectId: SUB,
+    state: "failed",
+    attempt: 3,
+    failureCategory: "validation",
+    checkCount: 0,
+    amountCents: 12_500,
+    ...over,
+  });
+
+  it("counts a record whose tries ran out and opens the oldest record page", () => {
+    const row = booksRow([stuck(), stuck({ kind: "invoice", subjectId: DRIVER, amountCents: 100 })], 3);
+    expect(row).toEqual({
+      key: "books",
+      count: 2,
+      atLeast: false,
+      what: "records QuickBooks did not take",
+      amounts: [{ cents: 12_600, label: "not in QuickBooks" }],
+      href: `/records/advances/${SUB}`,
+      linkLabel: "Open the oldest one",
+    });
+    expect(booksRow([stuck()], 3)?.what).toBe("record QuickBooks did not take");
+  });
+
+  it("leaves out a failure with tries left, but never another amount or an unread post", () => {
+    expect(booksRow([stuck({ attempt: 2 })], 3)).toBeNull();
+    expect(booksRow([stuck({ attempt: 1, failureCategory: "amount_mismatch" })], 3)?.count).toBe(1);
+    expect(booksRow([stuck({ state: "unknown", attempt: 1, checkCount: 49 })], 3)).toBeNull();
+    expect(booksRow([stuck({ state: "unknown", attempt: 1, checkCount: 50 })], 3)?.count).toBe(1);
+  });
+
+  it("links each kind to the page that shows it", () => {
+    const at = (kind: BooksStuckRow["kind"]) => booksHref({ kind, subjectId: SUB });
+    expect(at("settlement_bill")).toBe(`/records/settlements/${SUB}`);
+    expect(at("settlement_bill_payment")).toBe(`/records/settlements/${SUB}`);
+    expect(at("invoice")).toBe(`/records/invoices/${SUB}`);
+    expect(at("customer_payment")).toBe(`/records/customer_payments/${SUB}`);
+    expect(at("money_code_expense")).toBe(`/money-codes/${SUB}`);
+    // No page shows an escrow release's post, so Home links none.
+    expect(at("escrow_release_expense")).toBeNull();
+    expect(at("advance_payout")).toBeNull();
+    // The read's kind list is exactly the kinds linked here.
+    const linked = MONEY_ACTION_KINDS.filter((k) => at(k) !== null);
+    expect([...BOOKS_LINKED_KINDS].sort()).toEqual([...linked].sort());
+  });
+
+  it("is read only when Home asks, as the latest accounting row of each record", async () => {
+    const asked: { sql: string; params: unknown[] }[] = [];
+    const q = {
+      query: async (sql: string, params: unknown[]) => {
+        asked.push({ sql, params });
+        return [
+          {
+            kind: "settlement_bill",
+            subject_id: SUB,
+            state: "failed",
+            attempt: "3",
+            failure_category: "validation",
+            check_count: "0",
+            amount_cents: "50000",
+          },
+        ];
+      },
+    } as unknown as Queryable;
+    const base = { today: "2026-11-03" as const, settlements: false, advances: false, invoices: false };
+    expect(await readNeedsYou(q, base)).toEqual([]);
+    expect(asked).toEqual([]);
+    const rows = await readNeedsYou(q, { ...base, books: { maxAttempts: 3 } });
+    expect(rows.map((r) => [r.key, r.count, r.href])).toEqual([["books", 1, `/records/settlements/${SUB}`]]);
+    expect(asked).toHaveLength(1);
+    // Only the kinds Home links are read, before the limit, so an unlinked kind never uses it up.
+    expect(asked[0].params).toEqual([
+      3,
+      50,
+      50,
+      "{settlement_bill,settlement_bill_payment,advance_expense,invoice,customer_payment,money_code_expense}",
+    ]);
+    expect(asked[0].sql).toContain("channel = 'accounting'");
+    expect(asked[0].sql).toContain("kind = ANY(CAST($4 AS text[]))");
+    expect(asked[0].sql).toContain("DISTINCT ON (kind, subject_id)");
   });
 });

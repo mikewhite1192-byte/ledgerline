@@ -7,12 +7,11 @@ import { InlineAlert } from "@/components/ui/inline-alert";
 import type { RecordActions } from "@/lib/advances/read";
 import { outcomeSentence } from "@/lib/advances/reasons";
 
-type Action = "retry" | "check" | "post";
+type Action = "retry" | "check";
 
 const ROUTES: Readonly<Record<Action, string>> = {
   retry: "retry-payout",
   check: "reconcile",
-  post: "post-expense",
 };
 
 type Summary = { checked: number; confirmed: number; failed: number; stillUnknown: number };
@@ -37,7 +36,6 @@ function done(action: Action, body: Body): string {
     return `Checked ${s.checked}: ${s.confirmed} confirmed, ${s.failed} failed, ${s.stillUnknown} still not known.`;
   }
   if (body.status === "paid") return "Paid.";
-  if (body.status === "posted") return "Posted to QuickBooks.";
   return "Sent. The outcome is not known yet; use Check pending in a minute.";
 }
 
@@ -77,9 +75,11 @@ export function RecordActionButtons({ advanceId, actions }: { advanceId: string;
     }
   }
 
-  const anyAction = actions.retry || actions.check || actions.post;
+  // QuickBooks is not a button here: the books step posts a paid advance by itself (D-104), and the
+  // page's status line says where it stands.
+  const anyAction = actions.retry || actions.check;
   // The page reads the advance again after each press; an outcome can leave no button (a last
-  // allowed attempt that failed, or paid with posting off), and its notice still shows.
+  // allowed attempt that failed), and its notice still shows.
   if (!anyAction && !notice) return null;
   return (
     <div className="grid gap-3">
@@ -93,11 +93,6 @@ export function RecordActionButtons({ advanceId, actions }: { advanceId: string;
           {actions.check ? (
             <Button variant="outline" pending={pending === "check"} pendingLabel="Checking" disabled={pending !== null} onClick={() => run("check")}>
               Check pending
-            </Button>
-          ) : null}
-          {actions.post ? (
-            <Button variant="outline" pending={pending === "post"} pendingLabel="Posting" disabled={pending !== null} onClick={() => run("post")}>
-              Post to QuickBooks
             </Button>
           ) : null}
         </div>

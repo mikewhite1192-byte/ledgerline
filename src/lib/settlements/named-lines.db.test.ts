@@ -170,6 +170,7 @@ const books: AccountingAdapter = {
   createBill: unused,
   payBill: unused,
   createExpense: unused,
+  createCheck: unused,
   recordCustomerPayment: unused,
   readBack: async () => ({ found: false }),
 };

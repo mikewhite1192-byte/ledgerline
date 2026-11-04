@@ -7,6 +7,7 @@ import {
   billKeyOf,
   billPaymentBody,
   checkEmail,
+  checkPurchaseBody,
   customerDisplayName,
   INVOICE_EMAIL_STATUS,
   invoiceBody,
@@ -15,6 +16,7 @@ import {
   paymentBody,
   purchaseBody,
   queryRows,
+  recordDocNumber,
   recordOf,
   tenantCodeOf,
   vendorBody,
@@ -278,6 +280,100 @@ describe("QuickBooks bodies", () => {
         ),
       ),
     ).toBe("validation");
+  });
+
+  it("keeps an advance purchase exactly as before the builder was shared", () => {
+    const out = purchaseBody(
+      { actionId: ACTION, vendorOutsideId: "70", amountCents: 20_000, feeCents: 500, onDate: "2026-11-04", docRef: "ADV-1001" },
+      ACCOUNTS,
+    );
+    const line = (value: number, account: string, text: string) => ({
+      DetailType: "AccountBasedExpenseLineDetail",
+      Amount: value,
+      Description: text,
+      AccountBasedExpenseLineDetail: { AccountRef: { value: account } },
+    });
+    expect(out.docNumber).toBe("ADV-1001");
+    expect(JSON.parse(bodyJson(out.body))).toEqual({
+      PaymentType: "Check",
+      AccountRef: { value: ACCOUNTS.ledgerline_clearing },
+      EntityRef: { value: "70", type: "Vendor" },
+      TxnDate: "2026-11-04",
+      DocNumber: "ADV-1001",
+      PrivateNote: expect.stringContaining(ACTION),
+      Line: [
+        line(200, ACCOUNTS.driver_advances, "Driver advance"),
+        line(5, ACCOUNTS.driver_chargebacks, "Advance fee"),
+      ],
+    });
+    const noFee = purchaseBody(
+      { actionId: ACTION, vendorOutsideId: "70", amountCents: 20_000, feeCents: 0, onDate: "2026-11-04", docRef: "ADV-1001" },
+      ACCOUNTS,
+    );
+    expect(noFee.totalCents).toBe(20_000);
+    expect((JSON.parse(bodyJson(noFee.body)) as { Line: unknown[] }).Line).toHaveLength(1);
+  });
+
+  it("books a money code or an escrow release as one check purchase on its own account", () => {
+    const check = (lines: { role: string; amountCents: number; description: string }[], docRef = "MC-T5B0E-0123456789AB") =>
+      checkPurchaseBody(
+        {
+          actionId: ACTION,
+          vendorOutsideId: "70",
+          onDate: "2026-11-04",
+          docRef,
+          lines: lines as Parameters<typeof checkPurchaseBody>[0]["lines"],
+        },
+        ACCOUNTS,
+      );
+    const out = check([{ role: "driver_escrow", amountCents: 45_000, description: "Escrow released" }]);
+    expect(out.totalCents).toBe(45_000);
+    expect(JSON.parse(bodyJson(out.body))).toMatchObject({
+      PaymentType: "Check",
+      AccountRef: { value: ACCOUNTS.ledgerline_clearing },
+      EntityRef: { value: "70", type: "Vendor" },
+      DocNumber: "MC-T5B0E-0123456789AB",
+      Line: [
+        {
+          Amount: 450,
+          Description: "Escrow released",
+          AccountBasedExpenseLineDetail: { AccountRef: { value: ACCOUNTS.driver_escrow } },
+        },
+      ],
+    });
+    const reimb = check([{ role: "driver_reimbursements", amountCents: 1_234, description: "Money code, lumper" }]);
+    expect(JSON.parse(bodyJson(reimb.body))).toMatchObject({
+      Line: [{ Amount: 12.34, AccountBasedExpenseLineDetail: { AccountRef: { value: ACCOUNTS.driver_reimbursements } } }],
+    });
+    // Refused before any body: no line, an unknown account, a zero or fractional amount, a
+    // control character, a total at the limit, a bad document number.
+    expect(refused(() => check([]))).toBe("validation");
+    expect(refused(() => check([{ role: "freight_income", amountCents: 1, description: "x" }]))).toBe("validation");
+    expect(refused(() => check([{ role: "driver_escrow", amountCents: 0, description: "x" }]))).toBe("validation");
+    expect(refused(() => check([{ role: "driver_escrow", amountCents: 1.5, description: "x" }]))).toBe("validation");
+    expect(refused(() => check([{ role: "driver_escrow", amountCents: 1, description: "a\nb" }]))).toBe("validation");
+    expect(
+      refused(() =>
+        check([
+          { role: "driver_escrow", amountCents: 999_999_999, description: "x" },
+          { role: "driver_escrow", amountCents: 1, description: "x" },
+        ]),
+      ),
+    ).toBe("validation");
+    expect(refused(() => check([{ role: "driver_escrow", amountCents: 1, description: "x" }], "bad ref!"))).toBe(
+      "validation",
+    );
+  });
+
+  it("numbers a money code's and an escrow release's purchase from stored ids, 21 characters", () => {
+    const id = "0123abcd-4567-4ef0-8123-456789abcdef";
+    const mc = recordDocNumber("MC", TENANT, id);
+    expect(mc).toBe(`MC-${KEY}-0123ABCD4567`);
+    expect(mc).toHaveLength(21);
+    expect(recordDocNumber("ER", TENANT, id)).toBe(`ER-${KEY}-0123ABCD4567`);
+    expect(recordDocNumber("MC", TENANT, id)).toBe(mc);
+    expect(refused(() => recordDocNumber("XX" as "MC", TENANT, id))).toBe("validation");
+    expect(refused(() => recordDocNumber("MC", TENANT, "not-a-uuid"))).toBe("validation");
   });
 
   it("applies a customer payment to invoices, never more than received and never one invoice twice", () => {

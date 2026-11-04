@@ -116,8 +116,8 @@ const LEG_BEFORE: Readonly<Record<string, string>> = {
 // words fit. The batch drain refuses a bill leg whose leg before it in the same batch failed, as
 // validation settled as refused (drain.ts). The drain refuses a leg for any other reason only once
 // the leg before it is confirmed, and a settled row never changes, so that whole pattern is the
-// drain's refusal. The only other path to it is "Post to QuickBooks" replaying a batch row the
-// drain had not refused yet while the accounting connection answers validation.
+// drain's refusal. The only other path to it is the books step replaying a batch row the drain had
+// not refused yet while the accounting connection answers validation.
 export function legFailureLabel(row: LegFacts, rows: readonly LegFacts[]): string | null {
   const kindBefore = Object.hasOwn(LEG_BEFORE, row.kind) ? LEG_BEFORE[row.kind] : null;
   if (kindBefore === null || row.batchId === null) return null;

@@ -1,6 +1,7 @@
 import Link from "next/link";
 import { flags } from "@/config/flags";
 import { DataTable } from "@/components/app/data-table";
+import { BooksStatusLine } from "@/components/books/books-line";
 import { Money } from "@/components/app/money";
 import { PageHeader } from "@/components/app/page-header";
 import { Paystub } from "@/components/app/paystub";
@@ -14,6 +15,8 @@ import { paystubCardFrom } from "@/components/settlements/paystub-card";
 import { Badge } from "@/components/ui/badge";
 import { InlineAlert } from "@/components/ui/inline-alert";
 import { readEngineProposalViews } from "@/lib/agent/gateway/store";
+import { outsideTail } from "@/lib/advances/read";
+import { atOrAfterBooksStart, booksStatus, latestByKind } from "@/lib/books/status";
 import type { Queryable } from "@/lib/db";
 import { formatInstant } from "@/lib/format/dates";
 import { codeToWords } from "@/lib/format/labels";
@@ -60,10 +63,16 @@ export default async function SettlementRecord({ params }: { params: Promise<{ i
   const s = view.settlement;
   const tz = page.shell.timezone;
   const payout = view.latest.settlement_payout;
-  const bill = view.latest.settlement_bill;
-  const billPayment = view.latest.settlement_bill_payment;
-  const canPost =
-    flags.settlementsEnabled && s.status === "paid" && s.netCents > 0 && !(bill === "confirmed" && billPayment === "confirmed");
+  // A paid paystub's bill and its payment post to QuickBooks by themselves (D-104), when paid on or
+  // after the books start date: the page only says where they stand.
+  const books =
+    s.status === "paid" && s.netCents > 0
+      ? booksStatus(view.legs, ["settlement_bill", "settlement_bill_payment"], {
+          on: flags.books.enabled && atOrAfterBooksStart(s.paidAt, tz, flags.books.startDate),
+          maxAttempts: flags.books.maxAttempts,
+          tail: outsideTail(latestByKind(view.legs, "settlement_bill")?.outsideId ?? null),
+        })
+      : null;
   const canRetry =
     flags.settlementsEnabled && s.status === "approved" && s.netCents > 0 && (payout === null || payout === "failed" || payout === "reserved");
   // The payout went out but the paystub was not booked: the same button books it, sending nothing.
@@ -143,14 +152,7 @@ export default async function SettlementRecord({ params }: { params: Promise<{ i
           variant="outline"
         />
       ) : null}
-      {canPost ? (
-        <SettlementAction
-          url={`/api/settlements/${encodeURIComponent(s.id)}/post`}
-          label="Post to QuickBooks"
-          kind="post"
-          variant="outline"
-        />
-      ) : null}
+      {books ? <BooksStatusLine line={books} /> : null}
       <DataTable
         caption="Money legs"
         rows={view.legs}

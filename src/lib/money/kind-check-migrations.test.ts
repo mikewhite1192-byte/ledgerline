@@ -12,7 +12,9 @@ import { KIND_SHAPES, MONEY_ACTION_KINDS, OUTSIDE_SYSTEMS } from "./types";
 // the database (23514) after the code had shipped. 0069 (ESCROW-RELEASE) adds the escrow kind and
 // its subject after both had run everywhere, and 0080 (RECOVERY) the card pull-back kind and its
 // subject the same way, so for the kind, subject and channel checks the newest re-creation is the
-// full union and each earlier one lists only values the code still knows.
+// full union and each earlier one lists only values the code still knows. 0092 (BOOKS) adds two
+// accounting kinds on the money code and escrow subjects: the kind check and those two subject
+// pairings are re-created there; the subject, channel and counterparty checks need no change.
 
 const DIR = path.join(process.cwd(), "db/migrations");
 const FILE = /^(\d{4})_[a-z0-9_]+\.sql$/;
@@ -73,7 +75,7 @@ describe("the money ledger checks in the migration texts", () => {
     );
     expect(found.map((l) => l.version)).toContain("0048");
     expect(found.map((l) => l.version)).toContain("0060");
-    expect(newestIsTheUnion(found, MONEY_ACTION_KINDS)).toBe("0080");
+    expect(newestIsTheUnion(found, MONEY_ACTION_KINDS)).toBe("0092");
   });
 
   it("lists every subject table in each subject check re-creation", () => {
@@ -149,6 +151,31 @@ describe("the money ledger checks in the migration texts", () => {
     expect(KIND_SHAPES.escrow_release.subjectTable).toBe("escrow_releases");
   });
 
+  // The newest re-creation of each pairing lists exactly the kinds whose shape names that subject,
+  // in the "(kind IN (...)) = (subject_table = '<table>')" form.
+  it("pairs the money code and escrow subjects with both of their kinds in 0092", () => {
+    const cases = [
+      ["money_actions_money_code_subject_pairing", "money_codes"],
+      ["money_actions_escrow_subject_pairing", "escrow_releases"],
+    ] as const;
+    for (const [name, table] of cases) {
+      const any = new RegExp(`ADD\\s+CONSTRAINT\\s+${name}\\b`, "gi");
+      const listed = new RegExp(
+        `ADD\\s+CONSTRAINT\\s+${name}\\s+CHECK\\s*\\(\\s*\\(\\s*kind\\s+IN\\s*\\(([^)]*)\\)\\s*\\)\\s*=\\s*\\(\\s*subject_table\\s*=\\s*'${table}'\\s*\\)`,
+        "gi",
+      );
+      const versions = MIGRATIONS.filter((m) => (m.sql.match(any) ?? []).length > 0).map((m) => m.version);
+      const newest = versions[versions.length - 1];
+      expect(newest, name).toBe("0092");
+      const sql = MIGRATIONS.filter((m) => m.version === newest).map((m) => m.sql).join("\n");
+      const found = [...sql.matchAll(listed)].map((m) => quoted(m[1]));
+      expect(found, name).toHaveLength(1);
+      expect(sorted(found[0]), name).toEqual(sorted(kindsWhere((k) => KIND_SHAPES[k].subjectTable === table)));
+    }
+    expect(KIND_SHAPES.money_code_expense).toEqual({ channel: "accounting", subjectTable: "money_codes", counterpartyTable: "drivers" });
+    expect(KIND_SHAPES.escrow_release_expense).toEqual({ channel: "accounting", subjectTable: "escrow_releases", counterpartyTable: "drivers" });
+  });
+
   it("pairs the card pull-back kind with its own subject", () => {
     const re = /ADD\s+CONSTRAINT\s+money_actions_pullback_subject_pairing\s+CHECK\s*\(\s*\(\s*kind\s*=\s*'card_pullback'\s*\)\s*=\s*\(\s*subject_table\s*=\s*'card_pullbacks'\s*\)\s*\)/i;
     const at = MIGRATIONS.filter((m) => re.test(m.sql)).map((m) => m.version);
@@ -176,6 +203,24 @@ describe("the money ledger checks in the migration texts", () => {
     }
     const names = readdirSync(DIR).filter((f) => FILE.test(f)).sort();
     expect(names.indexOf("0080_recovery_validate.sql")).toBe(names.indexOf("0080_recovery.sql") + 1);
+  });
+
+  it("adds 0092's three ledger checks NOT VALID and validates each in 0092_books_validate, applied next", () => {
+    const read = (name: string) => withoutComments(readFileSync(path.join(DIR, name), "utf8"));
+    const added = read("0092_books.sql");
+    const validate = read("0092_books_validate.sql");
+    for (const name of [
+      "money_actions_kind_check",
+      "money_actions_money_code_subject_pairing",
+      "money_actions_escrow_subject_pairing",
+    ]) {
+      const adds = [...added.matchAll(new RegExp(`ADD\\s+CONSTRAINT\\s+${name}\\s+CHECK\\b[^;]*;`, "gi"))];
+      expect(adds, name).toHaveLength(1);
+      expect(adds[0][0], name).toMatch(/\)\s*NOT\s+VALID\s*;$/i);
+      expect(validate, name).toMatch(new RegExp(`ALTER\\s+TABLE\\s+money_actions\\s+VALIDATE\\s+CONSTRAINT\\s+${name}\\s*;`, "i"));
+    }
+    const names = readdirSync(DIR).filter((f) => FILE.test(f)).sort();
+    expect(names.indexOf("0092_books_validate.sql")).toBe(names.indexOf("0092_books.sql") + 1);
   });
 });
 

@@ -243,6 +243,7 @@ function testBooks() {
       return { kind: "confirmed", system: "qbo_sandbox", type: "BillPayment", id: `QBP-${seen.payments}`, amountCents: p.amountCents };
     },
     createExpense: unused,
+    createCheck: unused,
     recordCustomerPayment: unused,
     readBack: async () => ({ found: false }),
   };
