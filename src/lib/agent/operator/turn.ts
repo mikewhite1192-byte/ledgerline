@@ -11,6 +11,9 @@ import {
   CALL_MARGIN_MS,
   CHECKLIST_ALONE_NOTE,
   CHECKLIST_TOOL,
+  DETENTION_CARDS_PER_RESPONSE,
+  DETENTION_PROPOSE_TOOL,
+  DETENTION_SKIPPED,
   ESCALATE_AFTER_INVALID,
   ESCALATION_CALL,
   escalatedText,
@@ -688,9 +691,20 @@ export async function runTurn(input: TurnInput, deps: TurnDeps): Promise<TurnOut
       // Parallel calls run one by one, in the order returned, so the step cap is exact. The
       // first checklist write in a response is not a counted step; it still waits on the clock.
       let checklistWritten = false;
+      let detentionCalls = 0;
       const checklistAlone = result.toolCalls.every((c) => c.name === CHECKLIST_TOOL);
       for (let i = 0; i < result.toolCalls.length; i += 1) {
         const call = result.toolCalls[i];
+        // A detention card past the per-response limit is not run and takes no step.
+        if (call.name === DETENTION_PROPOSE_TOOL) detentionCalls += 1;
+        if (call.name === DETENTION_PROPOSE_TOOL && detentionCalls > DETENTION_CARDS_PER_RESPONSE) {
+          messages.push({
+            role: "tool",
+            toolCallId: call.id,
+            content: JSON.stringify({ skipped: true, note: DETENTION_SKIPPED }),
+          });
+          continue;
+        }
         const free = call.name === CHECKLIST_TOOL && !checklistWritten;
         if (free) checklistWritten = true;
         const stepCap = free ? (budget.remainingMs() <= 0 ? "clock" : null) : budget.beforeToolStep();
