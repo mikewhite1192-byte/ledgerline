@@ -1,5 +1,5 @@
 import { z } from "zod";
-import { houseDollars, maskFigures } from "./operator/figures";
+import { houseDollars, maskFigures, WITHHELD } from "./operator/figures";
 
 // The checklist (design-agents-101 3.1): the short plan an answer or a run sets first and ticks
 // as it goes, shown live above the steps. A model sets one through set_checklist; a run's own
@@ -102,6 +102,16 @@ export function finalChecklist(list: Checklist, ended: "done" | "partial" | "fai
       return item;
     }),
   };
+}
+
+// An answer that says in its own words it could not check part of the work ("I could not check
+// why", "I never located her driver record"). Beside one, nothing still in hand reads as done. The
+// withheld figure note is the mask's words, not the answer's, so it never counts.
+const LEFT_UNCHECKED =
+  /\bI (?:could not|couldn['\u2019]t|cannot|can['\u2019]t|was not able to|wasn['\u2019]t able to|was unable to|am unable to|did not|didn['\u2019]t|never) (?:check|confirm|verif|read|locat|reach|look|get to|got to)/i;
+
+export function answerLeftWork(text: string): boolean {
+  return LEFT_UNCHECKED.test(text.split(WITHHELD).join(" "));
 }
 
 export function sameChecklist(a: Checklist | null, b: Checklist | null): boolean {

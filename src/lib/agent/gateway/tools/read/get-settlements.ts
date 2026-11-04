@@ -11,8 +11,11 @@ export const getSettlements = defineTool({
     "List one pay week's paystubs (the newest open week unless periodId is given), in driver " +
     "order: each one's driver, gross, deductions and net in integer cents, status, the exception " +
     "categories on its approval card, the auditor's verdict, whether it is clean for Approve all " +
-    "clean, and parkedReason when it no longer matches its records. This only reads; " +
-    "explain_paystub explains one paystub line by line.",
+    "clean, and parkedReason when it no longer matches its records. notRunYet true (an open week " +
+    "with no paystubs) means the week has not been run yet: say so plainly and tell the person to " +
+    "press Run the week on the Paystubs page under Pay; to preview one driver before then, call " +
+    "explain_paystub with this periodId and the driver's id. This only reads; explain_paystub " +
+    "explains one paystub line by line.",
   tier: "read",
   roles: OPERATOR,
   label: "Reading this week's paystubs",
@@ -50,6 +53,8 @@ export const getSettlements = defineTool({
         })),
         // Cards still waiting for the auditor: none of them is clean yet.
         awaitingAuditor,
+        // An open week no one has run yet has no paystubs at all, which is not a week with none due.
+        ...(rows.length === 0 && period.status === "open" ? { notRunYet: true } : {}),
       },
     };
   },

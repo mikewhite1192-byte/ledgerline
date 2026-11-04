@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
+  answerLeftWork,
   CHECKLIST_STATES,
   checklistArgs,
   checklistSchema,
@@ -127,5 +128,21 @@ describe("the list as the answer ended", () => {
     const after = finalChecklist(list, "done");
     expect(after.items.map((i) => [i.key, i.text])).toEqual(list.items.map((i) => [i.key, i.text]));
     expect(list).toEqual(before);
+  });
+});
+
+describe("an answer that says it could not check part of the work", () => {
+  it("is read from the answer's own first-person words", () => {
+    expect(answerLeftWork("Two paystubs are short. I could not check why.")).toBe(true);
+    expect(answerLeftWork("The week has no paystubs, and I never located her driver record.")).toBe(true);
+    expect(answerLeftWork("I couldn\u2019t confirm the fuel card loads.")).toBe(true);
+    expect(answerLeftWork("i was not able to read the rate confirmation.")).toBe(true);
+  });
+
+  it("never counts a finished answer, an outside party's words or the withheld figure note", () => {
+    expect(answerLeftWork("Two paystubs are short because a load had no rate.")).toBe(false);
+    expect(answerLeftWork("The bank could not cover Friday, so factoring two invoices closes the gap.")).toBe(false);
+    expect(answerLeftWork(`Rosa is owed ${WITHHELD}.`)).toBe(false);
+    expect(answerLeftWork("I could not propose that.")).toBe(false);
   });
 });

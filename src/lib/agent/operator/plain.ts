@@ -1,7 +1,8 @@
 // The answer as a person reads it (house style): no em or en dashes and dates as a month and day,
 // applied by code to every answer the loop keeps, since the prompt alone did not hold
 // (production answers wrote "2026-11-03" and dashes). It changes punctuation and dates only, never
-// a figure or an id.
+// a figure or an id, plus two slips a rehearsal showed: "This weeks pay" for "This week's pay", and
+// a table said to be "above" when the chat always shows a report's table below the answer.
 
 const MONTHS = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
 
@@ -19,8 +20,22 @@ function plainDate(match: string, y: string, m: string, d: string): string {
 // Code spans and web links are kept as written: no dash or date inside them is changed.
 const KEPT = /(`[^`]*`|https?:\/\/[^\s`]+)/;
 
+// "this weeks" is never a plural ("this" takes one week), so it is the possessive missing its
+// apostrophe.
+const THIS_WEEKS = /\b([Tt]his) weeks\b(?!['\u2019])/g;
+// A table or report said to be above: "the table above", "the report shown above", "the above table".
+const TABLE_ABOVE = /\b(tables?|report)((?:\s+(?:is|are|shown|listed))?)\s+above\b/gi;
+const ABOVE_TABLE = /\b([Tt]he) above (tables?|report)\b/g;
+
+function plainWords(part: string): string {
+  return part
+    .replace(THIS_WEEKS, "$1 week's")
+    .replace(TABLE_ABOVE, "$1$2 below")
+    .replace(ABOVE_TABLE, "$1 $2 below");
+}
+
 function plainProse(part: string, first: boolean, last: boolean): string {
-  const dated = part.replace(ISO_DATE, plainDate);
+  const dated = plainWords(part).replace(ISO_DATE, plainDate);
   if (!DASH.test(dated)) return dated;
   let out = dated
     // Written tight between two figures (10\u201320) it is a range.

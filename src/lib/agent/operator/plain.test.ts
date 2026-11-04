@@ -36,6 +36,22 @@ describe("plainAnswer", () => {
     expect(plainAnswer("2026-13-40")).toBe("2026-13-40");
   });
 
+  it("puts back the apostrophe in \"this week's\" and leaves a real plural alone", () => {
+    expect(plainAnswer("This weeks pay run has 4 paystubs; this weeks loads are in.")).toBe(
+      "This week's pay run has 4 paystubs; this week's loads are in.",
+    );
+    expect(plainAnswer("This week's pay and the last two weeks are paid.")).toBe("This week's pay and the last two weeks are paid.");
+    expect(plainAnswer("Rosa's weeks ran long.")).toBe("Rosa's weeks ran long.");
+  });
+
+  it("says a table is below the answer, where the chat shows it", () => {
+    expect(plainAnswer("The full table above lists every driver.")).toBe("The full table below lists every driver.");
+    expect(plainAnswer("See the report shown above. The table is above.")).toBe("See the report shown below. The table is below.");
+    expect(plainAnswer("The above table has 3 rows.")).toBe("The table below has 3 rows.");
+    expect(plainAnswer("Two advances are above the limit.")).toBe("Two advances are above the limit.");
+    expect(plainAnswer("Run `table above` then wait.")).toBe("Run `table above` then wait.");
+  });
+
   it("leaves text with neither unchanged", () => {
     expect(plainAnswer("Pay is $2,225.00 this week.")).toBe("Pay is $2,225.00 this week.");
   });

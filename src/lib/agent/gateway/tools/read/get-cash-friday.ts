@@ -13,11 +13,11 @@ export const getCashFriday = defineTool({
   name: "get_cash_friday",
   description:
     "Work out whether the carrier can cover Friday's driver pay run, as the rules engine does on " +
-    "the Cash page: cash on hand, customer payments expected by pay day, the pay run, fuel card " +
+    "the Friday's cash page: cash on hand, customer payments expected by pay day, the pay run, fuel card " +
     "loads and vendor bills due, and the gap (below zero is a short), in integer cents. When short, " +
     "options are the moves the engine found (factor invoices, move a flexible bill, chase a late " +
     "payer), each with its figures. Also the latest stored check's id and the open cards' ids. " +
-    "This only reads; a person runs a check and decides each card on the Cash page.",
+    "This only reads; a person runs a check and decides each card on the Friday's cash page.",
   tier: "read",
   roles: OPERATOR,
   label: "Checking Friday's pay run",

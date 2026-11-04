@@ -1,5 +1,6 @@
 import { z } from "zod";
 import { flags } from "../../../../../config/flags";
+import { bpsText } from "../../../../briefs/figures";
 import { briefPlainText } from "../../../../briefs/render";
 import { readProfitView } from "../../../../briefs/view";
 import { localDateOf } from "../../../../time/local-date";
@@ -9,15 +10,19 @@ import { OPERATOR } from "../shared";
 
 const isOn = () => flags.profitBriefEnabled;
 
+// Margin as a person reads it, from the integer basis points: 5626 reads "56.26%".
+const percent = (bps: number | null) => (bps === null ? null : bpsText(bps));
+
 export const getProfitBrief = defineTool({
   name: "get_profit_brief",
   description:
     "Read one closed pay week's profit figures (the newest closed week unless periodStart is " +
     "given, the first day of a week from the last four): revenue, driver pay and margin in " +
-    "integer cents, margin in basis points, loads priced and delivered, then the same by route " +
-    "and by customer with each customer's average days to pay, the loads that could not be " +
-    "priced, and the checked brief's words when one was written. Quote these figures exactly; " +
-    "never add or derive one. This only reads.",
+    "integer cents, margin as a percent such as \"56.26%\" (write it that way, never in basis " +
+    "points), loads priced and delivered, then the same by route and by customer with each " +
+    "customer's average days to pay, the loads that could not be priced, and the checked brief's " +
+    "words when one was written. Quote these figures exactly; never add or derive one. This only " +
+    "reads.",
   tier: "read",
   roles: OPERATOR,
   label: "Read last week's profit figures",
@@ -45,7 +50,7 @@ export const getProfitBrief = defineTool({
           revenueCents: totals.revenueCents,
           driverPayCents: totals.driverPayCents,
           marginCents: totals.marginCents,
-          marginBps: totals.marginBps,
+          marginPercent: percent(totals.marginBps),
           loadsPriced: totals.loads,
           loadsDelivered: totals.loadsDelivered,
         },
@@ -55,7 +60,7 @@ export const getProfitBrief = defineTool({
           revenueCents: r.revenueCents,
           driverPayCents: r.driverPayCents,
           marginCents: r.marginCents,
-          marginBps: r.marginBps,
+          marginPercent: percent(r.marginBps),
           revenuePerLoadedMileCents: r.centsPerLoadedMile,
         })),
         customers: customers.slice(0, flags.profitBriefLimits.maxCustomers).map((c) => ({
@@ -64,7 +69,7 @@ export const getProfitBrief = defineTool({
           loads: c.loads,
           revenueCents: c.revenueCents,
           marginCents: c.marginCents,
-          marginBps: c.marginBps,
+          marginPercent: percent(c.marginBps),
           meanDaysToPay: c.meanDays,
           paidInvoices: c.paidCount,
           paymentHabit: c.habit,

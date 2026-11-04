@@ -15,7 +15,8 @@ export const explainPaystub = defineTool({
   name: "explain_paystub",
   description:
     "Explain one driver's pay for one pay period line by line: the stored settlement lines when " +
-    "the period has been settled, otherwise the rules engine's computed lines. Earnings are " +
+    "the period has been settled, otherwise the rules engine's computed lines (computed true: the " +
+    "week has not been run yet, so these are a preview, not a paystub). Earnings are " +
     "positive and deductions negative, in integer cents, each with the records it came from. A " +
     "note insurance_exempt means the driver carries their own insurance, so no daily insurance " +
     "line applies; parkedReason says why a stored paystub no longer matches its records. A stored " +

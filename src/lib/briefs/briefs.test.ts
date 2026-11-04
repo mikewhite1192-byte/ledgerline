@@ -146,6 +146,7 @@ describe("the week's figures", () => {
 
   it("writes a percent from basis points the same way the report tables do, and divides the same way", () => {
     for (const bps of [0, 5, 99, 100, 3756, 10_000, -1, -125, -10_000]) expect(bpsText(bps)).toBe(formatBps(bps));
+    expect([bpsText(5626), bpsText(5), bpsText(-125)]).toEqual(["56.26%", "0.05%", "-1.25%"]);
     for (const [part, whole] of [
       [1_811_000, 4_821_000],
       [-12_500, 210_000],
@@ -537,11 +538,12 @@ describe("get_profit_brief", () => {
       revenueCents: totals?.revenueCents,
       driverPayCents: totals?.driverPayCents,
       marginCents: totals?.marginCents,
-      marginBps: totals?.marginBps,
+      marginPercent: totals?.marginBps == null ? null : bpsText(totals.marginBps),
       loadsPriced: totals?.loads,
       loadsDelivered: totals?.loadsDelivered,
     });
     expect((out.routes as unknown[]).length).toBeLessThanOrEqual(flags.profitBriefLimits.maxLanes);
+    expect(JSON.stringify(out)).not.toContain("marginBps");
     expect(out.brief).toBeNull();
   });
 

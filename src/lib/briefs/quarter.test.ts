@@ -14,7 +14,7 @@ import { parseReportArgs } from "../reports/args";
 import { computeReport } from "../reports/run";
 import type { BriefFigure } from "../rules-engine";
 import { quarterContaining } from "../time/local-date";
-import { figuresText, figureValueText } from "./figures";
+import { bpsText, figuresText, figureValueText } from "./figures";
 import { packFigures, readQuarter } from "./quarter-figures";
 import {
   QUARTER_SECTIONS,
@@ -741,8 +741,17 @@ describe("get_quarter_review", () => {
     const out = (await run(db)).result as Record<string, Record<string, unknown> | unknown[] | null>;
     expect(out.quarter).toEqual({ start: "2026-10-01", end: "2026-12-31" });
     expect(out.soFar).toEqual({ start: "2026-10-01", end: PLAN_ANCHOR });
-    expect(out.payRuns).toMatchObject({ runs: 4, paid: 3, open: 1, netCents: view.quarter.pay.netCents });
-    expect(out.margin).toMatchObject({ revenueCents: view.quarter.margin.revenueCents, marginBps: view.quarter.margin.marginBps });
+    expect(out.payRuns).toMatchObject({
+      runs: 4,
+      paid: 3,
+      open: 1,
+      netCents: view.quarter.pay.netCents,
+      carriedForwardCents: view.quarter.pay.carriedForwardCents,
+    });
+    // The margin reads as a percent from the integer basis points, never as basis points.
+    const bps = view.quarter.margin.marginBps;
+    expect(out.margin).toMatchObject({ revenueCents: view.quarter.margin.revenueCents, marginPercent: bps === null ? null : bpsText(bps) });
+    expect(out.margin).not.toHaveProperty("marginBps");
     expect(out.recovered).toEqual(view.quarter.recovered);
     expect((out.customers as unknown[]).length).toBe(Math.min(12, view.quarter.customers.length));
     expect(out.review).toBeNull();
