@@ -86,7 +86,8 @@ export type Flags = {
     // half the scored run; the cents cap and the clock still bound the turn.
     maxModelCalls: number;
     maxTurnCents: number;
-    // Leaves room inside the 30 second response for the last event to flush.
+    // Leaves room inside the 30 second response for the last event to flush. The owner raised it
+    // from 22 s to 27 s on 2026-11-03 (D-105).
     wallClockMs: number;
     // The state summary the model is given, in characters.
     summaryChars: number;
@@ -1091,7 +1092,7 @@ export const flags: Flags = {
     maxToolSteps: 6,
     maxModelCalls: 6,
     maxTurnCents: 40,
-    wallClockMs: 22_000,
+    wallClockMs: 27_000,
     summaryChars: 10_000,
   },
   proposalMaxAgeDays: 7,
