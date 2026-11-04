@@ -2274,7 +2274,7 @@ const PAGES: PageCase[] = [
         name: "an admin, running",
         setup: () => (state.fx.autopilotRules = AUTOPILOT_PICTURE),
         load: () => autopilotPage(),
-        shows: ["Pause autopilot", "Sending invoices", "Weekly settlements", "Oct 31, 2026", autopilotWords.NEVER_ALONE_NOTE],
+        shows: ["Pause autopilot", "Sending invoices", "Weekly pay runs", "Oct 31, 2026", autopilotWords.NEVER_ALONE_NOTE],
       },
       {
         name: "an admin, paused by a person",

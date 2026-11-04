@@ -19,6 +19,13 @@ const base = { caption: "Loads", columns, rows, rowKey: (r: Row) => r.id };
 const EMPTY = { title: "No loads this week" };
 
 describe("DataTable", () => {
+  it("holds its scroll area as the containing block, so an absolute screen-reader header cannot widen the page", () => {
+    render(<DataTable {...base} empty={EMPTY} />);
+    const scroller = screen.getByRole("table", { name: "Loads" }).parentElement;
+    expect(scroller?.className).toContain("overflow-x-auto");
+    expect(scroller?.className.split(" ")).toContain("relative");
+  });
+
   it("shows the rows when ready, with money on the right edge", () => {
     render(<DataTable {...base} empty={EMPTY} />);
     const table = screen.getByRole("table", { name: "Loads" });

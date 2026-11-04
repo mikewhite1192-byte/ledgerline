@@ -84,19 +84,19 @@ export default async function MoneyCodesPage() {
           <InvoiceCards
             cards={page.cards}
             auditorOn={flags.auditorEnabled}
-            label="Money codes to approve"
+            label="Driver codes to approve"
             notices={MONEY_CODE_PAGE_NOTICE}
           />
         </section>
       ) : null}
       <DataTable<MoneyCodeRow>
-        caption="Money codes, newest first"
+        caption="Driver codes, newest first"
         rows={page.codes}
         rowKey={(r) => r.id}
         empty={{
           icon: <Ticket aria-hidden />,
           title: "No codes yet",
-          body: "Press Request a code, or ask the agent: \"A driver sent a lumper receipt, get them a money code.\"",
+          body: "Press Request a code, or ask the agent: \"A driver sent a lumper receipt, get them a driver code.\"",
         }}
         columns={[
           {

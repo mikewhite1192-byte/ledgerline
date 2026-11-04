@@ -57,7 +57,7 @@ function Row({ label, children }: { label: ReactNode; children: ReactNode }) {
 // the receipt behind it, the load, the two paystub lines that net to zero, the invoice line for a
 // lumper, and every payment record. Check pending shows while the issue is not confirmed.
 export default async function MoneyCodePage({ params }: { params: Promise<{ id: string }> }) {
-  if (!moneyCodesOn()) return <CodesOffPage title="Money code" />;
+  if (!moneyCodesOn()) return <CodesOffPage title="Driver code" />;
   const { id } = await params;
   if (!isUuid(id)) notFound();
   let page: { shell: ShellTenant; detail: MoneyCodeDetail | null } | null = null;
@@ -75,14 +75,14 @@ export default async function MoneyCodePage({ params }: { params: Promise<{ id: 
   const detail = page.detail;
   if (!detail) {
     return (
-      <CodesFrame shell={page.shell} title="Money code">
-        <PageHeader title="Money code" />
+      <CodesFrame shell={page.shell} title="Driver code">
+        <PageHeader title="Driver code" />
         <Card>
           <ErrorState
             category="not_found"
             retry={
               <Link href="/money-codes" className={link}>
-                All money codes
+                All driver codes
               </Link>
             }
           />
@@ -126,7 +126,7 @@ export default async function MoneyCodePage({ params }: { params: Promise<{ id: 
       : null;
 
   return (
-    <CodesFrame shell={page.shell} title="Money code">
+    <CodesFrame shell={page.shell} title="Driver code">
       <PageHeader
         title={<CodesTitle>{`${purpose} code for ${code.loadNumber}`}</CodesTitle>}
         description={`For ${code.driverName}. Asked for ${when(code.createdAt)}.`}
@@ -134,7 +134,7 @@ export default async function MoneyCodePage({ params }: { params: Promise<{ id: 
       />
       <p>
         <Link href="/money-codes" className={`text-small ${link}`}>
-          All money codes
+          All driver codes
         </Link>
       </p>
 

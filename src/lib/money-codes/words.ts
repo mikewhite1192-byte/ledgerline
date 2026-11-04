@@ -10,7 +10,7 @@ export const REFUSAL_SENTENCES: Readonly<Record<MoneyCodeRefusal, string>> = {
   load_not_active: "The load is not on the road and was not delivered in the last three days.",
   load_invoiced: "The load is already invoiced, so a lumper code cannot add its billable line to the invoice.",
   amount_invalid: "The amount must be a dollar amount above $0.00.",
-  over_code_cap: "The amount is over the most one money code can be.",
+  over_code_cap: "The amount is over the maximum allowed for one driver code.",
   evidence_missing: "The receipt or voice note it names was not found.",
   receipt_unreadable: "The receipt could not be read clearly. Ask the driver for a clearer photo.",
   receipt_kind: "The receipt is not the kind this code is for.",
@@ -22,16 +22,16 @@ export const REFUSAL_SENTENCES: Readonly<Record<MoneyCodeRefusal, string>> = {
   driver_not_armed: "This driver is not cleared to be paid yet. An admin can clear them on the driver page.",
   duplicate_code: "A code for this load, purpose and amount was already asked for in the last 24 hours.",
   evidence_reused: "This receipt or voice note already backs another code.",
-  daily_limit: "This driver already has the most money codes allowed for today.",
+  daily_limit: "This driver has reached today's limit of driver codes.",
 };
 
 // The issue gate's words and the executor's own outcomes.
 const OUTCOME_SENTENCES: Readonly<Record<string, string>> = {
-  codes_off: "Money codes are off for this carrier, so no code was issued.",
+  codes_off: "Driver codes are off for this carrier, so no code was issued.",
   codes_payouts_off: "Payments are switched off, so no code was issued.",
-  codes_not_armed: "Issuing money codes is not switched on yet, so no code was issued.",
-  codes_before_start: "Money codes start on a later date, so no code was issued.",
-  code_exists: "A code was already asked for on this card. Open it from the Money codes page.",
+  codes_not_armed: "Issuing driver codes is not switched on yet, so no code was issued.",
+  codes_before_start: "Driver codes start on a later date, so no code was issued.",
+  code_exists: "A code was already asked for on this card. Open it from the Driver codes page.",
   code_declined: "The card provider declined the code. Nothing was charged to the driver.",
   code_failed: "No code was issued and nothing was charged to the driver. Send a new request to try again.",
   code_pending: "The code is not confirmed yet. Use Check pending on the code's page.",
@@ -115,7 +115,7 @@ export const PURPOSE_CHOICES: readonly { value: MoneyCodePurpose; label: string 
 
 // What a button on a code's page says when its route refuses. Fixed sentences only.
 const ACTION_SENTENCES: Readonly<Record<string, string>> = {
-  disabled: "Money codes are switched off for this carrier.",
+  disabled: "Driver codes are switched off for this carrier.",
   not_issued: "The code is not issued yet, so there is nothing to show.",
   code_expired: "This code expired. Request a new one if the driver still needs it.",
   not_found: "That code is not here.",

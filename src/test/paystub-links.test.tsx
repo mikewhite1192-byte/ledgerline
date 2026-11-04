@@ -111,7 +111,7 @@ describe("every paystub line in the demo links to a page that exists", () => {
   });
 
   it("a rendered paystub with one line of each kind shows each line's records as links to those pages", () => {
-    // For each kind, the line that cites the most records, so the "and n more records" links are walked too.
+    // For each kind, the line that cites the most records, so the "n other records" links are walked too.
     const pick = new Map<string, Walked>();
     for (const l of lines) {
       const best = pick.get(l.kind);

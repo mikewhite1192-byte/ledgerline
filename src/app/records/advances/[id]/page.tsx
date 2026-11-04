@@ -15,6 +15,7 @@ import { readEngineProposalViews } from "@/lib/agent/gateway/store";
 import { AdvanceFrame, AdvancesOffPage, problemOf, ReadFailed, type ReadProblem } from "@/app/advances/frame";
 import { cardLineFor, readAdvanceRecord, readShell, type AdvanceRecord, type EligibilityNow, type Shell } from "@/lib/advances/read";
 import { PARK_REASON_WORDS } from "@/lib/advances/parking";
+import { readableRequestRef } from "@/lib/advances/rows";
 import { decisionNoteSentence, refusalSentence } from "@/lib/advances/reasons";
 import { sourceWords } from "@/lib/advances/request";
 import { takebackReasonWords } from "@/lib/advances/takeback-words";
@@ -106,8 +107,12 @@ export default async function AdvanceRecordPage({ params }: { params: Promise<{ 
   // reference can be an office code a person does not know. Two of the same amount add the
   // reference so they never read the same.
   const byAmount = (o: (typeof siblingsOnLoad)[number]) => `Advance of ${formatCents(o.amountCents)}`;
-  const siblingName = (o: (typeof siblingsOnLoad)[number]) =>
-    siblingsOnLoad.filter((x) => x.amountCents === o.amountCents).length > 1 ? `${byAmount(o)}, ${o.requestRef}` : byAmount(o);
+  const siblingName = (o: (typeof siblingsOnLoad)[number]) => {
+    const same = siblingsOnLoad.filter((x) => x.amountCents === o.amountCents);
+    if (same.length < 2) return byAmount(o);
+    const ref = readableRequestRef(o.requestRef);
+    return ref ? `${byAmount(o)}, ${ref}` : `${byAmount(o)} (${same.findIndex((x) => x.id === o.id) + 1} of ${same.length})`;
+  };
   // The records the check read, by the names this page already knows (the driver, the load, this
   // advance and the others on its load); any other is named by its kind, never an id tail.
   const known = new Map<string, string>([
@@ -175,7 +180,9 @@ export default async function AdvanceRecordPage({ params }: { params: Promise<{ 
         </CardHeader>
         <CardBody>
           <dl className="grid gap-x-6 gap-y-3 sm:grid-cols-2" data-amounts="shown">
-            <Item label="Reference">{advance.requestRef}</Item>
+            {readableRequestRef(advance.requestRef) ? (
+              <Item label="Reference">{readableRequestRef(advance.requestRef)}</Item>
+            ) : null}
             <Item label="Requested">{when(advance.requestedAt)}</Item>
             <Item label="Amount"><Money cents={advance.amountCents} /></Item>
             <Item label="Fee"><Money cents={advance.feeCents} /></Item>

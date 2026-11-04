@@ -101,7 +101,7 @@ function LineLabel({ line, hrefFor }: { line: PaystubLine; hrefFor: HrefFor }) {
       {rest.length > 0 ? (
         <details className="group mt-0.5 text-small">
           <summary className="w-fit cursor-pointer list-none text-link underline-offset-4 hover:underline [&::-webkit-details-marker]:hidden">
-            and {rest.length} more {rest.length === 1 ? "record" : "records"}
+            {rest.length} other {rest.length === 1 ? "record" : "records"} behind this line
           </summary>
           <ul className="mt-1 grid gap-0.5">
             {rest.map((s) => {

@@ -62,7 +62,7 @@ const KIND_WORDS: Readonly<Record<string, string>> = {
   bill_defer: "a bill delay",
   collections_chase: "a payment reminder",
   pay_rule_change: "a pay rule change",
-  money_code: "a money code",
+  money_code: "a driver code",
   pay_policy_setup: "pay rules",
   load_create: "a new load",
   escrow_release: "an escrow release",

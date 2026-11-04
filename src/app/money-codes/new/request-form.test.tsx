@@ -33,7 +33,7 @@ function fill(amount: string, purpose = "lumper", receipt = "") {
 }
 
 describe("the Request a code form", () => {
-  it("sends the load, the amount in integer cents, the purpose and the receipt, then opens the Money codes page", async () => {
+  it("sends the load, the amount in integer cents, the purpose and the receipt, then opens the Driver codes page", async () => {
     const fetch = answer(200, { ok: true, outcome: "created", proposalId: LOAD });
     form();
     fill("150", "lumper", DOC);

@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useRef } from "react";
-import { artPath, isPayCardArt } from "@/lib/pay-cards/art";
+import { artPath, isPayCardArt, PAY_CARD_ART_SHIPS } from "@/lib/pay-cards/art";
 import type { CardSpec } from "@/lib/pay-cards/spec";
 import { drawPayCard, type DrawArt } from "./draw";
 
@@ -17,7 +17,7 @@ const artCache = new Map<string, Promise<DrawArt>>();
 // The card's background picture, loaded once per page. A picture that does not load draws the
 // plain background instead: the words and figures are the same either way.
 function loadArt(spec: CardSpec): Promise<DrawArt> {
-  if (!isPayCardArt(spec.art)) return Promise.resolve(null);
+  if (!PAY_CARD_ART_SHIPS || !isPayCardArt(spec.art)) return Promise.resolve(null);
   const src = artPath(spec.art);
   let pending = artCache.get(src);
   if (!pending) {

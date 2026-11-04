@@ -32,7 +32,7 @@ const KIND_WORDS: Readonly<Record<string, string>> = {
   advance_payout: "Payout",
   settlement_payout: "Payout",
   advance_expense: "QuickBooks post",
-  money_code_issue: "Money code (Test mode)",
+  money_code_issue: "Driver code (Test mode)",
   factoring_advance: "Factoring advance (Test mode)",
 };
 

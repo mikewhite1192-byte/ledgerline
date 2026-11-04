@@ -55,7 +55,9 @@ export function DataTable<T>({
   // on the visible width when a phone scrolls the columns sideways.
   return (
     <div className={cn("min-w-0 overflow-hidden bg-card", framed && "rounded-lg border border-border", className)}>
-      <div className="scroll-edges overflow-x-auto">
+      {/* relative: a screen-reader-only header (position: absolute) stays inside this scroll area; without
+          it the page grows as wide as the table and scrolls sideways on a phone. */}
+      <div className="scroll-edges relative overflow-x-auto">
         <Table aria-busy={resolved === "loading" || undefined}>
           <caption className="px-3 pt-3 pb-1 text-left text-caption text-muted-foreground">
             {caption}

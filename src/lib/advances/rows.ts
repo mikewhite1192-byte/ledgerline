@@ -161,3 +161,11 @@ export function readFlowAdvance(q: Queryable, id: string, lock = false): Promise
 export function readFlowAdvanceByProposal(q: Queryable, proposalId: string): Promise<FlowAdvance | null> {
   return one(q, "proposal_id = CAST($1 AS uuid)", proposalId, false);
 }
+
+// A request reference as a person would read it. The seed writes keys such as "blue-ridge-adv-load-b"
+// for its history; those are machine keys, so they come back null and the page leaves them out.
+const SEED_REQUEST_KEY = /^[a-z0-9]+(?:-[a-z0-9]+)*-adv-[a-z0-9]+(?:-[a-z0-9]+)*$/;
+export function readableRequestRef(ref: string): string | null {
+  const trimmed = ref.trim();
+  return trimmed === "" || SEED_REQUEST_KEY.test(trimmed) ? null : trimmed;
+}

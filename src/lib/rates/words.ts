@@ -4,7 +4,7 @@
 export const RATES_WORDS = {
   title: "Fuel and tax rates",
   subtitle:
-    "The weekly diesel price and the fuel tax rate for each state. The assistant looks them up and shows the source; only an admin can pin one. A pin records the rate: no rate rule uses it yet, and pinning recalculates nothing.",
+    "The weekly diesel price and the fuel tax rate for each state. The agent looks them up and shows the source; only an admin can pin one. A pin records the rate: no rate rule uses it yet, and pinning recalculates nothing.",
   lookUpDiesel: "Look up this week's diesel price",
   lookUpState: "Look up",
   lookingUp: "Looking it up",

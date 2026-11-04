@@ -12,7 +12,7 @@ import { DbError } from "@/lib/db";
 import { formatLocalDate } from "@/lib/format/dates";
 import { DEMO_ANCHOR } from "@/lib/seed/anchor";
 import { buildCarrierPlan } from "@/lib/seed/plan";
-import { RESET_TABLES, TABLE_LABELS, demoCarrierOf, previewDemoReset, refusalText } from "@/lib/seed/reset";
+import { RESET_TABLES, TABLE_LABELS, demoCarrierOf, demoTemplateOf, previewDemoReset, refusalText } from "@/lib/seed/reset";
 import { countRows } from "@/lib/seed/summary";
 import { ForbiddenError, withRequestTenant } from "@/lib/tenant/context";
 import { readFaultSettings } from "@/lib/tms/demo-faults";
@@ -28,6 +28,7 @@ type Row = { table: string; label: string; now: number; after: number };
 type View =
   | { kind: "staff" }
   | { kind: "not_demo" }
+  | { kind: "copy" }
   | { kind: "ready"; name: string; rows: Row[]; refusals: string[]; faults: DemoFaults | null; shownFaults: readonly DemoFault[] };
 
 const isTenantTable = (t: string): t is TenantTable => (TENANT_TABLES as readonly string[]).includes(t);
@@ -55,7 +56,8 @@ export default async function DemoSettings() {
       if (members.length !== 1) throw new ForbiddenError();
       if (members[0].role !== "admin") return { kind: "staff" };
       const carrier = await demoCarrierOf(q);
-      if (!carrier) return { kind: "not_demo" };
+      // A visit's own copy is not a demo carrier to reset; it is made fresh by a new visit.
+      if (!carrier) return (await demoTemplateOf(q)) ? { kind: "copy" } : { kind: "not_demo" };
       const preview = await previewDemoReset(q, carrier);
       const planned = countRows(buildCarrierPlan(carrier, DEMO_ANCHOR).rows);
       // The fault switches show only while their switch is on and the carrier reads a demo feed.
@@ -144,6 +146,13 @@ export default async function DemoSettings() {
             <CardBody>
               <p className="text-body text-foreground-2">
                 This carrier is not a demo carrier. The reset works only on the demo carriers.
+              </p>
+            </CardBody>
+          ) : view?.kind === "copy" ? (
+            <CardBody>
+              <p className="text-body text-foreground-2">
+                This is your own copy of a demo carrier. It is not reset here. Start a new visit from the start page
+                for a fresh copy.
               </p>
             </CardBody>
           ) : (
