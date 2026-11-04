@@ -46,6 +46,7 @@ export function documentOf(id: string, role: "pickup" | "delivery"): JourneyDocu
     mime: "image/jpeg",
     kind: "bill_of_lading",
     readStatus: "read",
+    stalled: false,
     read: readOf(role),
     match: {
       found: true,
@@ -85,7 +86,6 @@ export function advanceCard(more: Partial<JourneyCard> = {}): JourneyCard {
     createdAt: "2026-11-02T15:06:00.000Z",
     auditVerdict: "pass",
     autopilotMode: "ask",
-    autopilotReason: null,
     decidedAt: "2026-11-02T15:20:00.000Z",
     decidedBy: "admin",
     ...more,

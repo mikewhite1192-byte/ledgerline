@@ -11,7 +11,7 @@ import {
   stillMoving,
   type JourneyStep,
 } from "./steps";
-import { atAdvanceCard, emptyChain, failedPayout, fullChain, LOAD_ID, OPTS, ZONE } from "./test-fixtures";
+import { advanceCard, atAdvanceCard, emptyChain, failedPayout, fullChain, LOAD_ID, OPTS, ZONE } from "./test-fixtures";
 
 const byKey = (steps: readonly JourneyStep[]) => Object.fromEntries(steps.map((s) => [s.key, s]));
 
@@ -95,6 +95,93 @@ describe("journeyStepsOf", () => {
     const doc = f.moves[0].document!;
     f.moves = [{ ...f.moves[0], document: { ...doc, match: { found: false, reason: "no_record" } } }];
     expect(byKey(journeyStepsOf(f, OPTS)).bol.fact).toBe("Muse Spark read the bill of lading.");
+  });
+
+  it("never calls an advance paid while its payout is unread or still sending", () => {
+    const f = failedPayout();
+    for (const state of ["reserved", "sent"] as const) {
+      f.advanceMoney = [{ ...f.advanceMoney[0], state, failureCategory: null, settledAt: null }];
+      expect(byKey(journeyStepsOf(f, OPTS)).advance_paid).toMatchObject({ state: "now", fact: "Waiting for the payout to confirm" });
+    }
+    f.advanceMoney = [{ ...f.advanceMoney[0], state: "unknown", failureCategory: null, settledAt: null }];
+    const s = byKey(journeyStepsOf(f, OPTS));
+    expect(s.advance_paid).toMatchObject({ state: "stopped", fact: "Payout not confirmed, a person is checking." });
+    expect(s.pod.state).toBe("now");
+  });
+
+  it("never calls a paystub paid while its payout is unread", () => {
+    const f = fullChain();
+    const stub = f.settlement!;
+    const legs = (state: "reserved" | "sent" | "unknown") => [{ ...stub.legs[0], state, settledAt: null }];
+    for (const state of ["reserved", "sent"] as const) {
+      f.settlement = { ...stub, status: "approved", paidAt: null, legs: legs(state) };
+      expect(byKey(journeyStepsOf(f, OPTS)).paystub_paid).toMatchObject({ state: "now", fact: "Approved, sending the pay" });
+    }
+    f.settlement = { ...stub, status: "approved", paidAt: null, legs: legs("unknown") };
+    const s = byKey(journeyStepsOf(f, OPTS));
+    expect(s.paystub_paid).toMatchObject({ state: "stopped", fact: "Payout not confirmed, a person is checking." });
+    expect(s.paystub_books.state).toBe("skipped");
+    expect(stillMoving(journeyStepsOf(f, OPTS))).toBe(false);
+  });
+
+  it("records a books step only when QuickBooks confirmed it and sent back its record number", () => {
+    const f = fullChain();
+    f.advanceMoney = [f.advanceMoney[0], { ...f.advanceMoney[1], outsideId: null }];
+    expect(byKey(journeyStepsOf(f, OPTS)).advance_books).toMatchObject({
+      state: "stopped",
+      fact: "Needs a person: QuickBooks sent back no record number.",
+    });
+    const g = fullChain();
+    g.advanceMoney = [g.advanceMoney[0], { ...g.advanceMoney[1], outsideSystem: "mock" }];
+    expect(byKey(journeyStepsOf(g, OPTS)).advance_books).toMatchObject({ state: "done", tag: null });
+  });
+
+  it("hands a books post that could not be read back, or failed every try, to a person", () => {
+    const f = fullChain();
+    const bill = f.settlement!.legs[1];
+    f.settlement = { ...f.settlement!, legs: [f.settlement!.legs[0], { ...bill, state: "unknown", outsideId: null, settledAt: null }] };
+    expect(byKey(journeyStepsOf(f, OPTS)).paystub_books).toMatchObject({
+      state: "stopped",
+      fact: "Needs a person: we could not confirm it in QuickBooks.",
+    });
+    const g = fullChain();
+    const expense = g.advanceMoney[1];
+    g.advanceMoney = [g.advanceMoney[0], { ...expense, state: "failed", failureCategory: "validation", attempt: 5, outsideId: null }];
+    expect(byKey(journeyStepsOf(g, OPTS)).advance_books).toMatchObject({
+      state: "stopped",
+      fact: "Needs a person: QuickBooks did not accept it.",
+    });
+  });
+
+  it("stops the paystub at a rejected, expired or failed card, and at a parked paystub", () => {
+    const base = fullChain();
+    const draft = (card: Parameters<typeof advanceCard>[0], more = {}) => {
+      const f = fullChain();
+      f.settlement = { ...base.settlement!, status: "draft", paidAt: null, legs: [], card: advanceCard(card), ...more };
+      return byKey(journeyStepsOf(f, OPTS));
+    };
+    expect(draft({ status: "rejected" }).paystub_paid).toMatchObject({ state: "stopped", fact: "Rejected by Admin." });
+    expect(draft({ status: "expired" }).paystub_paid).toMatchObject({
+      state: "stopped",
+      fact: "The card expired before anyone approved it.",
+    });
+    expect(draft({ status: "failed" }).paystub_paid).toMatchObject({ state: "stopped", fact: "The payout did not go through." });
+    const parked = draft({ status: "proposed" }, { parkedReason: "negative_net" }).paystub_paid;
+    expect(parked.state).toBe("stopped");
+    expect(parked.fact.startsWith("Parked: ")).toBe(true);
+  });
+
+  it("ends every step still to come on a cancelled load, so nothing waits on it", () => {
+    const f = atAdvanceCard();
+    f.load = { ...f.load, status: "cancelled" };
+    const steps = journeyStepsOf(f, OPTS);
+    expect(steps.map((s) => s.state)).toEqual(["done", "done", "stopped", "stopped", "skipped", "skipped", "skipped", "skipped"]);
+    expect(byKey(steps).advance_paid.fact).toBe("The load was cancelled.");
+    expect(stillMoving(steps)).toBe(false);
+    const planned = emptyChain();
+    planned.load = { ...planned.load, status: "cancelled" };
+    const none = journeyStepsOf(planned, OPTS);
+    expect(none.some((s) => s.state === "now" || s.state === "waiting")).toBe(false);
   });
 
   it("does not post a paystub's books when the books step is off", () => {

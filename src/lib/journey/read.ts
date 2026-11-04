@@ -41,7 +41,7 @@ const DECIDER = `CASE
     ELSE 'someone' END`;
 
 const CARD_COLUMNS = `CAST(p.id AS text) AS id, p.status, p.amount_cents, ${ts("p.created_at", "created_at")},
-  p.auditor_verdict, p.autopilot_decision->>'mode' AS autopilot_mode, p.autopilot_decision->>'reason' AS autopilot_reason,
+  p.auditor_verdict, p.autopilot_decision->>'mode' AS autopilot_mode,
   ${ts("p.decided_at", "decided_at")}, ${DECIDER} AS decided_by`;
 const CARD_FROM = `proposals p
   LEFT JOIN memberships m ON m.tenant_id = current_tenant_id() AND m.cognito_sub = p.decided_by`;
@@ -97,7 +97,6 @@ function cardOf(r: Row): JourneyCard {
     createdAt: text(r.created_at),
     auditVerdict: textOrNull(r.auditor_verdict),
     autopilotMode: textOrNull(r.autopilot_mode),
-    autopilotReason: textOrNull(r.autopilot_reason),
     decidedAt: textOrNull(r.decided_at),
     decidedBy: oneOfOrNull<ActorCode>(r.decided_by, ACTORS),
   };
@@ -141,7 +140,7 @@ function newest<T extends { createdAt: string }>(rows: readonly T[] | undefined)
 function documentOf(row: DocumentMetaRow, now: Date): JourneyDocument | null {
   try {
     const v = viewOf(row, now, { plan: false });
-    return { id: v.id, filename: v.filename, mime: v.mime, kind: v.kind, readStatus: v.readStatus, read: v.read, match: v.match };
+    return { id: v.id, filename: v.filename, mime: v.mime, kind: v.kind, readStatus: v.readStatus, stalled: v.stalled, read: v.read, match: v.match };
   } catch {
     return null;
   }
@@ -424,16 +423,20 @@ export const BOARD_DAYS = 14;
 export const BOARD_LIMIT = 100;
 
 // The board's candidate loads: planned with a driver, on the way, or delivered in the last
-// BOARD_DAYS days (the steps then drop the ones already paid and recorded).
-export async function readBoardLoadIds(q: Queryable, now: Date, zone: string): Promise<string[]> {
+// BOARD_DAYS days (the steps then drop the ones already paid and recorded). Loads on the way come
+// first, then delivered, then planned, so the cap never drops a truck still out for a newer plan.
+// capped: more loads matched than the board reads.
+export async function readBoardLoadIds(q: Queryable, now: Date, zone: string): Promise<{ ids: string[]; capped: boolean }> {
   const since = addDays(localDateOf(now.toISOString(), zone), -BOARD_DAYS);
   const rows = await q.query<{ id: string }>(
     `SELECT CAST(id AS text) AS id FROM loads
       WHERE tenant_id = current_tenant_id()
         AND ((status = 'planned' AND driver_id IS NOT NULL) OR status = 'in_transit'
           OR (status IN ('delivered', 'invoiced') AND delivered_on >= CAST($1 AS date)))
-      ORDER BY pickup_on DESC, id LIMIT ${BOARD_LIMIT}`,
+      ORDER BY CASE status WHEN 'in_transit' THEN 0 WHEN 'delivered' THEN 1 WHEN 'invoiced' THEN 1 ELSE 2 END,
+        pickup_on DESC, id
+      LIMIT ${BOARD_LIMIT + 1}`,
     [since],
   );
-  return rows.map((r) => r.id);
+  return { ids: rows.slice(0, BOARD_LIMIT).map((r) => r.id), capped: rows.length > BOARD_LIMIT };
 }

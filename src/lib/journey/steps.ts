@@ -1,4 +1,4 @@
-import { atOrAfterBooksStart, booksStatus, latestByKind, type BooksRow } from "../books/status";
+import { atOrAfterBooksStart, booksStatus, latestByKind, needsPersonReason, type BooksRow } from "../books/status";
 import type { DocumentView } from "../documents/types";
 import { formatInstant, formatPeriod, isRealInstant } from "../format/dates";
 import { formatCents } from "../format/money";
@@ -59,7 +59,7 @@ export type JourneyLoad = {
   deliveredAt: string | null;
 };
 
-export type JourneyDocument = Pick<DocumentView, "id" | "filename" | "mime" | "kind" | "readStatus" | "read" | "match">;
+export type JourneyDocument = Pick<DocumentView, "id" | "filename" | "mime" | "kind" | "readStatus" | "stalled" | "read" | "match">;
 
 export type JourneyMove = {
   id: string;
@@ -78,7 +78,6 @@ export type JourneyCard = {
   createdAt: string;
   auditVerdict: string | null;
   autopilotMode: string | null;
-  autopilotReason: string | null;
   decidedAt: string | null;
   decidedBy: ActorCode | null;
 };
@@ -264,6 +263,15 @@ const PAYOUT_WORDS: Readonly<Record<string, string>> = {
   mock: "Payout",
 };
 
+// Where a books record went, by the ledger row's outside system.
+const BOOKS_WORDS: Readonly<Record<string, string>> = {
+  qbo_sandbox: "QuickBooks sandbox",
+};
+
+// A payout the ledger could not read back: it is never shown as paid or as still sending.
+const PAYOUT_UNCONFIRMED = "Payout not confirmed, a person is checking.";
+const CANCELLED = "The load was cancelled.";
+
 function cardWaiting(card: JourneyCard): string {
   if (card.auditVerdict === null) return "Waiting for the audit";
   if (card.autopilotMode === null) return "Waiting for the autopilot to look";
@@ -301,7 +309,7 @@ function moveStep(facts: JourneyFacts, to: "in_transit" | "delivered"): Draft {
       const at = to === "in_transit" ? load.pickedUpAt : load.deliveredAt;
       return done(at, to === "in_transit" ? "Picked up." : "Delivered.");
     }
-    if (load.status === "cancelled") return skipped("The load was cancelled.");
+    if (load.status === "cancelled") return skipped(CANCELLED);
     return pending(to === "in_transit" ? "Waiting for the driver's bill of lading" : "Waiting for the driver's proof of delivery");
   }
   const doc = docOf(move);
@@ -333,7 +341,7 @@ function advanceDrafted(facts: JourneyFacts, pickup: Draft): Draft {
   if (advance !== null) {
     return done(advance.createdAt, "An advance was requested for this load.", { figureCents: advance.amountCents });
   }
-  if (facts.load.status === "cancelled") return skipped("The load was cancelled.");
+  if (facts.load.status === "cancelled") return skipped(CANCELLED);
   if (pickup.state !== "done") return pending("Drafted after pickup");
   const move = facts.moves.find((m) => m.toStatus === "in_transit") ?? null;
   if (move === null || move.source === "seed") return skipped("No advance: the load was picked up before LedgerLine watched it.");
@@ -364,6 +372,7 @@ function advancePaid(facts: JourneyFacts, drafted: Draft): Draft {
     return stopped(advance.status === "rejected" ? "The advance was rejected." : "The advance was cancelled.", link);
   }
   if (payout !== null && payout.state === "failed") return stopped("The payout did not go through.", { ...link, at: payout.settledAt });
+  if (payout !== null && payout.state === "unknown") return stopped(PAYOUT_UNCONFIRMED, link);
   if (payout !== null && payout.state !== "confirmed") return pending("Waiting for the payout to confirm", link);
   if (card === null) return pending(advance !== null ? "Waiting for a person to approve" : "Paid after a person approves", link);
   switch (card.status) {
@@ -384,6 +393,8 @@ function advancePaid(facts: JourneyFacts, drafted: Draft): Draft {
 }
 
 // A books step from its ledger rows: in QuickBooks with the record's tail, posting, or a person.
+// Done only when every kind's latest row is confirmed and names its QuickBooks record; a post that
+// could not be read back waits on a person, never on the page.
 function booksStep(
   rows: readonly JourneyMoney[],
   kinds: readonly MoneyActionKind[],
@@ -391,18 +402,24 @@ function booksStep(
   opts: JourneyOptions,
 ): Draft {
   const on = opts.books.enabled && atOrAfterBooksStart(paidAt, opts.zone, opts.books.startDate);
-  const tails = kinds
-    .map((k) => latestByKind(rows, k)?.outsideId ?? null)
+  const latest = kinds.map((k) => latestByKind(rows, k));
+  const unread = latest.find((a) => a !== null && a.state === "unknown");
+  if (unread) return stopped(`Needs a person: ${needsPersonReason(unread, opts.books.maxAttempts)}.`);
+  const tails = latest
+    .map((a) => a?.outsideId ?? null)
     .filter((id): id is string => typeof id === "string" && id.length > 0)
     .map((id) => id.slice(-4));
   const line = booksStatus(rows, kinds, { on, maxAttempts: opts.books.maxAttempts, tail: tails[0] ?? null });
   switch (line.state) {
     case "in_books": {
-      const at = kinds
-        .map((k) => latestByKind(rows, k)?.settledAt ?? null)
+      if (tails.length !== kinds.length) return stopped("Needs a person: QuickBooks sent back no record number.");
+      const at = latest
+        .map((a) => a?.settledAt ?? null)
         .reduce<string | null>((top, t) => (t !== null && (top === null || t > top) ? t : top), null);
       const refs = tails.length > 1 ? `In QuickBooks, records ending ${tails.join(" and ")}` : line.text;
-      return done(at, `${refs}.`, { actor: LEDGERLINE, tag: "QuickBooks sandbox" });
+      const system = latest[0]?.outsideSystem ?? null;
+      const tag = system !== null && Object.hasOwn(BOOKS_WORDS, system) ? BOOKS_WORDS[system] : null;
+      return done(at, `${refs}.`, { actor: LEDGERLINE, tag });
     }
     case "posting":
       return pending(line.text);
@@ -466,7 +483,7 @@ function paystubDrafted(facts: JourneyFacts, pod: Draft): Draft {
       hrefLabel: "Open the paystub",
     });
   }
-  if (facts.load.status === "cancelled") return skipped("The load was cancelled.");
+  if (facts.load.status === "cancelled") return skipped(CANCELLED);
   if (pod.state !== "done") return pending("Drafted after delivery");
   return pending("Waiting for the week's pay run");
 }
@@ -491,6 +508,7 @@ function paystubPaid(facts: JourneyFacts, drafted: Draft): Draft {
   if (s.parkedReason !== null) return stopped(`Parked: ${parkLabel(s.parkedReason)}.`, link);
   const payout = latestByKind(s.legs, "settlement_payout");
   if (payout !== null && payout.state === "failed") return stopped("The payout did not go through.", link);
+  if (payout !== null && payout.state === "unknown") return stopped(PAYOUT_UNCONFIRMED, link);
   if (s.status === "approved") return pending("Approved, sending the pay", { ...link, actor: actorWord(card?.decidedBy ?? null) });
   if (card === null) return pending("Waiting for a person to approve", link);
   switch (card.status) {
@@ -523,7 +541,7 @@ function timeOf(at: string | null, zone: string): string | null {
 }
 
 // The eight steps in their fixed order. The first step still to come is "now"; any later step
-// still to come is "waiting".
+// still to come is "waiting". A cancelled load has none still to come.
 export function journeyStepsOf(facts: JourneyFacts, opts: JourneyOptions): JourneyStep[] {
   const bol = moveStep(facts, "in_transit");
   const drafted = advanceDrafted(facts, bol);
@@ -533,7 +551,11 @@ export function journeyStepsOf(facts: JourneyFacts, opts: JourneyOptions): Journ
   const stub = paystubDrafted(facts, pod);
   const stubPaid = paystubPaid(facts, stub);
   const stubBook = paystubBooks(facts, stubPaid, opts);
-  const drafts = [bol, drafted, paid, advanceBook, pod, stub, stubPaid, stubBook];
+  // A cancelled load goes no further: every step still to come ends, so nothing waits on it.
+  const cancelled = facts.load.status === "cancelled";
+  const drafts = [bol, drafted, paid, advanceBook, pod, stub, stubPaid, stubBook].map((d) =>
+    cancelled && d.state === "pending" ? stopped(CANCELLED) : d,
+  );
   let first = true;
   return drafts.map((d, i) => {
     const key = STEP_KEYS[i];

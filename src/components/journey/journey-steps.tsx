@@ -5,7 +5,15 @@ import { FileText } from "lucide-react";
 import { useEffect, useRef, type CSSProperties } from "react";
 import { Money } from "@/components/app/money";
 import { lineDescription } from "@/components/app/paystub";
-import { claimRows, fieldLabel, fieldStatusBadge, kindLabel, matchedLabel, noneSentence } from "@/components/documents/labels";
+import {
+  claimRows,
+  fieldLabel,
+  fieldStatusBadge,
+  kindLabel,
+  matchedLabel,
+  noneSentence,
+  readStatusBadge,
+} from "@/components/documents/labels";
 import { Badge, type BadgeTone } from "@/components/ui/badge";
 import { cn } from "@/lib/cn";
 import type { JourneyDocument, JourneyStep, PaystubSummary, StepKey, StepState } from "@/lib/journey/steps";
@@ -113,7 +121,11 @@ function DocumentRead({
       <div className="flex min-w-0 flex-wrap items-center gap-3">
         <DocumentThumb doc={doc} documentsOn={documentsOn} />
         <div className="min-w-0">
-          <p className="text-caption text-foreground-2">Read by Muse Spark</p>
+          {doc.read !== null ? (
+            <p className="text-caption text-foreground-2">Read by Muse Spark</p>
+          ) : (
+            <Badge tone={readStatusBadge(doc).tone}>{readStatusBadge(doc).label}</Badge>
+          )}
           <p className="text-small text-foreground">{kindLabel(doc.kind)}</p>
         </div>
       </div>
@@ -291,7 +303,7 @@ export function JourneySteps({
                       )}
                     </span>
                   ) : null}
-                  {s.tag ? <Badge>{s.tag}</Badge> : null}
+                  {s.tag ? <Badge className="whitespace-normal">{s.tag}</Badge> : null}
                 </div>
               ) : null}
               {s.document ? (

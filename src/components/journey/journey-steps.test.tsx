@@ -1,12 +1,16 @@
 // @vitest-environment jsdom
-import { cleanup, render } from "@testing-library/react";
-import { afterEach, describe, expect, it } from "vitest";
+import { act, cleanup, render } from "@testing-library/react";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { journeyEvents, journeyStepsOf, boardRowOf } from "@/lib/journey/steps";
 import { atAdvanceCard, fullChain, LOAD_ID, OPTS, ZONE } from "@/lib/journey/test-fixtures";
+import { CountUp } from "./count-up";
 import { JourneySteps } from "./journey-steps";
 import { RoadBoard, RoadStream } from "./road-board";
 
-afterEach(cleanup);
+afterEach(() => {
+  cleanup();
+  vi.useRealTimers();
+});
 
 const moving = () => journeyStepsOf(atAdvanceCard(), OPTS);
 const paid = () => {
@@ -46,6 +50,39 @@ describe("JourneySteps motion", () => {
     expect(text).toContain("5 days at $11.00 a day");
     expect(text).toContain("Read by Muse Spark");
     expect(text).toContain("Matched to load L-20417");
+  });
+
+  it("names a document not read yet by its read status, never as read by the model", () => {
+    const f = atAdvanceCard();
+    const doc = f.moves[0].document!;
+    f.moves = [{ ...f.moves[0], document: { ...doc, readStatus: "pending", stalled: false, read: null, match: null } }];
+    const { container } = render(view(journeyStepsOf(f, OPTS)));
+    const text = container.textContent ?? "";
+    expect(text).not.toContain("Read by Muse Spark");
+    expect(text).toContain("Not read yet, so nothing was matched.");
+  });
+});
+
+describe("CountUp", () => {
+  it("counts a fresh amount up over frames and ends on the stored figure exactly", () => {
+    vi.useFakeTimers({ toFake: ["requestAnimationFrame", "cancelAnimationFrame", "performance"] });
+    const { container } = render(<CountUp cents={209_500} run />);
+    expect(container.textContent).toBe("$0.00");
+    act(() => {
+      vi.advanceTimersByTime(400);
+    });
+    const mid = container.textContent;
+    expect(mid).not.toBe("$0.00");
+    expect(mid).not.toBe("$2,095.00");
+    act(() => {
+      vi.advanceTimersByTime(1_000);
+    });
+    expect(container.textContent).toBe("$2,095.00");
+  });
+
+  it("shows the stored figure at once when the step is not fresh", () => {
+    const { container } = render(<CountUp cents={209_500} run={false} />);
+    expect(container.textContent).toBe("$2,095.00");
   });
 });
 

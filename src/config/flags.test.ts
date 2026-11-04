@@ -438,8 +438,8 @@ describe("flags", () => {
     expect(LOCAL_OFF_ONLY as readonly string[]).toContain("activityFeed.enabled");
   });
 
-  it("ships the load journey off, refreshing every 5 seconds, off for the local demo run", () => {
-    expect(flags.journey).toEqual({ enabled: false, pollSeconds: 5 });
+  it("ships the load journey off, the page refreshing every 5 seconds and the board every 10, off for the local demo run", () => {
+    expect(flags.journey).toEqual({ enabled: false, pollSeconds: 5, boardPollSeconds: 10 });
     // Listed ahead of its release, so the demo-path run keeps it off once it ships on.
     expect(LOCAL_OFF_ONLY as readonly string[]).toContain("journey.enabled");
   });
