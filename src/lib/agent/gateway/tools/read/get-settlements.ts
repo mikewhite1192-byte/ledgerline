@@ -9,7 +9,7 @@ import { OPERATOR } from "../shared";
 export const READ_NEXT =
   "No paystubs yet does not mean no problems or no pay: run_checks with this periodId lists " +
   "this week's pay problems now, as the pay check lists them, and explain_paystub with this " +
-  "periodId and a driver's id (from run_checks or get_driver) previews that driver's pay for " +
+  "periodId and a driver's id (from run_checks, or from get_settlements for a week that has paystubs) previews that driver's pay for " +
   "this week, computed by the rules engine.";
 
 export const getSettlements = defineTool({
@@ -22,7 +22,7 @@ export const getSettlements = defineTool({
     "matches its records. noPaystubsYet true means only that this open week has no paystubs " +
     "yet, never no problems or no pay: for who has a problem call run_checks with this " +
     "periodId, and for one driver's pay call explain_paystub with this periodId and the " +
-    "driver's id (from run_checks or get_driver), then answer from what they find. With runTheWeek true it is the week paid next and has pay: say " +
+    "driver's id (from run_checks, or from get_settlements for a week that has paystubs), then answer from what they find. With runTheWeek true it is the week paid next and has pay: say " +
     "plainly that pressing " +
     "Run the week on the Pay page runs it and makes paystubs for the drivers with " +
     "payable work; never say it was not run. With noPayYet true it has no pay yet: say so and " +

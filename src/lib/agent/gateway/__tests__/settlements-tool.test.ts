@@ -140,8 +140,8 @@ describe("get_settlements", () => {
     expect(getSettlements.description).toContain("never no problems or no pay");
     expect(getSettlements.description).toContain("for who has a problem call run_checks with this periodId");
     expect(getSettlements.description).toContain("call explain_paystub with this periodId");
-    expect(getSettlements.description).toContain("(from run_checks or get_driver)");
+    expect(getSettlements.description).toContain("(from run_checks, or from get_settlements for a week that has paystubs)");
     expect(READ_NEXT).toContain("run_checks with this periodId");
-    expect(READ_NEXT).toContain("explain_paystub with this periodId and a driver's id (from run_checks or get_driver)");
+    expect(READ_NEXT).toContain("explain_paystub with this periodId and a driver's id (from run_checks, or from get_settlements for a week that has paystubs)");
   });
 });

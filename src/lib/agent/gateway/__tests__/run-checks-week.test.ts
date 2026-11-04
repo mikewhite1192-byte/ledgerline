@@ -76,6 +76,28 @@ describe("run_checks for one week", () => {
     expect(checks(await rows({ periodId: paid.id }))).not.toContain("over_advance_limit");
   });
 
+  it("lists the payment findings for the open week only, since payments cannot be read as of a past day", async () => {
+    expect(checks(await rows({}))).toContain("payment_on_wrong_invoice");
+    expect(checks(await rows({ periodId: open.id }))).toContain("payment_on_wrong_invoice");
+    expect(checks(await rows({ periodId: paid.id }))).not.toContain("payment_on_wrong_invoice");
+  });
+
+  it("lists an advance over its load's cap in the week its load was delivered", async () => {
+    const adv = plan.rows.advances.find((a) => a.load_id !== null)!;
+    const load = plan.rows.loads.find((l) => l.id === adv.load_id)!;
+    const big: CarrierPlan = {
+      ...plan,
+      rows: {
+        ...plan.rows,
+        loads: plan.rows.loads.map((l) => (l.id === load.id ? { ...l, delivered_on: "2026-10-14" } : l)),
+        advances: plan.rows.advances.map((a) => (a.id === adv.id ? { ...a, amount_cents: 50_000_000 } : a)),
+      },
+    };
+    expect(checks(await rows({}, big))).toContain("advance_over_load_cap");
+    expect(checks(await rows({ periodId: paid.id }, big))).toContain("advance_over_load_cap");
+    expect(checks(await rows({ periodId: open.id }, big))).not.toContain("advance_over_load_cap");
+  });
+
   it("narrows one week to one driver", async () => {
     const dup = runAllChecks(checkInputOf(plan.rows)).find((f) => f.check === "duplicate_advance")!;
     const mine = await rows({ periodId: open.id, driverId: dup.driverId! });
@@ -95,7 +117,8 @@ describe("run_checks for one week", () => {
 
   it("says what periodId does", () => {
     expect(runChecks.description).toContain("With periodId it lists what the pay check lists for that week");
-    expect(runChecks.description).toContain("the fuel findings are left out");
+    expect(runChecks.description).toContain("The fuel findings are left out");
+    expect(runChecks.description).toContain("a week no longer open lists neither");
     expect(runChecks.description).toContain("get_settlements shows those");
   });
 });
