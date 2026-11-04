@@ -272,9 +272,10 @@ const BOOKS_WORDS: Readonly<Record<string, string>> = {
 const PAYOUT_UNCONFIRMED = "Payout not confirmed, a person is checking.";
 const CANCELLED = "The load was cancelled.";
 
-function cardWaiting(card: JourneyCard): string {
+// A paystub card is never the autopilot's, so only an advance card waits for the autopilot to look.
+function cardWaiting(card: JourneyCard, autopilotDecides: boolean): string {
   if (card.auditVerdict === null) return "Waiting for the audit";
-  if (card.autopilotMode === null) return "Waiting for the autopilot to look";
+  if (autopilotDecides && card.autopilotMode === null) return "Waiting for the autopilot to look";
   return "Waiting for a person to approve";
 }
 
@@ -377,7 +378,7 @@ function advancePaid(facts: JourneyFacts, drafted: Draft): Draft {
   if (card === null) return pending(advance !== null ? "Waiting for a person to approve" : "Paid once approved, by a person or your autopilot", link);
   switch (card.status) {
     case "proposed":
-      return pending(cardWaiting(card), link);
+      return pending(cardWaiting(card, true), link);
     case "approved":
     case "executing":
       return pending("Approved, sending the payout", { ...link, actor: actorWord(card.decidedBy) });
@@ -519,7 +520,7 @@ function paystubPaid(facts: JourneyFacts, drafted: Draft): Draft {
     case "failed":
       return stopped("The payout did not go through.", link);
     case "proposed":
-      return pending(cardWaiting(card), link);
+      return pending(cardWaiting(card, false), link);
     default:
       return pending("Approved, sending the pay", { ...link, actor: actorWord(card.decidedBy) });
   }

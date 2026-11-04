@@ -172,6 +172,21 @@ describe("journeyStepsOf", () => {
     expect(parked.fact.startsWith("Parked: ")).toBe(true);
   });
 
+  it("never says a paystub waits for the autopilot, which does not approve paystubs", () => {
+    const base = fullChain();
+    const f = fullChain();
+    f.settlement = {
+      ...base.settlement!,
+      status: "draft",
+      paidAt: null,
+      legs: [],
+      card: advanceCard({ status: "proposed", auditVerdict: "pass", autopilotMode: null }),
+    };
+    expect(byKey(journeyStepsOf(f, OPTS)).paystub_paid.fact).toBe("Waiting for a person to approve");
+    f.settlement = { ...f.settlement, card: advanceCard({ status: "proposed", auditVerdict: null, autopilotMode: null }) };
+    expect(byKey(journeyStepsOf(f, OPTS)).paystub_paid.fact).toBe("Waiting for the audit");
+  });
+
   it("ends every step still to come on a cancelled load, so nothing waits on it", () => {
     const f = atAdvanceCard();
     f.load = { ...f.load, status: "cancelled" };
