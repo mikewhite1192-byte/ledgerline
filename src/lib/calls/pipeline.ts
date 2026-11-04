@@ -731,8 +731,10 @@ export async function receiveSegment(session: Session, input: SegmentInput, deps
     );
 
     // The agent's turn runs inside this request only when a whole turn fits in what is left of it,
-    // with MIN_CALL_MS more for the writes the turn makes after its own deadline; otherwise the
-    // note waits, 'ready', for the hand-off route.
+    // with MIN_CALL_MS more for the writes the turn makes after its own deadline. With the 27 s turn
+    // limit (D-105) a whole turn never fits inside the 27 s step, so the note always waits,
+    // 'ready', for the hand-off: the voice note page's "Hand to the agent" button, or the segment
+    // hand-off route.
     if (handOff && remaining() >= flags.agentTurnLimits.wallClockMs + MIN_CALL_MS) {
       await runHandOff(session, segment.id, handOff, { db, clock, deps });
     }
