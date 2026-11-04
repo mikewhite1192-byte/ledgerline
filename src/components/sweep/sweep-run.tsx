@@ -22,6 +22,7 @@ import { hrefOrNull, recordHref } from "@/lib/records/href";
 import type { SweepItemView, SweepPage } from "@/lib/sweep/view";
 import { sweepOutcome } from "@/lib/sweep/words";
 import { batchFor, type HeldBatch } from "./batch-id";
+import { useCarryOn } from "./carry-on";
 import { WeekChecks } from "./week-checks";
 
 // A sweep run's page (design 3.10): the run's checklist of phases, ticked as it moves (agents-101
@@ -34,9 +35,6 @@ import { WeekChecks } from "./week-checks";
 // Under the simple shape (flags.simpleShape, passed in as simple) the checklist shows only while
 // the run is running, the counts leave (the outcome line says them), and how the week was checked
 // folds under "How I checked".
-
-const ADVANCE_LIMIT = 60;
-const BUSY_WAIT_MS = 3_000;
 
 const NOT_DRAFTED: Readonly<Record<string, string>> = {
   mismatch: "The drafted amount did not match the figure from your pay rules, so it was set aside.",
@@ -189,38 +187,11 @@ export function SweepRun({
     }
   }, [runId]);
 
-  // Carry a running run on, one slice per request, a bounded number of times per page view. A demo
-  // visitor (the judge role) only reads it: carrying a run on is for the carrier's staff, so the
-  // page never asks (the route would refuse a judge anyway).
+  // Carry a running run on (carry-on.tsx): one slice per request, a bounded number of times per
+  // page view, never for a demo visitor (the judge role).
   const running = page.run.status === "running";
-  useEffect(() => {
-    if (!running || judge) return;
-    let stop = false;
-    let calls = 0;
-    let timer: ReturnType<typeof setTimeout> | undefined;
-    async function step() {
-      if (stop) return;
-      if (calls >= ADVANCE_LIMIT) {
-        setStalled(true);
-        return;
-      }
-      calls += 1;
-      let wait = 0;
-      try {
-        const res = await fetch(`/api/sweeps/${encodeURIComponent(runId)}/advance`, { method: "POST" });
-        if (!res.ok) wait = BUSY_WAIT_MS;
-      } catch {
-        wait = BUSY_WAIT_MS;
-      }
-      await refresh();
-      if (!stop) timer = setTimeout(() => void step(), wait);
-    }
-    void step();
-    return () => {
-      stop = true;
-      if (timer) clearTimeout(timer);
-    };
-  }, [running, judge, runId, refresh]);
+  const stalledNow = useCallback(() => setStalled(true), []);
+  useCarryOn({ runId, running, off: judge, afterStep: refresh, onLimit: stalledNow });
 
   async function approve(p: ProposalView, overrideReason?: string) {
     setBusy(p.id);

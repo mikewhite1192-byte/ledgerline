@@ -7,6 +7,7 @@ import { getDb } from "@/lib/db";
 import { demoCarrierOf } from "@/lib/seed/reset";
 import { buildCopySlice } from "@/lib/visit-copy/build";
 import { purgeExpired } from "@/lib/visit-copy/purge";
+import { startCopySweep } from "@/lib/visit-copy/story";
 
 // One slice of a visit's own copy of the demo carrier (src/lib/visit-copy/build.ts), called by the
 // preparing page until the copy is ready. A visitor has no session while the copy is being built,
@@ -17,7 +18,9 @@ import { purgeExpired } from "@/lib/visit-copy/purge";
 // own carrier, matched exactly (a copy is never copied). The build writes only the copy's own
 // carrier, under its own tenant; then, in the demo carrier, only the visit's copy_ready_at. The
 // slice that writes the copy's setup rows also purges up to flags.visitCopies.purgePerCall copies
-// of ended visits. The log gets counts and the error's name only.
+// of ended visits. Once the copy is marked ready, its own pay check starts while its switch is on
+// (src/lib/visit-copy/story.ts, which never throws): the answer is ready whatever it did. The log
+// gets counts and the error's name only.
 
 export type BuildState =
   | { state: "building"; tablesDone: number; tablesTotal: number }
@@ -70,9 +73,24 @@ export async function buildCopyAction(): Promise<BuildState> {
       return { state: "failed" };
     }
     console.info("visit copy: ready");
+    await startWithin(startCopySweep(db, visit), STORY_START_MS);
     return { state: "ready" };
   } catch (err) {
     console.error(`visit copy: a slice failed (${err instanceof Error ? err.name : "non-error"})`);
     return { state: "failed" };
   }
+}
+
+// The copy's pay check start may take this long before the visit is told it is ready anyway; a
+// start still going on is left to finish or fail on its own, and Home reads back what it made.
+const STORY_START_MS = 5_000;
+
+async function startWithin(start: Promise<unknown>, ms: number): Promise<void> {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const late = new Promise<"late">((resolve) => {
+    timer = setTimeout(() => resolve("late"), ms);
+  });
+  const won = await Promise.race([start.then(() => "done" as const, () => "done" as const), late]);
+  clearTimeout(timer);
+  if (won === "late") console.info("visit copy: sweep skipped timed_out");
 }
