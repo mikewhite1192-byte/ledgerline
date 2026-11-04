@@ -106,6 +106,11 @@ describe("get_collections", () => {
     expect(getCollections.enabled?.()).toBe(true);
   });
 
+  it("says it is only the 30+ day reminder list and sends overdue balances to get_ar_aging", () => {
+    expect(getCollections.description).toMatch(/^ONLY the 30\+ day reminder list/);
+    expect(getCollections.description).toContain("use get_ar_aging");
+  });
+
   it("takes only a customer id: no tenant, no date, no other field", () => {
     expect(getCollections.args.safeParse({}).success).toBe(true);
     expect(getCollections.args.safeParse({ customerId: "not-an-id" }).success).toBe(false);
