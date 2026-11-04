@@ -2,7 +2,6 @@ import { randomUUID } from "node:crypto";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { flags } from "../../config/flags";
 import type { Session } from "../auth/claims";
-import { explainPaystub } from "../agent/gateway/tools/read/explain-paystub";
 import { createPgDb } from "../db/pg";
 import { adminUrl, appUrl } from "../db/test-urls";
 import type { Db, Param } from "../db/types";
@@ -216,17 +215,6 @@ describe("the paystub's year to date and escrow balance against a seeded databas
       ]);
     }
     expect((await ytd()).paidCents).toBe(EXPECTED_YTD);
-  });
-
-  it("gives the agent the same two figures in keys that end in Cents", async () => {
-    const out = await app.withTenant(T, (q) =>
-      explainPaystub.run(q, { timeZone: ZONE } as never, { driverId: HERO.id, periodId: OPEN.id }, {} as never),
-    );
-    const result = out.result as Record<string, unknown>;
-    expect(result.ytdPaidCents).toBe(EXPECTED_YTD);
-    const view = await app.withTenant(T, async (q) => readPaystubYear(q, (await heroDraft()).id));
-    expect(result.escrowBalanceCents).toBe(view!.escrow.balanceCents);
-    expect(result.escrowAsOf).toBe("after_this_paystub");
   });
 
   it("reads nothing for another carrier's stub", async () => {

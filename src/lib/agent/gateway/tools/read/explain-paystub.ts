@@ -6,7 +6,6 @@ import { findContradictions, readSourceFacts } from "../../../../settlements/con
 import { readStoredLines } from "../../../../settlements/stored";
 import { nameOf } from "../../../../settlements/list";
 import { readStubSent, stubSummary } from "../../../../settlements/stub-sent";
-import { readPaystubYear } from "../../../../settlements/year";
 import { localDateOf } from "../../../../time/local-date";
 import { defineTool } from "../../types";
 import { idField } from "../../validate";
@@ -58,11 +57,7 @@ export const explainPaystub = defineTool({
     "staff as it is, and sent, which says when a staff member recorded sending the stub and their role; sent null " +
     "on a paid stub means no send is recorded yet. You cannot send a stub: a staff member sends it " +
     "and records it with the Mark stub sent button on the paystub's page. stub is null unless paid, " +
-    "and absent when stub send records are off. On a stored paystub, ytdPaidCents is what the " +
-    "driver was paid in the stub's calendar year (the year it was paid, or the year this week ends in " +
-    "while unpaid), on a paid stub only up to and including it, and escrowBalanceCents their escrow " +
-    "balance as of this stub (escrowAsOf paid) or if it is paid now (after_this_paystub). For why " +
-    "a driver's pay is short this week, send " +
+    "and absent when stub send records are off. For why a driver's pay is short this week, send " +
     "it with the week paid next's periodId (the state summary names it) and the driverId from " +
     "find_driver, in the same response as get_settlements and run_checks: it previews a week " +
     "that has no paystubs yet.",
@@ -122,8 +117,6 @@ export const explainPaystub = defineTool({
           sent: sent ? { at: sent.at, byRole: sent.byRole } : null,
         };
       }
-      // The paystub's year to date and escrow balance, from stored rows; absent if unreadable.
-      const year = await readPaystubYear(q, stored.id);
       const rows = [...lines]
         .sort((x, y) => x.seq - y.seq)
         .map((l) => ({
@@ -151,13 +144,6 @@ export const explainPaystub = defineTool({
           notes: exemptNotes,
           contradictions,
           ...(stubOn ? { stub } : {}),
-          ...(year
-            ? {
-                ytdPaidCents: year.yearToDate.paidCents,
-                escrowBalanceCents: year.escrow.balanceCents,
-                escrowAsOf: year.escrow.asOf,
-              }
-            : {}),
           subtotals: lineSubtotals(rows),
           rows,
         },
