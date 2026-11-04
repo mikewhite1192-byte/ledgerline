@@ -13,6 +13,7 @@ import {
   exceptionLabel,
   LEG_NOT_SENT,
   legFailureLabel,
+  paidBeforeApp,
   parkLabel,
   PARK_LABELS,
   SETTLEMENT_OUTCOME_FALLBACK,
@@ -519,5 +520,20 @@ describe("the pay run's words", () => {
       "1 paystub drafted, 2 already approved or paid. More drivers wait for the next run.",
     );
     expect(doneNote("run", {})).toBe("0 paystubs drafted.");
+  });
+});
+
+describe("paidBeforeApp", () => {
+  it("is true for a paid paystub with no payment legs and no proposal", () => {
+    expect(paidBeforeApp({ status: "paid", legs: [], proposal: null })).toBe(true);
+  });
+  it("is false when a leg was sent from here", () => {
+    expect(paidBeforeApp({ status: "paid", legs: [{ id: "a" }], proposal: null })).toBe(false);
+  });
+  it("is false when a proposal exists", () => {
+    expect(paidBeforeApp({ status: "paid", legs: [], proposal: { id: "p" } })).toBe(false);
+  });
+  it("is false for an approved paystub", () => {
+    expect(paidBeforeApp({ status: "approved", legs: [], proposal: null })).toBe(false);
   });
 });

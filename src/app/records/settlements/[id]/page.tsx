@@ -21,7 +21,7 @@ import type { Queryable } from "@/lib/db";
 import { formatInstant } from "@/lib/format/dates";
 import { codeToWords } from "@/lib/format/labels";
 import { formatCents } from "@/lib/format/money";
-import { LEG_LABELS, legFailureLabel, settlementOutcome } from "@/lib/settlements/labels";
+import { LEG_LABELS, legFailureLabel, paidBeforeApp, settlementOutcome } from "@/lib/settlements/labels";
 import { readSettlementRecord, type SettlementRecordView } from "@/lib/settlements/views";
 import { weekEnding } from "@/components/agent/page-focus";
 import { readRecordPage } from "../../read-record";
@@ -63,10 +63,12 @@ export default async function SettlementRecord({ params }: { params: Promise<{ i
   const s = view.settlement;
   const tz = page.shell.timezone;
   const payout = view.latest.settlement_payout;
+  // Paid outside the app (seeded history): nothing was sent from here, so no books line and no legs.
+  const before = paidBeforeApp({ status: s.status, legs: view.legs, proposal: view.proposal });
   // A paid paystub's bill and its payment post to QuickBooks by themselves (D-104), when paid on or
   // after the books start date: the page only says where they stand.
   const books =
-    s.status === "paid" && s.netCents > 0
+    s.status === "paid" && s.netCents > 0 && !before
       ? booksStatus(view.legs, ["settlement_bill", "settlement_bill_payment"], {
           on: flags.books.enabled && atOrAfterBooksStart(s.paidAt, tz, flags.books.startDate),
           maxAttempts: flags.books.maxAttempts,
@@ -157,7 +159,11 @@ export default async function SettlementRecord({ params }: { params: Promise<{ i
         caption="Payments and bookings"
         rows={view.legs}
         rowKey={(r) => r.id}
-        empty={{ title: "Nothing sent yet", body: "The payout, the bill and its payment show here once approved." }}
+        empty={
+          before
+            ? { title: "Paid before LedgerLine", body: "This paystub was paid outside LedgerLine, so nothing was sent from here." }
+            : { title: "Nothing sent yet", body: "The payout, the bill and its payment show here once approved." }
+        }
         columns={[
           { key: "leg", header: "Step", cell: (r) => LEG_LABELS[r.kind] },
           { key: "attempt", header: "Attempt", cell: (r) => `#${r.attempt}` },
