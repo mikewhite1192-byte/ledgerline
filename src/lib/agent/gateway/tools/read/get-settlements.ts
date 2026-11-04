@@ -8,9 +8,12 @@ import { OPERATOR } from "../shared";
 // What to read next on an open week with pay and no paystubs yet, as the result says it.
 export const READ_NEXT =
   "No paystubs yet does not mean no problems or no pay: run_checks with this periodId lists " +
-  "this week's pay problems now, as the pay check lists them, and explain_paystub with this " +
+  "this week's pay problems now, as the pay check lists them (call it next unless it already " +
+  "came back), and explain_paystub with this " +
   "periodId and a driver's id (from run_checks, or from get_settlements for a week that has paystubs) previews that driver's pay for " +
-  "this week, computed by the rules engine.";
+  "this week, computed by the rules engine. Answer from those two: report_driver_pay_summary " +
+  "has no rows for this week and report_driver_insights ranks drivers, so neither answers " +
+  "this week's problems or one driver's pay.";
 
 export const getSettlements = defineTool({
   name: "get_settlements",
@@ -19,10 +22,16 @@ export const getSettlements = defineTool({
     "periodId is given), in driver order: each one's driver, gross, deductions and net in " +
     "integer cents, status, the exception categories on its approval card, the auditor's " +
     "verdict, whether it is clean for Approve all clean, and parkedReason when it no longer " +
-    "matches its records. noPaystubsYet true means only that this open week has no paystubs " +
+    "matches its records. For who has a problem on this week's paystub or why a driver's pay " +
+    "is short this week, send run_checks with the week paid next's periodId (the state summary " +
+    "names it) in the same response as this call, so both come back together. noPaystubsYet " +
+    "true means only that this open week has no paystubs " +
     "yet, never no problems or no pay: for who has a problem call run_checks with this " +
     "periodId, and for one driver's pay call explain_paystub with this periodId and the " +
-    "driver's id (from run_checks, or from get_settlements for a week that has paystubs), then answer from what they find. With runTheWeek true it is the week paid next and has pay: say " +
+    "driver's id (from run_checks, or from get_settlements for a week that has paystubs), then answer from what they find. " +
+    "Never call report_driver_pay_summary or report_driver_insights for that week's problems " +
+    "or one driver's pay: the summary has no rows before paystubs and the ranking explains no " +
+    "one's pay. With runTheWeek true it is the week paid next and has pay: say " +
     "plainly that pressing " +
     "Run the week on the Pay page runs it and makes paystubs for the drivers with " +
     "payable work; never say it was not run. With noPayYet true it has no pay yet: say so and " +

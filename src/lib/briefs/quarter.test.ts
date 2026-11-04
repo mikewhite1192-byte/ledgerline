@@ -779,4 +779,14 @@ describe("get_quarter_review", () => {
     await expect(run(writerDb().db)).rejects.toThrow("switched off");
     expect(getQuarterReview.enabled?.()).toBe(false);
   });
+
+  // Production, Nov 4: "How is the quarter going?" read the quarter, then went after the unbilled
+  // detention its totals showed and ran out of clock before answering.
+  it("answers from the quarter read alone, never chasing its totals", () => {
+    expect(getQuarterReview.description).toContain("This one read answers how the quarter is going: answer from it");
+    expect(getQuarterReview.description).toContain(
+      "never call find_unbilled_detention, run_checks or a propose_* tool from them in this answer",
+    );
+    expect(getQuarterReview.description).not.toMatch(/[\u2013\u2014]/);
+  });
 });

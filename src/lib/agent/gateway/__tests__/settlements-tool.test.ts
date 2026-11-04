@@ -144,4 +144,21 @@ describe("get_settlements", () => {
     expect(READ_NEXT).toContain("run_checks with this periodId");
     expect(READ_NEXT).toContain("explain_paystub with this periodId and a driver's id (from run_checks, or from get_settlements for a week that has paystubs)");
   });
+
+  // Production, Nov 4: asked about this week's pay before Run the week, one turn read the paystubs
+  // alone and was told to answer before the pay check came back, and another spent its clock on
+  // the pay summary and the driver ranking. The pay check rides with the first read, and neither
+  // report is named for that week's problems or one driver's pay.
+  it("sends the pay check with the first read and keeps the summary and ranking out of the week", () => {
+    expect(getSettlements.description).toContain(
+      "send run_checks with the week paid next's periodId (the state summary names it) in the same response as this call",
+    );
+    expect(getSettlements.description).toContain(
+      "Never call report_driver_pay_summary or report_driver_insights for that week's problems or one driver's pay",
+    );
+    expect(READ_NEXT).toContain("call it next unless it already came back");
+    expect(READ_NEXT).toContain("report_driver_pay_summary has no rows for this week");
+    expect(READ_NEXT).toContain("neither answers this week's problems or one driver's pay");
+    for (const text of [getSettlements.description, READ_NEXT]) expect(text).not.toMatch(/[\u2013\u2014]/);
+  });
 });

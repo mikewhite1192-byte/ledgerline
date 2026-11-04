@@ -22,7 +22,10 @@ export const getQuarterReview = defineTool({
     "deductions are more than its pay, net stops at zero and the rest moves to the driver's next " +
     "paystub (carriedForwardCents). Money is integer cents; margin is a percent such as " +
     "\"56.26%\": write it that way, never in basis points. Quote these figures exactly; never add " +
-    "or derive one. This only reads.",
+    "or derive one. This one read answers how the quarter is going: answer from it in the next " +
+    "response. Its unbilled detention, fixes and paystub problem counts are already totals, so " +
+    "never call find_unbilled_detention, run_checks or a propose_* tool from them in this " +
+    "answer; say the person can ask for that detail. This only reads.",
   tier: "read",
   roles: OPERATOR,
   label: "Read the quarter so far",
