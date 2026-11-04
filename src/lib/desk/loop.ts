@@ -350,6 +350,8 @@ export async function wakeDesk(
     let reason: SleepReason | null = null;
     let picks = 0;
     let started = 0;
+    // A first piece that could not start in what was left of the slice and let the rest go first.
+    let steppedAside = false;
     // Pieces of work whose try this wake did not come back.
     let unanswered = 0;
     for (const event of open) {
@@ -389,8 +391,14 @@ export async function wakeDesk(
       }
       // Only the wake's first piece of work may need more than what is left of the slice, and not
       // one whose handler holds its first piece to needsMs too. Stopping here writes no line for the
-      // piece, so it spends no carry (carries count carried lines) and no try.
+      // piece, so it spends no carry (carries count carried lines) and no try. A piece held to its
+      // needsMs before any work started steps aside instead, so the work behind it still runs: it
+      // sits first in line, and a slice that never has its time would otherwise stop every wake.
       if ((started > 0 || handler.firstNeedsMs === true) && deadlineMs - now < handler.needsMs) {
+        if (started === 0) {
+          steppedAside = true;
+          continue;
+        }
         reason = "deadline";
         break;
       }
@@ -432,6 +440,7 @@ export async function wakeDesk(
       counts[kind] += 1;
     }
 
+    if (reason === null && steppedAside) reason = "deadline";
     if (reason === null) reason = dayCapped ? "events_per_day" : wakeCapped ? "events_per_wake" : "no_work";
     // What is still open for a later wake: the events not reached and those carried on. One whose
     // try did not come back is not counted.
