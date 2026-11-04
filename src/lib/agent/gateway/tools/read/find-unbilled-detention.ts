@@ -5,7 +5,7 @@ import {
   type DetentionChargeRefusal,
   type DetentionChargeRows,
 } from "../../../../data/detention-charge";
-import { readDeliveredBetween } from "../../../../data/read";
+import { DELIVERED_BETWEEN, readDeliveredBetween } from "../../../../data/read";
 import { customerOf, loadStopsOf } from "../../../../data/records";
 import { findUnbilledDetention, lastFullMonthBefore, sum } from "../../../../rules-engine";
 import { addDays, localDateOf, type Period } from "../../../../time/local-date";
@@ -37,6 +37,17 @@ const BLOCKED: Readonly<Record<DetentionChargeRefusal, string>> = {
   invoice_mismatch: "invoice_total_differs",
 };
 
+// A detention card for the load already waits for a person, so a second ask never proposes it again.
+const CARD_WAITING = "card_waiting";
+
+// The tenant's open detention cards on the loads delivered in the window: one per load at most.
+export const OPEN_DETENTION_CARDS_SQL = `SELECT CAST(id AS text) AS id, CAST(subject_id AS text) AS load_id
+   FROM proposals
+  WHERE tenant_id = current_tenant_id() AND kind = 'detention_charge' AND subject_table = 'loads'
+    AND status IN ('proposed', 'approved', 'executing')
+    AND subject_id IN (SELECT id FROM loads WHERE tenant_id = current_tenant_id() AND ${DELIVERED_BETWEEN})
+  ORDER BY created_at, id`;
+
 // Null when the charge can be proposed for exactly the cents found; otherwise the reason. A read
 // or engine error is unknown, never a yes.
 function blockedFor(rows: DetentionChargeRows | null, amountCents: number): string | null {
@@ -58,7 +69,8 @@ export const DETENTION_NEXT =
   "person's approval. In your next response, call propose_detention_charge once for each of the " +
   "first two rows with canPropose true, all in that one response beside set_checklist, then " +
   "answer. Never more than two in one answer: name any other proposable rows as waiting for the " +
-  "next ask. A row with canPropose false is not proposed: say why from blockedBy.";
+  "next ask. A row with canPropose false is not proposed: say why from blockedBy. card_waiting " +
+  "means a card for that load already waits for a person.";
 
 export const findUnbilledDetentionTool = defineTool({
   name: "find_unbilled_detention",
@@ -88,6 +100,8 @@ export const findUnbilledDetentionTool = defineTool({
       load_state_miles: miles,
       invoices,
     } = await readDeliveredBetween(q, window);
+    const cards = await q.query<{ id: string; load_id: string }>(OPEN_DETENTION_CARDS_SQL, [window.start, window.end]);
+    const cardByLoad = new Map(cards.map((c) => [c.load_id, c.id]));
     const found = findUnbilledDetention(
       loads.map(loadStopsOf),
       customers.map(customerOf),
@@ -100,7 +114,8 @@ export const findUnbilledDetentionTool = defineTool({
       const load = loadById.get(f.loadId);
       const customer = customerById.get(f.customerId);
       const invoice = invoices.find((i) => i.source === "load" && i.load_id === f.loadId) ?? null;
-      const blockedBy = blockedFor(
+      const proposalId = cardByLoad.get(f.loadId) ?? null;
+      const blockedBy = proposalId ? CARD_WAITING : blockedFor(
         load && customer
           ? {
               load,
@@ -135,6 +150,7 @@ export const findUnbilledDetentionTool = defineTool({
         postedToAccounting: invoice ? invoice.qbo_id !== null : false,
         canPropose: blockedBy === null,
         blockedBy,
+        proposalId,
       };
     });
     return {

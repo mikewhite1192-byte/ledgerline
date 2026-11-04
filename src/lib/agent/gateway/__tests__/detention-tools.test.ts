@@ -129,6 +129,28 @@ describe("find_unbilled_detention", () => {
     expect(row).toMatchObject({ canPropose: false, blockedBy: "invoice_posted", postedToAccounting: true });
   });
 
+  // A second ask after two cards were made: the loads with a waiting card are not proposed again,
+  // so the steer's first two ready rows are the ones still waiting for a card.
+  it("marks a found load whose detention card already waits for a person, with that card", async () => {
+    flags.detentionEnabled = true;
+    const proposalId = "7d1c2b3a-4f5e-4a6b-8c7d-9e0f1a2b3c4d";
+    const waiting = {
+      ...plan,
+      rows: {
+        ...plan.rows,
+        proposals: [{ id: proposalId, kind: "detention_charge", subject_table: "loads", subject_id: ids[0], status: "proposed" }],
+      },
+    } as unknown as CarrierPlan;
+    const { out } = await run("find_unbilled_detention", { month: "2026-10" }, waiting);
+    if (out.decision !== "allowed") throw new Error(`not allowed: ${out.reason}`);
+    const byLoad = new Map((out.result.rows as FoundRow[]).map((r) => [r.loadId, r]));
+    expect(byLoad.get(ids[0])).toMatchObject({ canPropose: false, blockedBy: "card_waiting", proposalId, amountCents: GOLDEN[0] });
+    for (const id of ids.slice(1)) {
+      expect(byLoad.get(id)).toMatchObject({ canPropose: true, blockedBy: null, proposalId: null });
+    }
+    expect(DETENTION_NEXT).toContain("card_waiting means a card for that load already waits for a person");
+  });
+
   it("refuses a month that is not YYYY-MM", async () => {
     flags.detentionEnabled = true;
     for (const month of ["2026-13", "October", "2026-1", "1999-10"]) {

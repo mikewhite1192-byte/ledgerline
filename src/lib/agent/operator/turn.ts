@@ -695,9 +695,11 @@ export async function runTurn(input: TurnInput, deps: TurnDeps): Promise<TurnOut
       const checklistAlone = result.toolCalls.every((c) => c.name === CHECKLIST_TOOL);
       for (let i = 0; i < result.toolCalls.length; i += 1) {
         const call = result.toolCalls[i];
-        // A detention card past the per-response limit is not run and takes no step.
+        // A detention card past the per-response limit is not run and takes no step. It made no
+        // card, so the item in hand is never checked beside it.
         if (call.name === DETENTION_PROPOSE_TOOL) detentionCalls += 1;
         if (call.name === DETENTION_PROPOSE_TOOL && detentionCalls > DETENTION_CARDS_PER_RESPONSE) {
+          refusedResponse = response;
           messages.push({
             role: "tool",
             toolCallId: call.id,
