@@ -21,10 +21,12 @@ export type SettingsRow = { href: string; label: string; help?: string };
 
 // The settings pages from the menu, each only while its own switch is on, in the menu's order,
 // with Autopilot after Pay rules while its page is on (it has no menu row of its own). Models and
-// spend comes back on its own, to sit last under its own line.
-export function settingsRows(): { rows: SettingsRow[]; models: SettingsRow | null } {
+// spend comes back on its own, to sit last under its own line. hideDemo: a judge or a visit's own
+// copy cannot reset the demo, so its row is left out.
+export function settingsRows(hideDemo = false): { rows: SettingsRow[]; models: SettingsRow | null } {
   const pages = appNav("/settings")
     .filter((i) => i.section === "settings" && i.sectionOrder !== 0)
+    .filter((i) => !(hideDemo && i.href === "/settings/demo"))
     .sort((a, b) => (a.sectionOrder ?? 0) - (b.sectionOrder ?? 0))
     .map((i) => ({ href: i.href, label: i.sectionLabel ?? i.label, help: SETTINGS_HELP[i.href] }));
   const rows = pages.filter((r) => r.href !== MODELS_HREF);

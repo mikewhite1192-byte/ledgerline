@@ -77,7 +77,7 @@ function aboutWords(note: NoteRow): string {
 }
 
 function addedBy(note: NoteRow): string {
-  if (note.createdByKind === "seed") return "Sample";
+  if (note.createdByKind === "seed") return "Set up with the demo";
   if (note.createdByKind === "agent") return "The agent";
   return note.createdByEmail ?? "A past member";
 }

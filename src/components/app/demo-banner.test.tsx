@@ -79,6 +79,15 @@ describe("DemoBanner", () => {
       expect(screen.queryAllByRole("link", { name: "Demo" }).length).toBeGreaterThan(0);
       cleanup();
 
+      // A judge in the shared carrier cannot reset it either, so Demo settings are hidden.
+      render(
+        <AppShell tenant={tenant("judge")} nav={nav} title="Page" signOut={null}>
+          <p>Body</p>
+        </AppShell>,
+      );
+      expect(screen.queryByRole("link", { name: "Demo" })).toBeNull();
+      cleanup();
+
       // With the switch off nothing changes for anyone.
       flags.visitCopies.enabled = false;
       render(

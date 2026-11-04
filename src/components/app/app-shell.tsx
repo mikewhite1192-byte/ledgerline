@@ -205,11 +205,11 @@ export function AppShell({
   const agentOn = flags.agentEnabled === true;
   const panelOn = agentPanel && agentOn;
   const simple = flags.simpleShape.enabled === true;
-  // A visit's own copy of the demo carrier (flags.visitCopies): the visit's banner, and no Demo
-  // settings (a copy is never reset).
+  // A visit's own copy of the demo carrier (flags.visitCopies): the visit's banner. Neither a copy
+  // (never reset) nor a judge (not an admin) can reset the demo, so neither sees Demo settings.
   const copy = flags.visitCopies.enabled === true && isVisitor(tenant);
   const visitor = tenant.role === "judge" || copy;
-  const items = copy ? nav.filter((i) => i.href !== "/settings/demo") : nav;
+  const items = visitor ? nav.filter((i) => i.href !== "/settings/demo") : nav;
   const list =
     simple && items.some((i) => i.section !== undefined) ? (
       <SectionNav nav={items} />

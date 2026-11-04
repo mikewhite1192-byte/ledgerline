@@ -378,7 +378,7 @@ export function buildReceivables(args: ReceivablesArgs): ReceivablesPlan {
   const y = draft("opening", null, c.id, yAmount, addDays(anchor, -150));
   const x = draft("opening", null, c.id, xAmount, addDays(anchor, -140));
   // P: X's amount, three days before X was due, applied in full to Y.
-  const p = pay(c.id, addDays(x.invoice.due_on, -3), [[y, xAmount]], `${prefix}-PAY-WRONG`);
+  const p = pay(c.id, addDays(x.invoice.due_on, -3), [[y, xAmount]], `${prefix}-CHK-48213`);
 
   // Numbers and refs in date order; statuses from the applications, by the engine's rule.
   const byIssued = [...drafts].sort(

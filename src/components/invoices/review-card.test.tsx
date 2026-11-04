@@ -135,7 +135,7 @@ describe("the Review card", () => {
       }),
       new Map([[MEMBER, "admin"]]),
     );
-    expect(screen.getByText("Sent Oct 22, 2026 by admin")).toBeTruthy();
+    expect(screen.getByText("Sent to the customer Oct 22, 2026 by admin")).toBeTruthy();
     expect(screen.queryAllByRole("button")).toHaveLength(0);
   });
 
@@ -160,6 +160,11 @@ describe("the Review card", () => {
     card(view("ready_to_send", [], { invoiceStatus: "paid", inQueue: false }));
     expect(screen.getByText("Paid and void invoices are settled; they are not reviewed.")).toBeTruthy();
     expect(screen.queryAllByRole("button")).toHaveLength(0);
+    // No review badge on a settled invoice, so it never reads "Ready to send" beside "Paid".
+    expect(screen.queryByText("ready_to_send")).toBeNull();
+    cleanup();
+    card(view("ready_to_send", [], { invoiceStatus: "open" }));
+    expect(screen.getByText("ready_to_send")).toBeTruthy();
   });
 });
 

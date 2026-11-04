@@ -79,7 +79,7 @@ export function ReviewCard({
     <Card>
       <CardHeader className="items-center">
         <CardTitle>Review</CardTitle>
-        <StatusBadge status={status} label={view.statusLabel} />
+        {live ? <StatusBadge status={status} label={view.statusLabel} /> : null}
       </CardHeader>
       <CardBody className="grid gap-4">
         {!live ? (
