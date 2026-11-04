@@ -4,12 +4,13 @@ import { notFound } from "next/navigation";
 import { appNav } from "@/components/app/app-nav";
 import { AppShell } from "@/components/app/app-shell";
 import { PageHeader } from "@/components/app/page-header";
-import { Paystub } from "@/components/app/paystub";
+import { Paystub, yearToDateOf } from "@/components/app/paystub";
 import { ErrorState, FeatureOff } from "@/components/app/states";
 import { Card, CardBody } from "@/components/ui/card";
 import { flags } from "@/config/flags";
 import { readDriverView, type DriverView } from "@/lib/driver-notes/view";
 import { readDriverCard } from "@/lib/pay-cards/read";
+import { readPaystubYear, type PaystubYear } from "@/lib/settlements/views";
 import { withRequestTenant } from "@/lib/tenant/context";
 import { isUuid } from "@/lib/uuid";
 import {
@@ -35,7 +36,12 @@ export default async function DriverViewPage({ params }: { params: Promise<{ set
   const { settlementId } = await params;
   if (!isUuid(settlementId)) notFound();
 
-  let data: { shell: ShellInfo; view: DriverView | null; card: { id: string } | null } | null = null;
+  let data: {
+    shell: ShellInfo;
+    view: DriverView | null;
+    card: { id: string } | null;
+    year: PaystubYear | null;
+  } | null = null;
   let problem: ShellProblem | null = null;
   try {
     data = await withRequestTenant(async (q, session) => {
@@ -45,13 +51,15 @@ export default async function DriverViewPage({ params }: { params: Promise<{ set
         view,
         // Only a checked card whose figures still match the paystub; otherwise nothing is shown.
         card: view && flags.payCardsEnabled ? await readDriverCard(q, settlementId) : null,
+        // What they were paid this year and their escrow balance; not shown when it cannot be read.
+        year: view ? await readPaystubYear(q, settlementId) : null,
       };
     });
   } catch (err) {
     problem = shellProblemOf(err);
   }
   if (!data) return <ShellProblemPage problem={problem ?? "unreadable"} />;
-  const { shell, view, card } = data;
+  const { shell, view, card, year } = data;
 
   return (
     <AppShell
@@ -149,6 +157,7 @@ export default async function DriverViewPage({ params }: { params: Promise<{ set
               exceptions={[]}
               hrefFor={noRecordLinks}
               lineIdPrefix="line-"
+              yearToDate={year ? yearToDateOf(year) : undefined}
             />
           </>
         )}

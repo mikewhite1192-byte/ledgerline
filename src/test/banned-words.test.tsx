@@ -496,6 +496,7 @@ vi.mock("@/lib/settlements/views", async (importOriginal) => ({
   readSettlementRecord: async () => get("settlementRecord"),
   readDriverRecord: async () => get("driverRecord"),
   readBatchRecord: async () => get("batchRecord"),
+  readPaystubYear: async () => get("paystubYear"),
 }));
 // Settings > Autopilot's read: the carrier's rules, each kind's picture and the pause.
 vi.mock("@/lib/autopilot/rules-admin", async (importOriginal) => ({
@@ -634,6 +635,7 @@ function defaults(): Record<string, unknown> {
     settlementRecord: fx.SETTLEMENT_RECORD,
     driverRecord: fx.DRIVER_RECORD,
     batchRecord: fx.BATCH_RECORD,
+    paystubYear: fx.PAYSTUB_YEAR,
     paystubAsk: null,
     reviewQueue: fx.REVIEW_QUEUE,
     invoiceReview: fx.INVOICE_REVIEW,

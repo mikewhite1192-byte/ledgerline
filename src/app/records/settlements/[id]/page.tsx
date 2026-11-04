@@ -4,7 +4,7 @@ import { DataTable } from "@/components/app/data-table";
 import { BooksStatusLine } from "@/components/books/books-line";
 import { Money } from "@/components/app/money";
 import { PageHeader } from "@/components/app/page-header";
-import { Paystub } from "@/components/app/paystub";
+import { Paystub, yearToDateOf } from "@/components/app/paystub";
 import { NoCarrierPage, SignedInPage } from "@/components/app/signed-in-page";
 import { ErrorState } from "@/components/app/states";
 import { StatusBadge } from "@/components/app/status-badge";
@@ -128,6 +128,7 @@ export default async function SettlementRecord({ params }: { params: Promise<{ i
         netCents={s.netCents}
         carryForwardCents={s.carryForwardCents}
         exceptions={(view.proposal?.exceptions ?? []).map((e) => ({ ...e, sources: [] }))}
+        yearToDate={yearToDateOf(view)}
       />
       <p className="text-small">
         <Link href={ask} className="text-link underline-offset-4 hover:underline">

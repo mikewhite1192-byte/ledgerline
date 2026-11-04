@@ -30,6 +30,8 @@ import { buildCarrierPlan, type CarrierPlan } from "../../../seed/plan";
 import { DEMO_CARRIERS } from "../../../seed/carriers";
 import { withShortFriday } from "../../../seed/test-short-friday.test-util";
 import { PAY_RUN_DRIVERS_SQL, SETTLEMENT_ROWS } from "../../../settlements/list";
+import { PAYSTUB_YEAR_SQL } from "../../../settlements/year";
+import { localDateOf } from "../../../time/local-date";
 import { FIND_DRIVER_CAP, FIND_DRIVER_SQL } from "../tools/read/find-driver";
 import { OPEN_DETENTION_CARDS_SQL } from "../tools/read/find-unbilled-detention";
 import { FakeDb, TENANT, type Handler, type Row } from "./fake-db";
@@ -92,6 +94,38 @@ export function planDb(plan: CarrierPlan, extra?: Handler): FakeDb {
     if (sql === "SELECT id, slug, name, timezone, demo_copy_of FROM tenants WHERE id = current_tenant_id()") {
       const c = plan.carrier;
       return [{ id: TENANT, slug: c.slug, name: c.name, timezone: c.timezone }];
+    }
+    // A paystub's year to date and escrow balance (settlements/year.ts), from the plan's rows in the
+    // carrier's zone.
+    if (sql === PAYSTUB_YEAR_SQL) {
+      const s = (tables.settlements ?? []).find((r) => r.id === params[0]);
+      const period = s && (tables.settlement_periods ?? []).find((p) => p.id === s.period_id);
+      const driver = s && (tables.drivers ?? []).find((d) => d.id === s.driver_id);
+      if (!s || !period || !driver) return [];
+      const zone = plan.carrier.timezone;
+      const year = String(period.period_end).slice(0, 4);
+      const paid = (tables.settlements ?? []).filter(
+        (r) =>
+          r.driver_id === s.driver_id &&
+          r.status === "paid" &&
+          r.paid_at !== null &&
+          localDateOf(String(r.paid_at), zone).slice(0, 4) === year,
+      );
+      const withheld = (tables.settlement_lines ?? [])
+        .filter((l) => l.settlement_id === s.id && l.kind === "escrow")
+        .reduce((n, l) => n + Math.abs(Number(l.amount_cents)), 0);
+      return [
+        {
+          status: s.status,
+          escrow_closing_cents: s.escrow_closing_cents,
+          escrow_balance_cents: driver.escrow_balance_cents,
+          withheld_cents: withheld,
+          timezone: zone,
+          year: Number(year),
+          paid_cents: paid.reduce((n, r) => n + Number(r.net_cents), 0),
+          stubs: paid.length,
+        },
+      ];
     }
     if (LEDGER_BY_SUBJECT.test(sql)) {
       return (tables.money_actions ?? [])

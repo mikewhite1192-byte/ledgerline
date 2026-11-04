@@ -6,7 +6,7 @@ import { DEMO_ANCHOR } from "@/lib/seed/anchor";
 import { DEMO_CARRIERS } from "@/lib/seed/carriers";
 import golden from "@/lib/seed/golden.json";
 import { buildCarrierPlan } from "@/lib/seed/plan";
-import { lineDescription, Paystub, type PaystubProps } from "./paystub";
+import { lineDescription, Paystub, yearToDateOf, type PaystubProps } from "./paystub";
 
 afterEach(cleanup);
 
@@ -202,5 +202,37 @@ describe("lineDescription", () => {
     expect(screen.getByText("Reimbursement: lumper fee")).toBeTruthy();
     expect(screen.getByRole("link", { name: "Advance repaid (requested Oct 28, 2026)" })).toBeTruthy();
     expect(screen.queryByText(/2026-10-28|\(lumper\)/)).toBeNull();
+  });
+
+  it("shows the year to date after net pay only when given, through the money component", () => {
+    const { rerender } = render(<Paystub {...props} />);
+    expect(screen.queryByText("Year to date")).toBeNull();
+    const ytd = yearToDateOf({
+      yearToDate: { year: 2026, paidCents: 1_842_500, stubs: 9 },
+      escrow: { balanceCents: 135_000, asOf: "after_this_paystub" },
+    });
+    rerender(<Paystub {...props} yearToDate={ytd} />);
+    const group = screen.getByText("Year to date").closest("tbody") as HTMLElement;
+    // The group comes after the net pay's.
+    const net = screen.getByTestId("net-pay").closest("tbody") as HTMLElement;
+    expect(net.compareDocumentPosition(group) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    expect(within(group).getByText("Paid in 2026, 9 paystubs")).toBeTruthy();
+    expect(screen.getByTestId("ytd-paid").querySelector("[data-money]")?.textContent).toBe("$18,425.00");
+    expect(within(group).getByText("Escrow balance")).toBeTruthy();
+    expect(within(group).getByText("After this paystub is paid.")).toBeTruthy();
+    expect(screen.getByTestId("escrow-balance").querySelector("[data-money]")?.textContent).toBe("$1,350.00");
+  });
+
+  it("words the year to date by its count and the escrow by whether the stub is paid", () => {
+    const one = yearToDateOf({
+      yearToDate: { year: 2026, paidCents: 50_000, stubs: 1 },
+      escrow: { balanceCents: 20_000, asOf: "paid" },
+    });
+    expect(one).toEqual({ label: "Paid in 2026, 1 paystub", paidCents: 50_000, escrowCents: 20_000, escrowNote: "When this paystub was paid." });
+    const none = yearToDateOf({
+      yearToDate: { year: 2027, paidCents: 0, stubs: 0 },
+      escrow: { balanceCents: 0, asOf: "after_this_paystub" },
+    });
+    expect(none.label).toBe("Paid in 2027, no paystubs yet");
   });
 });

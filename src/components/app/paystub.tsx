@@ -35,8 +35,27 @@ export type PaystubProps = {
   // The pay rules version the week was paid under, by the date it started ("Paid under rules from
   // Oct 19"), linked to the Pay rules page when href is given (a staff screen, never a driver's).
   payRules?: { from: string; href?: string };
+  // What the driver was paid this year and their escrow balance, from stored rows (yearToDateOf).
+  yearToDate?: PaystubYearToDate;
   className?: string;
 };
+
+export type PaystubYearToDate = { label: string; paidCents: number; escrowCents: number; escrowNote: string };
+
+// The "Year to date" group's words from the stored read (readPaystubYear). Pure.
+export function yearToDateOf(y: {
+  yearToDate: { year: number; paidCents: number; stubs: number };
+  escrow: { balanceCents: number; asOf: "paid" | "after_this_paystub" };
+}): PaystubYearToDate {
+  const { year, paidCents, stubs } = y.yearToDate;
+  const count = stubs === 0 ? "no paystubs yet" : `${stubs} ${stubs === 1 ? "paystub" : "paystubs"}`;
+  return {
+    label: `Paid in ${year}, ${count}`,
+    paidCents,
+    escrowCents: y.escrow.balanceCents,
+    escrowNote: y.escrow.asOf === "paid" ? "When this paystub was paid." : "After this paystub is paid.",
+  };
+}
 
 const EARNINGS = new Set(["load_pay", "accessorial_pay", "reimbursement"]);
 const WORKER = { company: "Company driver", owner_operator: "Owner-operator" } as const;
@@ -153,6 +172,7 @@ export function Paystub({
   hrefFor = recordHref,
   lineIdPrefix,
   payRules,
+  yearToDate,
   className,
 }: PaystubProps) {
   const bySeq = [...lines].sort((a, b) => a.seq - b.seq);
@@ -230,7 +250,8 @@ export function Paystub({
 
       <table className="mt-1 w-full border-collapse">
         <caption className="sr-only">
-          Earnings, deductions and net pay for {driver.name}, {formatPeriod(period.start, period.end)}
+          Earnings, deductions and net pay{yearToDate ? ", and the year to date," : ""} for {driver.name},{" "}
+          {formatPeriod(period.start, period.end)}
         </caption>
         <colgroup>
           <col />
@@ -281,6 +302,27 @@ export function Paystub({
             </td>
           </tr>
         </tbody>
+        {yearToDate ? (
+          <Group title="Year to date">
+            <tr className="align-baseline">
+              <th scope="row" className="py-1.5 pr-4 text-left text-body font-normal text-foreground">
+                {yearToDate.label}
+              </th>
+              <td className="py-1.5 text-right text-body whitespace-nowrap" data-testid="ytd-paid">
+                <Money cents={yearToDate.paidCents} tone="plain" />
+              </td>
+            </tr>
+            <tr className="align-baseline">
+              <th scope="row" className="py-1.5 pr-4 text-left text-body font-normal text-foreground">
+                <span className="block">Escrow balance</span>
+                <span className="mt-0.5 block text-caption text-foreground-2">{yearToDate.escrowNote}</span>
+              </th>
+              <td className="py-1.5 text-right text-body whitespace-nowrap" data-testid="escrow-balance">
+                <Money cents={yearToDate.escrowCents} tone="plain" />
+              </td>
+            </tr>
+          </Group>
+        ) : null}
       </table>
     </section>
   );

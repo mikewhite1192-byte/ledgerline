@@ -55,6 +55,7 @@ import { exceptionLabel, parkLabel } from "@/lib/settlements/labels";
 import type {
   BatchRecordView,
   DriverRecordView,
+  PaystubYear,
   SettlementListRow,
   SettlementRecordView,
   SettlementsView,
@@ -1306,6 +1307,11 @@ const leg = (n: number, kind: SettlementRecordView["legs"][number]["kind"], stat
   ...over,
 });
 
+export const PAYSTUB_YEAR: PaystubYear = {
+  yearToDate: { year: 2026, paidCents: 1_842_500, stubs: 9, zone: "America/Chicago" },
+  escrow: { balanceCents: 135_000, asOf: "after_this_paystub" },
+};
+
 export const SETTLEMENT_RECORD: SettlementRecordView = {
   settlement: {
     id: settled.settlement.id,
@@ -1339,6 +1345,7 @@ export const SETTLEMENT_RECORD: SettlementRecordView = {
   latest: { settlement_payout: "unknown", settlement_bill: "reserved", settlement_bill_payment: null },
   parkedLabel: null,
   stubSent: null,
+  ...PAYSTUB_YEAR,
 };
 
 export const DRIVER_RECORD: DriverRecordView = {
