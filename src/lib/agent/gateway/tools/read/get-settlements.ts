@@ -13,7 +13,8 @@ export const getSettlements = defineTool({
     "categories on its approval card, the auditor's verdict, whether it is clean for Approve all " +
     "clean, and parkedReason when it no longer matches its records. noPaystubsYet true means only " +
     "that this open week has no paystubs yet: say so plainly, and that if the week has not been " +
-    "run, pressing Run the week on the Paystubs page under Pay makes them; never say it was not " +
+    "run, pressing Run the week on the Paystubs page under Pay runs it and makes paystubs for the " +
+    "drivers with payable work; never say it was not " +
     "run. To preview one driver, call explain_paystub with this periodId and the driver's id. " +
     "This only reads; explain_paystub " +
     "explains one paystub line by line.",

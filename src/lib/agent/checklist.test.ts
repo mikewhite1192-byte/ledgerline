@@ -136,6 +136,8 @@ describe("an answer that says it could not check part of the work", () => {
     expect(answerLeftWork("Two paystubs are short. I could not check why.")).toBe(true);
     expect(answerLeftWork("The week has no paystubs, and I never located her driver record.")).toBe(true);
     expect(answerLeftWork("I couldn\u2019t confirm the fuel card loads.")).toBe(true);
+    expect(answerLeftWork("I haven't checked the paystub yet.")).toBe(true);
+    expect(answerLeftWork("I have not confirmed the fuel card loads.")).toBe(true);
     expect(answerLeftWork("i was not able to verify the rate confirmation.")).toBe(true);
   });
 

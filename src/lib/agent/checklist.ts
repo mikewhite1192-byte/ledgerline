@@ -112,7 +112,7 @@ export function finalChecklist(list: Checklist, ended: "done" | "partial" | "fai
 // check, confirm, verify or locate followed by "any" or "anything" is a search that finished and
 // found nothing ("I could not locate any unpaid invoices"), so it never counts.
 const LEFT_UNCHECKED =
-  /\bI (?:could not|couldn['\u2019]t|cannot|can['\u2019]t|was not able to|wasn['\u2019]t able to|was unable to|am unable to|did not|didn['\u2019]t|never) (?:(?:fully|yet|independently) )?(?:(?:check|confirm|verif|locat)\w*\b(?!\s+any(?:thing)?\b)|get to|got to)/i;
+  /\bI (?:could not|couldn['\u2019]t|cannot|can['\u2019]t|was not able to|wasn['\u2019]t able to|was unable to|am unable to|did not|didn['\u2019]t|have not|haven['\u2019]t|has not|hasn['\u2019]t|never) (?:(?:fully|yet|independently) )?(?:(?:check|confirm|verif|locat)\w*\b(?!\s+any(?:thing)?\b)|get to|got to)/i;
 
 export function answerLeftWork(text: string): boolean {
   return LEFT_UNCHECKED.test(text.split(WITHHELD).join(" "));
