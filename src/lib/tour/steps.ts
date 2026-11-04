@@ -154,7 +154,7 @@ function waiting(i: TourInput): TourStep {
 }
 
 function payWeek(i: TourInput, payday: Loaded<Payday>): TourStep {
-  const base = { id: "pay_week" as const, link: { href: "/settlements", label: "Open settlements" }, ask: TOUR_ASKS.pay_week };
+  const base = { id: "pay_week" as const, link: { href: "/settlements", label: "Open Pay" }, ask: TOUR_ASKS.pay_week };
   if (!payday.ok) return { ...base, title: "Paystubs this week", lines: [unread("Could not read this week's paystubs.")] };
   const p = payday.value;
   if (p.period === null) {

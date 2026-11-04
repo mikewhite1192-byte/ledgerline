@@ -7,7 +7,7 @@ export const settlements = {
   area: "pay",
   order: 15,
   href: "/settlements",
-  label: "Settlements",
+  label: "Pay",
   icon: <Banknote aria-hidden />,
   shown: () => flags.settlementsEnabled === true,
   section: "pay",

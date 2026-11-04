@@ -50,7 +50,7 @@ const ROW: NeedsYouRow = {
   what: "paystubs waiting for approval",
   amounts: [{ cents: 150_000, label: "to pay drivers" }],
   href: "/settlements",
-  linkLabel: "Open settlements",
+  linkLabel: "Open Pay",
 };
 
 const today = (over: Partial<Parameters<typeof TodayCard>[0]> = {}) =>
@@ -209,7 +209,7 @@ describe("PaydayCard", () => {
       "1 with a problem",
       "1 held back",
     ]);
-    expect(within(card).getByRole("link", { name: "Open settlements" }).getAttribute("href")).toBe("/settlements");
+    expect(within(card).getByRole("link", { name: "Open Pay" }).getAttribute("href")).toBe("/settlements");
     expect(within(card).getByRole("link", { name: "Ask about this: Paystubs" }).getAttribute("href")).toBe(
       "/?ask=payday",
     );

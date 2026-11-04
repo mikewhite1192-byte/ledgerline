@@ -23,7 +23,7 @@ const STEPS: TourStep[] = [
     id: "pay_week",
     title: "Paystubs this week",
     lines: [{ text: "Could not read this week's paystubs.", unread: true }],
-    link: { href: "/settlements", label: "Open settlements" },
+    link: { href: "/settlements", label: "Open Pay" },
     ask: "Who has a problem on this week's paystub?",
   },
   { id: "ask", title: "Ask the agent", lines: [{ text: "Ask in plain English." }], ask: "Who owes us money past 60 days?" },

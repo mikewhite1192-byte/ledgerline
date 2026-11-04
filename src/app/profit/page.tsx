@@ -101,7 +101,7 @@ export default async function ProfitPage({
           <EmptyState
             icon={<TrendingUp aria-hidden />}
             title="The first brief appears after the first pay week closes."
-            body="Approve a pay week under Settlements; its figures and the brief show here the next day."
+            body="Approve a pay week on the Pay page; its figures and the brief show here the next day."
           />
         </Card>
       ) : (

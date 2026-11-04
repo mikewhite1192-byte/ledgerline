@@ -10,7 +10,7 @@ const count = (n: number) => n.toLocaleString("en-US");
 // zero for waiting, approved or paid is shown, since "none approved yet" is the news.
 export function PaydayCard({ payday, askHref }: { payday: Loaded<Payday>; askHref?: string }) {
   return (
-    <HomeCard title="Paystubs" link={{ href: "/settlements", label: "Open settlements" }} askHref={askHref}>
+    <HomeCard title="Paystubs" link={{ href: "/settlements", label: "Open Pay" }} askHref={askHref}>
       {!payday.ok ? (
         <Unavailable>Could not read this pay week&apos;s paystubs.</Unavailable>
       ) : payday.value.period === null ? (
