@@ -160,7 +160,7 @@ const RELEASED_ON = [
   // demo carrier. Visits are capped at 12 an hour and 60 a day (D3), since each one builds a copy.
   "visitCopies.enabled",
   // Released by the owner (D-100, D-103, 2026-11-03): a visit's copy starts one real pay check as it
-  // opens. It spends model cents (30 dollars a day across copies) and only drafts fixes, never money.
+  // opens. It spends model cents (300 dollars a day across copies) and only drafts fixes, never money.
   "visitCopies.startSweep",
   // Released by the owner (D-104, D-103, 2026-11-03): each armed desk wake posts what is still
   // missing in the QuickBooks sandbox, from the start date on, through the ledger. The kinds stay off.
@@ -460,7 +460,7 @@ describe("flags", () => {
       purgePerCall: 2,
       deskDayCents: 100,
       startSweep: true,
-      sweepDayCents: 3000,
+      sweepDayCents: 30_000,
     });
     for (const v of [
       flags.visitCopies.sliceMs,
