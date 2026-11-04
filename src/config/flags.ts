@@ -1188,11 +1188,12 @@ export const flags: Flags = {
     comparesPerRun: 10,
     comparesPerTenantPerDay: 20,
   },
+  // Raised by the owner (D-102, 2026-11-03): $5.00 a visit, so 25 turns fit, and $40.00 a day.
   judgeAccess: {
     enabled: true,
-    sessionCapCents: 100,
+    sessionCapCents: 500,
     turnsPerSession: 25,
-    dayCapCents: 800,
+    dayCapCents: 4_000,
     sessionsPerIpPerHour: 5,
     sessionsPerHour: 12,
     sessionsPerDay: 60,
