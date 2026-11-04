@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { CarrierPlan } from "../../../seed/plan";
-import { getSettlements } from "../tools/read/get-settlements";
+import { getSettlements, READ_NEXT } from "../tools/read/get-settlements";
 import { context, TENANT } from "./fake-db";
 import { blueRidgePlan, planDb } from "./plan-db";
 
@@ -40,6 +40,8 @@ describe("get_settlements", () => {
     // It has pay and no paystubs yet: Run the week makes them.
     expect(out.noPaystubsYet).toBe(true);
     expect(out.runTheWeek).toBe(true);
+    // No paystubs is not the answer: the pay check and the preview answer before the run.
+    expect(out.readNext).toBe(READ_NEXT);
     expect(out).not.toHaveProperty("noPayYet");
     expect(out).not.toHaveProperty("weekPaidNext");
   });
@@ -51,6 +53,8 @@ describe("get_settlements", () => {
     expect(out.noPaystubsYet).toBe(true);
     expect(out.noPayYet).toBe(true);
     expect(out).not.toHaveProperty("runTheWeek");
+    // No pay, nothing to preview.
+    expect(out).not.toHaveProperty("readNext");
     expect(out.weekPaidNext).toEqual({ periodId: due.id, start: "2026-10-26", end: "2026-11-01" });
   });
 
@@ -65,6 +69,7 @@ describe("get_settlements", () => {
     }));
     const out = (await run({ periodId: NEWER_ID }, withPay)).result as Out;
     expect(out.waitsForWeekPaidNext).toBe(true);
+    expect(out.readNext).toBe(READ_NEXT);
     expect(out.weekPaidNext).toEqual({ periodId: due.id, start: "2026-10-26", end: "2026-11-01" });
     expect(out).not.toHaveProperty("runTheWeek");
     expect(out).not.toHaveProperty("noPayYet");
@@ -90,6 +95,7 @@ describe("get_settlements", () => {
     expect(out.noPaystubsYet).toBe(true);
     expect(out.noPayYet).toBe(true);
     expect(out).not.toHaveProperty("runTheWeek");
+    expect(out).not.toHaveProperty("readNext");
     // It is the week paid next itself, so no other week is named.
     expect(out).not.toHaveProperty("weekPaidNext");
   });
@@ -99,6 +105,7 @@ describe("get_settlements", () => {
     expect(out.period?.periodId).toBe(due.id);
     expect(out.noPaystubsYet).toBe(true);
     expect(out.runTheWeek).toBe(true);
+    expect(out.readNext).toBe(READ_NEXT);
     expect(out).not.toHaveProperty("notRunYet");
   });
 
@@ -109,6 +116,7 @@ describe("get_settlements", () => {
     expect(out).not.toHaveProperty("noPaystubsYet");
     expect(out).not.toHaveProperty("runTheWeek");
     expect(out).not.toHaveProperty("noPayYet");
+    expect(out).not.toHaveProperty("readNext");
   });
 
   it("answers no week when none is open", async () => {
@@ -126,5 +134,13 @@ describe("get_settlements", () => {
     expect(getSettlements.description).toContain("the week paid next");
     expect(getSettlements.description).toContain("runs it and makes paystubs for the drivers with payable work");
     expect(getSettlements.description).not.toContain("newest open week");
+  });
+
+  it("sends a week with no paystubs to the pay check and the preview, never to no problems", () => {
+    expect(getSettlements.description).toContain("never no problems or no pay");
+    expect(getSettlements.description).toContain("for who has a problem call run_checks");
+    expect(getSettlements.description).toContain("call explain_paystub with this periodId");
+    expect(READ_NEXT).toContain("run_checks");
+    expect(READ_NEXT).toContain("explain_paystub with this periodId and a driver's id");
   });
 });
