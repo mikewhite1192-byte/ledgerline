@@ -12,6 +12,14 @@ export const ALWAYS_LOADED: readonly string[] = Object.freeze([
   "get_advances",
   "explain_paystub",
   "run_checks",
+  // This week's pay questions read the week's paystubs beside the pay check in their first step;
+  // deferred, the first response searched for it and sent only the checklist (Nov 4).
+  "get_settlements",
+  // Unbilled detention is found and proposed in one answer: deferred, the finder's search took
+  // the first response and the propose tool was never loaded before the clock ran out (Nov 4).
+  // A switch that keeps them off still leaves both out of the request.
+  "find_unbilled_detention",
+  "propose_detention_charge",
   // The answer's checklist is set in the first step, before any search could load it.
   "set_checklist",
 ]);

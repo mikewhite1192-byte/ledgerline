@@ -632,7 +632,7 @@ describe("tool registry", () => {
 });
 
 describe("deferred loading for tool search", () => {
-  it("defers every operator tool except the six always loaded, with the same names and schemas", () => {
+  it("defers every operator tool except the always loaded ones offered, with the same names and schemas", () => {
     const plain = toolsFor("operator");
     const deferred = toolsFor("operator", { defer: true });
     expect(deferred.map((t) => t.name)).toEqual(plain.map((t) => t.name));
@@ -640,7 +640,10 @@ describe("deferred loading for tool search", () => {
       expect(t.description).toBe(plain[i].description);
       expect(JSON.stringify(t.parameters)).toBe(JSON.stringify(plain[i].parameters));
     });
-    expect(deferred.filter((t) => t.deferLoading !== true).map((t) => t.name).sort()).toEqual([...ALWAYS_LOADED].sort());
+    // The detention tools are always loaded but behind their switch, off here, so not offered.
+    const offeredLoaded = ALWAYS_LOADED.filter((n) => plain.some((t) => t.name === n));
+    expect(offeredLoaded).toEqual(ALWAYS_LOADED.filter((n) => !DETENTION_TOOLS.includes(n)));
+    expect(deferred.filter((t) => t.deferLoading !== true).map((t) => t.name).sort()).toEqual([...offeredLoaded].sort());
     expect(deferred.filter((t) => t.deferLoading === true).map((t) => t.name).sort()).toEqual(
       plain.map((t) => t.name).filter((n) => !ALWAYS_LOADED.includes(n)).sort(),
     );
@@ -651,13 +654,13 @@ describe("deferred loading for tool search", () => {
     for (const t of toolsFor("operator", { defer: false })) expect(t).not.toHaveProperty("deferLoading");
   });
 
-  it("defers a tool added later, the report and detention tools included, unless the list names it", () => {
+  it("defers a tool added later, the report tools included, unless the list names it", () => {
     flags.reportsEnabled = true;
     flags.detentionEnabled = true;
     const plain = toolsFor("operator");
     const deferred = toolsFor("operator", { defer: true });
     expect(deferred.map((t) => t.name)).toEqual(plain.map((t) => t.name));
-    for (const name of [...REPORT_TOOLS, ...DETENTION_TOOLS]) {
+    for (const name of REPORT_TOOLS) {
       expect(ALWAYS_LOADED, name).not.toContain(name);
       expect(deferred.find((t) => t.name === name)?.deferLoading, name).toBe(true);
       // Off, each such tool is sent in full, with no deferLoading key.
@@ -668,6 +671,29 @@ describe("deferred loading for tool search", () => {
     expect(ALWAYS_LOADED).not.toContain("get_voice_note");
     expect(deferred.find((t) => t.name === "get_voice_note")?.deferLoading).toBe(true);
     expect(deferred.filter((t) => t.deferLoading !== true).map((t) => t.name).sort()).toEqual([...ALWAYS_LOADED].sort());
+  });
+
+  // Production, Nov 4: deferred, the detention finder's search took the first response and the
+  // propose tool was never loaded before the clock ran out, and this week's pay questions spent
+  // their first response searching for get_settlements. Loaded in full, the tool names offered
+  // are the same, so the replay fixtures keep their keys; a switch that keeps the detention tools
+  // off still leaves both out.
+  it("sends the detention tools and the week's paystubs in full, switched on", () => {
+    for (const name of [...DETENTION_TOOLS, "get_settlements"]) expect(ALWAYS_LOADED, name).toContain(name);
+    flags.detentionEnabled = true;
+    const plain = toolsFor("operator");
+    const deferred = toolsFor("operator", { defer: true });
+    expect(deferred.map((t) => t.name)).toEqual(plain.map((t) => t.name));
+    for (const name of [...DETENTION_TOOLS, "get_settlements"]) {
+      expect(deferred.find((t) => t.name === name), name).toBeDefined();
+      expect(deferred.find((t) => t.name === name), name).not.toHaveProperty("deferLoading");
+    }
+    // The cards stay deferred everywhere else: only the detention card rides with its finder.
+    expect(deferred.find((t) => t.name === "propose_advance")?.deferLoading).toBe(true);
+    flags.detentionEnabled = false;
+    for (const name of DETENTION_TOOLS) {
+      expect(toolsFor("operator", { defer: true }).map((t) => t.name), name).not.toContain(name);
+    }
   });
 
   it("defers the invoice queue, review, receivables and payment tools, which few questions need", () => {
@@ -760,6 +786,9 @@ describe("deferred loading for tool search", () => {
       "get_advances",
       "explain_paystub",
       "run_checks",
+      "get_settlements",
+      "find_unbilled_detention",
+      "propose_detention_charge",
       "set_checklist",
     ]);
     expect(Object.isFrozen(ALWAYS_LOADED)).toBe(true);

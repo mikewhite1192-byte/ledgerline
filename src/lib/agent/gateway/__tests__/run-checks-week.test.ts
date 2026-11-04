@@ -118,6 +118,9 @@ describe("run_checks for one week", () => {
   it("says what periodId does", () => {
     expect(runChecks.description).toContain("With periodId it lists what the pay check lists for that week");
     expect(runChecks.description).toContain("The fuel findings are left out");
+    // Production, Nov 4: the left-out fuel was written as "I could not check", which leaves the
+    // checklist's items in hand not finished on a finished answer.
+    expect(runChecks.description).toContain("say the pay check does not cover fuel, never that you could not check it");
     expect(runChecks.description).toContain("a week no longer open lists neither");
     expect(runChecks.description).toContain("though the pay check does not list it yet");
     expect(runChecks.description).toContain("get_settlements shows those");

@@ -20,7 +20,9 @@ export const getQuarterReview = defineTool({
     "by status and kind, the top customers, and the checked review's four lists when one was " +
     "written. Net pay is gross minus deductions plus deductions carried forward: when a paystub's " +
     "deductions are more than its pay, net stops at zero and the rest moves to the driver's next " +
-    "paystub (carriedForwardCents). Money is integer cents; margin is a percent such as " +
+    "paystub (carriedForwardCents). Money is integer cents, written in dollars with cents: " +
+    "openCents 1234500 is $12,345.00, never $1234500 or 1234500 dollars. Write each figure once; " +
+    "never leave a correction in the answer. Margin is a percent such as " +
     "\"56.26%\": write it that way, never in basis points. Quote these figures exactly; never add " +
     "or derive one. This one read answers how the quarter is going: answer from it in the next " +
     "response. Its unbilled detention, fixes and paystub problem counts are already totals, so " +

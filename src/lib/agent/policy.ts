@@ -188,6 +188,9 @@ export const CHECKLIST_RULE = [
   "- List only steps you will take whatever the reads find, never one that hangs on them (such as",
   "  \"List moves if short\"): an item left to do when you answer shows as not finished. What to",
   "  do if the reads show a problem goes in the answer.",
+  "- Say you could not check something only for work this answer left undone, since such an answer",
+  "  shows the item in hand as not finished. A limit a tool states (the pay check leaves out fuel)",
+  "  is said as what that check does not cover, never as something you could not check.",
 ].join("\n");
 
 export const CHECKLIST_TOOL = "set_checklist";

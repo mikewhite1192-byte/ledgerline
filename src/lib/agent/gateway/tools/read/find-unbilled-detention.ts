@@ -50,6 +50,14 @@ function blockedFor(rows: DetentionChargeRows | null, amountCents: number): stri
   }
 }
 
+// What the result tells the model to do next: every card in the next response, beside the
+// checklist, so the found charges become cards in the same answer (each one a person approves).
+export const DETENTION_NEXT =
+  "Each charge needs propose_detention_charge with the row's loadId and amountCents and a " +
+  "person's approval. In your next response, call propose_detention_charge once for every row " +
+  "with canPropose true, all in that one response beside set_checklist, then answer. A row with " +
+  "canPropose false is not proposed: say why from blockedBy.";
+
 export const findUnbilledDetentionTool = defineTool({
   name: "find_unbilled_detention",
   description:
@@ -133,7 +141,7 @@ export const findUnbilledDetentionTool = defineTool({
         rows,
         count: rows.length,
         totalCents: sum(found.map((f) => f.amountCents)),
-        note: "Each charge needs propose_detention_charge with the row's amountCents and a person's approval.",
+        note: DETENTION_NEXT,
       },
     };
   },

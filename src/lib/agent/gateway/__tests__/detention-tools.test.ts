@@ -5,7 +5,7 @@ import { chargeArgsOf, detentionChargeOf } from "../../../data/detention-charge"
 import { instantAt } from "../../../seed/calendar";
 import type { CarrierPlan } from "../../../seed/plan";
 import { callTool } from "../index";
-import { monthPeriod } from "../tools/read/find-unbilled-detention";
+import { DETENTION_NEXT, monthPeriod } from "../tools/read/find-unbilled-detention";
 import type { CompleteFn, GatewayContext } from "../types";
 import { context, fixedClock } from "./fake-db";
 import { blueRidgePlan, planDb } from "./plan-db";
@@ -87,6 +87,21 @@ describe("find_unbilled_detention", () => {
       expect(r).toMatchObject({ canPropose: true, blockedBy: null, invoiceStatus: "open", postedToAccounting: false });
     }
     expect(db.decisions).toHaveLength(1);
+  });
+
+  // Production, Nov 4: "Find detention we never billed last month" found the three charges, then
+  // spent a response on the checklist alone and answered that it could not make the cards. The
+  // result asks for every card in the next response, beside the checklist; each is still a card a
+  // person approves.
+  it("tells the model to propose every ready row in its next response, beside the checklist", async () => {
+    flags.detentionEnabled = true;
+    const { out } = await run("find_unbilled_detention", { month: "2026-10" });
+    if (out.decision !== "allowed") throw new Error(`not allowed: ${out.reason}`);
+    expect((out.result as { note: string }).note).toBe(DETENTION_NEXT);
+    expect(DETENTION_NEXT).toContain("call propose_detention_charge once for every row with canPropose true");
+    expect(DETENTION_NEXT).toContain("all in that one response beside set_checklist, then answer");
+    expect(DETENTION_NEXT).toContain("a person's approval");
+    expect(DETENTION_NEXT).not.toMatch(/[\u2013\u2014]/);
   });
 
   it("defaults to the carrier's last full month and is offered to the auditor too", async () => {
