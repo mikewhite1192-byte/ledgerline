@@ -49,6 +49,8 @@ type View = {
         exceptions: QueueItemRow[];
         invoices: InvoiceListRow[];
         review: ReviewQueue | null;
+        // A visit's private copy, which never posts to QuickBooks.
+        visit: boolean;
       }
     | null;
 };
@@ -92,6 +94,7 @@ export default async function InvoicesPage({
           invoices: await readInvoiceList(q, carrierToday(shell.timezone, new Date())),
           // The review is read only on its own tab and only while its switch is on.
           review: tab === "review" && reviewOn() ? await readReviewQueue(q, filter) : null,
+          visit: session.visitTicketId !== undefined,
         },
       };
     });
@@ -131,7 +134,7 @@ export default async function InvoicesPage({
           {tab === "review" && view.open.review ? <Review queue={view.open.review} filter={filter} /> : null}
           {tab === "to-invoice" ? <ToInvoice cards={view.open.cards} waiting={view.open.waiting} /> : null}
           {tab === "exceptions" ? <Exceptions rows={view.open.exceptions} /> : null}
-          {tab === "invoices" ? <AllInvoices rows={view.open.invoices} /> : null}
+          {tab === "invoices" ? <AllInvoices rows={view.open.invoices} visit={view.open.visit} /> : null}
         </>
       ) : (
         <FeatureOff name="Invoices" plural />
@@ -192,7 +195,7 @@ function Exceptions({ rows }: { rows: QueueItemRow[] }) {
   );
 }
 
-function AllInvoices({ rows }: { rows: InvoiceListRow[] }) {
+function AllInvoices({ rows, visit }: { rows: InvoiceListRow[]; visit: boolean }) {
   return (
     <DataTable
       caption="Every invoice, newest first"
@@ -215,7 +218,7 @@ function AllInvoices({ rows }: { rows: InvoiceListRow[] }) {
         { key: "amount", header: "Amount", align: "right", cell: (r) => <Money cents={r.amountCents} tone="plain" /> },
         { key: "balance", header: "Balance", align: "right", cell: (r) => <Money cents={r.balanceCents} tone="plain" /> },
         { key: "due", header: "Due", cell: (r) => <Day value={r.dueOn} /> },
-        { key: "qbo", header: "QuickBooks", cell: (r) => (r.posted ? "Posted" : "Not posted") },
+        { key: "qbo", header: "QuickBooks", cell: (r) => (r.posted ? "Posted" : visit ? "Not posted in your copy" : "Not posted") },
       ]}
     />
   );

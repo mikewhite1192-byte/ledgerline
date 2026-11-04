@@ -187,6 +187,15 @@ export function formatSaved(nanocents: number | null): string {
   return tenths === 0 ? "under 0.1 cents" : tenthsText(tenths);
 }
 
+// A cache saving in dollars, rounded down to the cent so it never reads larger than it was:
+// "$0.84", "$1.24", and "under $0.01" for a saving smaller than a cent.
+export function formatSavedDollars(nanocents: number | null): string {
+  if (nanocents === null || !isNanocents(nanocents)) return "not known";
+  if (nanocents === 0) return "nothing";
+  const cents = floorDiv(nanocents, NANOCENTS_PER_CENT);
+  return cents === 0 ? "under $0.01" : formatCents(cents);
+}
+
 const isCount = (n: unknown): n is number => typeof n === "number" && Number.isSafeInteger(n) && n >= 0;
 
 // Under one model call: how much of its input the prompt cache served and what that saved.

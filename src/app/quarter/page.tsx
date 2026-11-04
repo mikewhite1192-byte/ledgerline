@@ -174,7 +174,7 @@ function Totals({ q }: { q: Quarter }) {
       <StatCard
         label={<Term id="margin">Margin</Term>}
         value={<Money cents={margin.marginCents} />}
-        hint={margin.marginBps === null ? "No priced loads yet" : `${bpsText(margin.marginBps)} of revenue`}
+        hint={margin.marginBps === null ? "No priced loads yet" : `${bpsText(margin.marginBps)} of priced load revenue`}
         tone={margin.marginCents < 0 ? "destructive" : "neutral"}
       />
       <StatCard

@@ -66,9 +66,9 @@ export default async function SettlementsPage({
   const isOpen = period?.status === "open";
 
   return (
-    <SignedInPage tenant={view.shell} current="/settlements" title="Settlements">
+    <SignedInPage tenant={view.shell} current="/settlements" title="Pay">
       <PageHeader
-        title="Settlements"
+        title="Pay"
         description="Your pay rules work out every paystub. Run the week to draft them, then approve."
         actions={
           period && isOpen ? (
@@ -85,7 +85,7 @@ export default async function SettlementsPage({
       {!open ? (
         <EmptyState
           icon={<Banknote aria-hidden />}
-          title="Settlements are off in this environment"
+          title="Pay is off in this environment"
           body="Nothing here is read or written until it is switched on."
         />
       ) : !period ? (

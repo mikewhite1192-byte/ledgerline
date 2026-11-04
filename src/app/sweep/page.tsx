@@ -106,11 +106,11 @@ export default async function SweepPage() {
       <div className="mx-auto grid w-full max-w-[1080px] gap-6 px-4 py-6 md:px-6 md:py-8">
         <PageHeader title={TITLE} description={DESCRIPTION} />
         {flags.fuelAnomalyEnabled ? (
-          <Card className="flex flex-wrap items-center justify-between gap-2 px-4 py-3 sm:px-5">
-            <p className="text-small text-foreground-2">Fill-ups that do not fit the truck, the route or the day.</p>
-            <Link href="/sweep/fuel" className="text-link underline-offset-4 hover:underline">
+          <Card className="grid gap-1 px-4 py-3 sm:px-5">
+            <Link href="/sweep/fuel" className="w-fit text-body font-semibold text-link underline-offset-4 hover:underline">
               Fuel checks
             </Link>
+            <p className="text-small text-foreground-2">Fill-ups that do not fit the truck, the route or the day.</p>
           </Card>
         ) : null}
         {home === null ? (
@@ -147,7 +147,7 @@ export default async function SweepPage() {
                 <StatCard label="Need you" value={last.counts.needs_person ?? 0} />
               </section>
             ) : null}
-            {simple ? (
+            {simple && home.runs.length === 0 ? null : simple ? (
               <details className="rounded-lg border border-border bg-card px-4 py-3">
                 <summary className="cursor-pointer text-body font-semibold text-foreground">Past checks ({home.runs.length})</summary>
                 <div className="mt-3">{pastChecks}</div>

@@ -89,6 +89,9 @@ const FEED_ROWS = [
 type Answer = (sql: string, params: Param[]) => unknown[];
 let feedAnswer: Answer;
 let reads: string[] = [];
+let deskRows: unknown[] = [];
+let sweepRows: unknown[] = [];
+let sweepAnswer: ((sql: string) => unknown[]) | null = null;
 
 function fakeQ(): Queryable {
   return {
@@ -100,9 +103,11 @@ function fakeQ(): Queryable {
       } else if (sql.startsWith("SELECT email, role FROM memberships")) {
         rows = [{ email: SESSION.email, role: "admin" }];
       } else if (sql.includes("FROM desk_log WHERE tenant_id = current_tenant_id() AND kind = 'sleep'")) {
-        rows = [{ at: "2026-11-10T14:55:00.000000Z" }];
+        rows = deskRows;
       } else if (sql.includes("FROM autopilot_state")) {
         rows = [{ paused_at: "2026-11-10T14:00:00.000000Z", paused_until: null, paused_by: "sub-test", revision: "7" }];
+      } else if (sql.includes("FROM sweep_runs")) {
+        rows = sweepAnswer ? sweepAnswer(sql) : sweepRows;
       } else if (sql.includes("UNION ALL")) {
         rows = feedAnswer(sql, params);
       } else {
@@ -117,6 +122,7 @@ function fakeQ(): Queryable {
 }
 
 const saved = { ...flags.activityFeed };
+const savedSweep = flags.sweepEnabled;
 
 beforeEach(() => {
   vi.useFakeTimers({ now: NOW, toFake: ["Date"] });
@@ -124,12 +130,16 @@ beforeEach(() => {
   flags.activityFeed.enabled = true;
   flags.activityFeed.pageSize = 50;
   feedAnswer = () => FEED_ROWS;
+  deskRows = [{ at: "2026-11-10T14:55:00.000000Z" }];
+  sweepRows = [];
+  sweepAnswer = null;
   mocks.withRequestTenant.mockImplementation((fn: (q: Queryable, s: Session) => Promise<unknown>) => fn(fakeQ(), SESSION));
 });
 
 afterEach(() => {
   vi.useRealTimers();
   Object.assign(flags.activityFeed, saved);
+  flags.sweepEnabled = savedSweep;
   cleanup();
 });
 
@@ -205,5 +215,54 @@ describe("/activity", () => {
     await page();
     expect(screen.queryByText("Nothing has happened with money yet.")).toBeNull();
     expect(screen.queryByText(/Fuel card load/)).toBeNull();
+  });
+
+  it("says the pay check is running, or when it finished, when the desk has not checked the books", async () => {
+    flags.sweepEnabled = true;
+    deskRows = [{ at: null }];
+    sweepRows = [{ status: "running", finished_at: null }];
+    feedAnswer = () => [];
+    await page();
+    expect(screen.getAllByText(/^Checking every driver's pay now\./)).toHaveLength(2);
+    expect(screen.queryByText(/Has not checked the books yet\./)).toBeNull();
+    expect(screen.queryByText("Nothing has happened with money yet.")).toBeNull();
+    cleanup();
+
+    sweepRows = [{ status: "done", finished_at: "2026-11-10T14:40:00.000Z" }];
+    await page();
+    expect(screen.getByText(/^Checked every driver's pay at Nov 10, 2026, 8:40 AM CST\./)).toBeTruthy();
+    expect(screen.getByText("Nothing has happened with money yet.")).toBeTruthy();
+    cleanup();
+
+    sweepRows = [];
+    await page();
+    expect(screen.getByText(/^Has not checked the books yet\./)).toBeTruthy();
+  });
+
+  it("keeps the last finished pay check's time when a newer one failed or stopped", async () => {
+    flags.sweepEnabled = true;
+    deskRows = [{ at: null }];
+    feedAnswer = () => [];
+    // Runs newest first. The read must pass over the failed one rather than take the newest run.
+    const runs = [
+      { status: "failed", finished_at: "2026-11-10T15:10:00.000Z" },
+      { status: "done", finished_at: "2026-11-10T14:40:00.000Z" },
+    ];
+    let sweepSql = "";
+    sweepAnswer = (sql) => {
+      sweepSql = sql;
+      const kept = sql.includes("WHERE status IN ('running', 'done')") ? runs.filter((r) => r.status !== "failed") : runs;
+      return kept.slice(0, 1);
+    };
+    await page();
+    expect(sweepSql).toMatch(/ORDER BY status = 'running' DESC, started_at DESC, id LIMIT 1/);
+    expect(screen.getByText(/^Checked every driver's pay at Nov 10, 2026, 8:40 AM CST\./)).toBeTruthy();
+    expect(screen.queryByText(/Has not checked the books yet\./)).toBeNull();
+    cleanup();
+
+    // Only failed runs so far: no pay check has finished, so the old line stays.
+    runs.splice(1, 1);
+    await page();
+    expect(screen.getByText(/^Has not checked the books yet\./)).toBeTruthy();
   });
 });

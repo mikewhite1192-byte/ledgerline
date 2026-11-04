@@ -169,6 +169,7 @@ export function DidToday({ sweep, intake, shown, done, today, timezone }: DidTod
 const PRIORITY: readonly NeedsYouRow["key"][] = [
   "paystubs",
   "advances",
+  "pay_check",
   "cards",
   "invoice_cards",
   "past_due",
@@ -184,6 +185,7 @@ const ROW_WORDS: Readonly<Record<NeedsYouRow["key"], [string, string]>> = {
   past_due: ["invoice past due", "invoices past due"],
   escalated: ["request from your chat needs you", "requests from your chat need you"],
   books: ["record QuickBooks did not take", "records QuickBooks did not take"],
+  pay_check: ["pay check item needs you", "pay check items need you"],
 };
 
 function rowWords(r: NeedsYouRow): string {
@@ -200,7 +202,7 @@ const PLACES = ["on Pay", "on Billing", "in your chat", "for QuickBooks"] as con
 function placeOf(r: NeedsYouRow): (typeof PLACES)[number] {
   if (r.key === "books") return "for QuickBooks";
   const href = r.href;
-  if (href.startsWith("/settlements") || href.startsWith("/advances")) return "on Pay";
+  if (href.startsWith("/settlements") || href.startsWith("/advances") || href.startsWith("/sweep")) return "on Pay";
   if (href.startsWith("/invoices")) return "on Billing";
   return "in your chat";
 }

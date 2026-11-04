@@ -81,7 +81,7 @@ export default async function VoiceNotesPage() {
           title: "No voice notes yet",
           body: judge ? undefined : (
             <>
-              Add one above, or try one of the sample notes: save it, then pick it above.{" "}
+              Add one above, or save a sample note and pick it above:{" "}
               {SAMPLE_NOTES.map((s, i) => (
                 <span key={s.file}>
                   {i > 0 ? ", " : ""}

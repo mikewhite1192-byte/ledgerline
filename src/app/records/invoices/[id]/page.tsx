@@ -27,10 +27,15 @@ export const dynamic = "force-dynamic";
 export default async function InvoiceRecord({ params }: { params: Promise<{ id: string }> }) {
   const { id } = await params;
   // With factoring on, the invoice's live factoring line too (off, it is never read).
-  const page = await readRecordPage(id, async (q, rid, today) => {
+  const page = await readRecordPage(id, async (q, rid, today, session) => {
     const record = await readInvoiceRecordPage(q, rid, today);
     if (!record) return null;
-    return { ...record, factored: factoringOn() ? await readFactoredLine(q, rid) : null };
+    return {
+      ...record,
+      factored: factoringOn() ? await readFactoredLine(q, rid) : null,
+      // A visit's private copy never posts to QuickBooks, so its "not yet" says so.
+      visit: session.visitTicketId !== undefined,
+    };
   });
   if (page.kind === "problem") return <NoCarrierPage problem={page.problem} />;
   if (page.kind === "missing") {
@@ -47,7 +52,7 @@ export default async function InvoiceRecord({ params }: { params: Promise<{ id: 
   const factored = page.record.factored;
   // "Posting by itself" only for an invoice the step posts (dated on or after both start dates);
   // older ones wait for the backfill.
-  const booksText = booksStatus(
+  const books = booksStatus(
     inv.ledger.map((r) => ({ ...r, kind: "invoice" as const })),
     ["invoice"],
     {
@@ -61,7 +66,9 @@ export default async function InvoiceRecord({ params }: { params: Promise<{ id: 
       inBooks: inv.qboTail !== null,
       tail: inv.qboTail,
     },
-  ).text;
+  );
+  const booksText =
+    page.record.visit && books.state === "not_yet" ? "Not posted: your private copy does not post to QuickBooks" : books.text;
   return (
     <SignedInPage
       tenant={page.shell}

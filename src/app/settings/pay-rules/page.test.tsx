@@ -109,3 +109,14 @@ describe("/settings/pay-rules, the button that opens the chat with an example ch
     expect(mocks.readWaitingRuleChangeViews).not.toHaveBeenCalled();
   });
 });
+
+describe("/settings/pay-rules, the rules in force", () => {
+  it("starts each value with a capital and explains percentages without basis points", async () => {
+    switches({});
+    render(await PayRulesSettings());
+    expect(screen.getByText("Owner-operators")).toBeTruthy();
+    expect(screen.getByText("No cap")).toBeTruthy();
+    expect(screen.queryByText("owner-operators")).toBeNull();
+    expect(document.body.textContent).not.toContain("basis points");
+  });
+});

@@ -513,3 +513,32 @@ describe("the launcher's poll", () => {
     expect(server.reads()).toHaveLength(1);
   });
 });
+
+describe("the agent's question on a phone", () => {
+  it("folds into a pill on a phone so it covers nothing, and opens when pressed", async () => {
+    vi.stubGlobal("localStorage", memoryStorage());
+    stubServer({ reads: [showing([ADVANCE])] });
+    page();
+    const b = await findBubble();
+    expect(b.className).toContain("max-sm:hidden");
+    const pill = screen.getByRole("button", { name: "Read the agent's question" });
+    expect(pill.textContent).toBe("A question is waiting");
+    fireEvent.click(pill);
+    await waitFor(() => expect(bubble().className).not.toContain("max-sm:hidden"));
+    expect(screen.queryByRole("button", { name: "Read the agent's question" })).toBeNull();
+  });
+});
+
+describe("a morning digest on a phone", () => {
+  it("stays open once opened, with no phone pill over it", async () => {
+    vi.stubGlobal("localStorage", memoryStorage());
+    stubServer({ reads: [showing([DIGEST])] });
+    page();
+    const folded = await findBubble();
+    expect(screen.queryByRole("button", { name: "Read the agent's question" })).toBeNull();
+    fireEvent.click(within(folded).getByRole("button", { name: "Read the morning digest" }));
+    await waitFor(() => expect(within(bubble()).getByText(DIGEST.text)).toBeTruthy());
+    expect(bubble().className).not.toContain("max-sm:hidden");
+    expect(screen.queryByRole("button", { name: "Read the agent's question" })).toBeNull();
+  });
+});

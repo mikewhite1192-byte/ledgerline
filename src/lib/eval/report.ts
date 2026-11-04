@@ -119,11 +119,11 @@ export function screenTally(screens: readonly ScreenResult[]): { sorted: Tally; 
   };
 }
 
+// With no disagreement there is nothing to count, so the line says so instead of "0 of 0".
 export function agreementLine(a: Agreement): string {
-  return (
-    `When the operator and the second check agreed they were right ${a.agreedRight} of ${a.agreed} times; ` +
-    `when they disagreed the second check was right ${a.disagreedCheckRight} of ${a.disagreed} times.`
-  );
+  const agreed = `When the operator and the second check agreed they were right ${a.agreedRight} of ${a.agreed} times`;
+  if (a.disagreed === 0) return `${agreed}. They have not disagreed yet.`;
+  return `${agreed}; when they disagreed the second check was right ${a.disagreedCheckRight} of ${a.disagreed} times.`;
 }
 
 // The README section: one row per arm, the agreement line, the injection lines and the Spark

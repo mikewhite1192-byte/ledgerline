@@ -203,9 +203,13 @@ function VerifyLine({ verification }: { verification: ProposalVerification }) {
 function AuditLine({
   audit,
   words,
+  saidAbove,
 }: {
   audit: ProposalAudit;
   words?: Partial<Record<ProposalAudit["state"], string>>;
+  // The pay rules line shown just above, when there is one: its badge is left off when that line
+  // already says it ("Pay rules matched. Second check could not run"), so it prints once.
+  saidAbove?: string;
 }) {
   const line = words?.[audit.state];
   if (line !== undefined) {
@@ -241,14 +245,19 @@ function AuditLine({
   }
   const badge = AUDIT_BADGE[audit.state];
   const text = audit.state === "budget" ? BUDGET_TEXT : audit.text;
+  const repeated = saidAbove !== undefined && saidAbove.endsWith(badge.label);
+  const shownText = text && audit.state !== "pass" ? text : null;
+  if (repeated && shownText === null && !audit.override) return null;
   return (
     <div className="mx-4 mb-3 grid gap-1.5 sm:mx-5">
-      <div className="flex flex-wrap items-center gap-2">
-        <Badge tone={badge.tone}>
-          <Term id="second-check">{badge.label}</Term>
-        </Badge>
-      </div>
-      {text && audit.state !== "pass" ? <p className="text-small text-foreground">{text}</p> : null}
+      {repeated ? null : (
+        <div className="flex flex-wrap items-center gap-2">
+          <Badge tone={badge.tone}>
+            <Term id="second-check">{badge.label}</Term>
+          </Badge>
+        </div>
+      )}
+      {shownText ? <p className="text-small text-foreground">{shownText}</p> : null}
       {audit.override ? (
         <p className="text-small text-foreground-2">
           Overridden by {audit.override.byLabel} on {audit.override.at}: {audit.override.reason}
@@ -539,7 +548,9 @@ export function ProposalCard({
 
       {verification && trust.verify ? <VerifyLine verification={verification} /> : null}
 
-      {audit && trust.audit ? <AuditLine audit={audit} words={auditWords} /> : null}
+      {audit && trust.audit ? (
+        <AuditLine audit={audit} words={auditWords} saidAbove={verification && trust.verify ? verification.line : undefined} />
+      ) : null}
 
       {flagNote ? (
         <p role="note" className="mx-4 mb-3 rounded-md border border-warning bg-warning-soft px-3 py-2 text-small text-foreground sm:mx-5">

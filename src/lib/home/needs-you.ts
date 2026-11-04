@@ -6,6 +6,7 @@ import { readInvoiceList, type InvoiceListRow } from "@/lib/invoices/views";
 import { readSettlementsView, type SettlementListRow } from "@/lib/settlements/views";
 import { needsPerson } from "@/lib/books/status";
 import { MAX_CHECKS, type MoneyActionKind } from "@/lib/money/types";
+import type { SweepRunView } from "@/lib/sweep/view";
 import type { LocalDate } from "@/lib/time/local-date";
 import { cardAnchor } from "./card-anchor";
 
@@ -16,7 +17,7 @@ import { cardAnchor } from "./card-anchor";
 
 export type NeedsYouAmount = { cents: number; label: string };
 export type NeedsYouRow = {
-  key: "cards" | "escalated" | "paystubs" | "advances" | "invoice_cards" | "past_due" | "books";
+  key: "cards" | "escalated" | "paystubs" | "advances" | "invoice_cards" | "past_due" | "books" | "pay_check";
   count: number;
   // The count was cut off at the read's limit, so there may be more.
   atLeast: boolean;
@@ -58,6 +59,23 @@ export function cardsRow(turns: readonly TurnView[]): NeedsYouRow | null {
     amounts,
     href: `#${cardAnchor(cards[cards.length - 1].id)}`,
     linkLabel: "Go to the newest card",
+  };
+}
+
+// The last pay check's items it set aside for a person, from the run Home already read back. Only a
+// finished run counts; a running or stopped one has no settled count to show.
+export function payCheckRow(run: Pick<SweepRunView, "id" | "status" | "counts"> | null): NeedsYouRow | null {
+  if (run === null || run.status !== "done") return null;
+  const n = run.counts.needs_person ?? 0;
+  if (!Number.isSafeInteger(n) || n <= 0) return null;
+  return {
+    key: "pay_check",
+    count: n,
+    atLeast: false,
+    what: `${plural(n, "pay check item needs", "pay check items need")} you`,
+    amounts: [],
+    href: `/sweep/${run.id}`,
+    linkLabel: "Open the pay check",
   };
 }
 

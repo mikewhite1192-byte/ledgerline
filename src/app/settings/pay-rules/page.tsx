@@ -187,7 +187,7 @@ function InForce({ rules }: { rules: PayRulesPage }) {
                   {labelFor(key, current.insurance_applies_to)}
                 </dt>
                 <dd className="text-body font-medium text-foreground tabular-nums">
-                  {formatValue(spec, valueOf(current, key))}
+                  {capitalized(formatValue(spec, valueOf(current, key)))}
                 </dd>
                 <dd className="text-caption text-muted-foreground">{spec.help}</dd>
               </div>
@@ -212,4 +212,10 @@ function Waiting({ cards }: { cards: RuleChangeCard[] }) {
       )}
     </section>
   );
+}
+
+// A value standing alone under its label starts with a capital, as "$12.00" and "35%" read whole:
+// "Owner-operators", "No cap", "Linehaul". Inside a sentence the same words stay lowercase.
+function capitalized(text: string): string {
+  return text.charAt(0).toUpperCase() + text.slice(1);
 }

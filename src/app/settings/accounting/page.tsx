@@ -82,14 +82,16 @@ export default async function AccountingSettings({
             <CardDescription>
               {view.connection
                 ? `Connected to the company ending ${view.connection.realmTail} since ${formatInstant(view.connection.connectedAt, view.shell.timezone)}.`
-                : "Not connected. Nothing is booked to QuickBooks."}
+                : view.visit
+                  ? "Your private copy does not post to QuickBooks."
+                  : "Not connected. Nothing is booked to QuickBooks."}
             </CardDescription>
           </div>
         </CardHeader>
         <CardBody>
           {view.visit ? (
             <p className="text-body text-foreground-2">
-              Your copy of the demo carrier does not connect to QuickBooks.
+              The demo carrier itself posts each money movement to a QuickBooks sandbox.
             </p>
           ) : !view.admin ? (
             <p className="text-body text-foreground-2">An admin of this carrier can change this.</p>

@@ -124,7 +124,7 @@ export default async function CashPage() {
         </section>
       ) : null}
       {check ? <Expected check={check} /> : null}
-      <section id="bills" aria-label="Bills" className="scroll-mt-20">
+      <section id="bills" aria-label="Bills" className="min-w-0 scroll-mt-20">
         <DataTable
           caption="Bills"
           rows={bills}
@@ -229,7 +229,7 @@ function Position({ check, timezone, today }: { check: CashCheckView; timezone: 
 // The open invoices the check looked at, counted ones first.
 function Expected({ check }: { check: CashCheckView }) {
   return (
-    <section id="expected" aria-label="Expected by Friday" className="scroll-mt-20">
+    <section id="expected" aria-label="Expected by Friday" className="min-w-0 scroll-mt-20">
       <DataTable
         caption="Expected by Friday"
         rows={check.lines}

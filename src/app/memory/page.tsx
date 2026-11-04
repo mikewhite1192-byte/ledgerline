@@ -37,7 +37,7 @@ export default async function MemoryPage() {
       title="Memory"
       signOut={<SignOutForm />}
     >
-      <div className="mx-auto grid w-full max-w-[960px] gap-6">
+      <div className="mx-auto grid w-full max-w-[960px] min-w-0 grid-cols-1 gap-6">
         <PageHeader
           title="Memory"
           description="Short notes the agent keeps about your customers, drivers and preferences. The office writes and keeps them; the agent reads them for context and never for amounts."

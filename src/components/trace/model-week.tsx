@@ -4,7 +4,7 @@ import { EmptyState } from "@/components/app/states";
 import { StatCard } from "@/components/app/stat-card";
 import { buttonVariants } from "@/components/ui/button";
 import { Card, CardBody, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
-import { countWords, formatCachedShare, formatLatency, formatSaved, formatSpend } from "@/lib/trace/format";
+import { countWords, formatCachedShare, formatDollars, formatLatency, formatSavedDollars } from "@/lib/trace/format";
 import type { ModelTotals, ModelWeek } from "@/lib/trace/week";
 import { formatPeriod, zoneName } from "@/lib/format/dates";
 
@@ -23,11 +23,11 @@ function Row({ label, value }: { label: string; value: string }) {
 
 const count = (n: number) => n.toLocaleString("en-US");
 
-// "71% of input tokens, saved 84.3 cents at list price", or null for a model with no token counts this week.
+// "71% of input tokens, saved $0.84 at list price", or null for a model with no token counts this week.
 function cacheRow(m: { cachedShare: number | null; cachedTokens: number; savedNanocents: number | null }): string | null {
   const share = formatCachedShare(m.cachedShare, m.cachedTokens);
   if (share === null) return null;
-  return m.cachedTokens === 0 ? "none" : `${share} of input tokens, saved ${formatSaved(m.savedNanocents)} at list price`;
+  return m.cachedTokens === 0 ? "none" : `${share} of input tokens, saved ${formatSavedDollars(m.savedNanocents)} at list price`;
 }
 
 // The page's prompt cache sentence, or null when no call this week was metered in tokens.
@@ -36,7 +36,7 @@ export function weekCacheLine(week: ModelWeek): string | null {
   if (share === null) return null;
   if (week.cachedTokens === 0) return "Prompt cache: no input tokens were read from the cache this week.";
   const saving =
-    week.savedNanocents === null ? "; the saving is not known" : `, saving ${formatSaved(week.savedNanocents)} at list price`;
+    week.savedNanocents === null ? "; the saving is not known" : `, saving ${formatSavedDollars(week.savedNanocents)} at list price`;
   return `Prompt cache: ${share} of input tokens were cached this week${saving}.`;
 }
 
@@ -60,12 +60,12 @@ function ModelCard({ m }: { m: ModelTotals }) {
             <Row label="Finished" value={count(m.ok)} />
             {m.incomplete > 0 ? <Row label="Cut short" value={count(m.incomplete)} /> : null}
             {m.failed > 0 ? <Row label="Failed" value={count(m.failed)} /> : null}
-            {m.pending > 0 ? <Row label="Running or outcome not known" value={count(m.pending)} /> : null}
-            <Row label="Spent" value={formatSpend(m.costNanocents)} />
+            {m.pending > 0 ? <Row label="Still running or not read back yet" value={count(m.pending)} /> : null}
+            <Row label="Spent" value={formatDollars(m.costNanocents)} />
             {m.unsettled > 0 ? (
               <Row
                 label={`Held for ${countWords(m.unsettled, "call", "calls")} not settled`}
-                value={formatSpend(m.heldNanocents)}
+                value={formatDollars(m.heldNanocents)}
               />
             ) : null}
             {cache ? <Row label="From the prompt cache" value={cache} /> : null}
@@ -110,10 +110,10 @@ export function ModelWeekView({ week }: { week: ModelWeek }) {
           <StatCard label="Model calls" value={count(week.calls)} />
           <StatCard
             label="Spent"
-            value={formatSpend(week.costNanocents)}
+            value={formatDollars(week.costNanocents)}
             hint={
               week.unsettled > 0
-                ? `Plus ${formatSpend(week.heldNanocents)} held for ${countWords(week.unsettled, "call", "calls")} not settled`
+                ? `Plus ${formatDollars(week.heldNanocents)} held for ${countWords(week.unsettled, "call", "calls")} not settled`
                 : undefined
             }
           />
@@ -125,7 +125,7 @@ export function ModelWeekView({ week }: { week: ModelWeek }) {
           <StatCard
             label="Handed to Muse Wonder"
             value={count(week.escalations)}
-            hint="Cards Muse Spark could not form"
+            hint={`${countWords(week.escalations, "card", "cards")} Muse Spark could not form`}
           />
         </div>
       )}

@@ -20,6 +20,7 @@ function row(over: Partial<FeedRow>): FeedRow {
     cents: null,
     direction: null,
     title: null,
+    driver: null,
     kind: null,
     code: null,
     reason: null,
@@ -47,6 +48,7 @@ function raw(over: Record<string, unknown>): Record<string, unknown> {
     cents: "12500",
     direction: null,
     title: null,
+    driver: null,
     kind: "advance_payout",
     code: "sent",
     reason: null,
@@ -288,6 +290,7 @@ describe("feedRowOf", () => {
         "cents",
         "direction",
         "title",
+        "driver",
         "kind",
         "code",
         "reason",
@@ -340,5 +343,25 @@ describe("parseCursor", () => {
     for (const bad of [undefined, null, 7, ["a"], "", "nonsense", `${AT}`, `${AT}|`, `|${c.key}`, `2026-11-10T15:00:00Z|${c.key}`, `${AT}|DROP TABLE`, `2026-02-30T12:00:00.000000Z|${c.key}`]) {
       expect(parseCursor(bad), String(bad)).toBeNull();
     }
+  });
+});
+
+describe("a pay correction's lines", () => {
+  const fix = { title: "Pay correction", kind: "pay_correction", driver: "Marcus Calloway", cents: 20000 } as const;
+
+  it("name the driver and say which way the pay moves, as the card does", () => {
+    expect(say({ ...fix, direction: "out" })).toBe("LedgerLine proposed Pay correction for Marcus Calloway, $200.00 added to pay");
+    expect(say({ ...fix, direction: "in" })).toBe("LedgerLine proposed Pay correction for Marcus Calloway, $200.00 taken back from pay");
+    expect(say({ ...fix, event: "proposal_audited", code: "pass" })).toBe("Audit passed: Pay correction for Marcus Calloway");
+    expect(doneLine(row({ ...fix, direction: "out" }), ZONE)?.words).toBe(
+      "Drafted a card for you: Pay correction for Marcus Calloway, $200.00.",
+    );
+  });
+
+  it("keep the title alone when no driver is on the row or the title already names one", () => {
+    expect(say({ ...fix, driver: null, event: "proposal_audited", code: "pass" })).toBe("Audit passed: Pay correction");
+    expect(say({ ...fix, title: "Advance for Marcus Calloway", kind: "advance_payout", direction: "out" })).toBe(
+      "LedgerLine proposed Advance for Marcus Calloway, $200.00 out",
+    );
   });
 });

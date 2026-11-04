@@ -1,3 +1,4 @@
+import { plainAnswer } from "../agent/operator/plain";
 import { formatLocalDate } from "../format/dates";
 import type { SweepRunView } from "./view";
 
@@ -47,4 +48,26 @@ export function sweepOutcome(run: Run, where: "home" | "page"): string {
   line += ".";
   if (needs > 0) line += ` ${needs} ${needs === 1 ? "needs" : "need"} you.`;
   return line;
+}
+
+// A fix card's "Why" as a person reads it. The explanation is model text, so code sets it right:
+// dates as a month and day (the agent's own answer rule, src/lib/agent/operator/plain.ts), a week
+// within one year said once ("Oct 26 to Nov 1, 2026"), and the item's driver code, as a whole
+// token, replaced by the name already on the item. A name is never built: no name on the item, or
+// the name already in the text, leaves the code as written.
+const SAME_YEAR_RANGE = /\b([A-Z][a-z]{2} \d{1,2}), (\d{4}) to ([A-Z][a-z]{2} \d{1,2}), \2\b/g;
+
+type Driver = { code: string | null; name: string | null };
+
+export function plainWhy(text: string, driver: Driver): string {
+  return namedDriver(plainAnswer(text).replace(SAME_YEAR_RANGE, "$1 to $3, $2"), driver);
+}
+
+// The item's driver code, as a whole token, replaced by the name already on the item ("Advances for
+// Marcus Calloway are $150.00 over the driver's limit."). No name, or the name already there,
+// leaves the text as written.
+export function namedDriver(text: string, { code, name }: Driver): string {
+  if (!code || !name || text.includes(name)) return text;
+  // Each run of letters, digits and dashes is one token, compared whole against the code.
+  return text.replace(/[\w-]+/g, (token) => (token === code ? name : token));
 }
