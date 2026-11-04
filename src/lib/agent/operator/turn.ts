@@ -213,6 +213,9 @@ export async function runTurn(input: TurnInput, deps: TurnDeps): Promise<TurnOut
   // The answer call's own checklist write was dropped: the list on hand is older than the answer,
   // so nothing still in hand on it is shown as done.
   let listDropped = false;
+  // The cards this turn's proposal steps ended with (created, or the same live card again), by id
+  // so a card proposed twice counts once, for the stop text.
+  const cardsMade = new Set<string>();
 
   const emitStep = (s: StepView) => deps.emit?.({ event: "step", data: s });
   const start = async (kind: StepView["kind"], label: string) => {
@@ -484,6 +487,7 @@ export async function runTurn(input: TurnInput, deps: TurnDeps): Promise<TurnOut
         ...(checked?.engine ? { engine: checked.engine } : {}),
       });
       const carded = saved.kind === "created" || saved.kind === "duplicate";
+      if (carded) cardsMade.add(saved.proposalId);
       await finish(step, carded ? "done" : "failed", {
         proposalId: carded ? saved.proposalId : null,
         detail: {
@@ -738,9 +742,9 @@ export async function runTurn(input: TurnInput, deps: TurnDeps): Promise<TurnOut
   // An escalation to a person keeps its own line, followed by the same summary.
   const ending: Ending =
     finalList && ended.status === "partial" && ended.text.startsWith(LOOP_TEXT.stopped)
-      ? { ...ended, text: `${stopSummary(finalList, { steps: budget.toolSteps })}${ended.text.slice(LOOP_TEXT.stopped.length)}` }
+      ? { ...ended, text: `${stopSummary(finalList, { steps: budget.toolSteps, cards: cardsMade.size })}${ended.text.slice(LOOP_TEXT.stopped.length)}` }
       : finalList && ended.endedReason === "escalated"
-        ? { ...ended, text: `${ended.text}\n\n${stopSummary(finalList, { steps: budget.toolSteps })}` }
+        ? { ...ended, text: `${ended.text}\n\n${stopSummary(finalList, { steps: budget.toolSteps, cards: cardsMade.size })}` }
         : ended;
   if (finalList && !sameChecklist(finalList, checklist)) deps.emit?.({ event: "checklist", data: finalList });
   await deps.store.finishTurn(turn.turnId, {

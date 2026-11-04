@@ -17,9 +17,12 @@ export const getCashFriday = defineTool({
     "loads and vendor bills due, and the gap (below zero is a short), in integer cents. cashByPayDayCents " +
     "is cash on hand plus the payments expected and dueByPayDayCents is the pay run plus fuel loads and " +
     "bills due: quote those for what comes in and what goes out, and gapCents for covered or short " +
-    "by how much. When short, " +
+    "by how much. fuelAndBillsDueCents is the fuel loads and bills due together, what is due " +
+    "besides the pay run. Quote each figure as given, to the cent; never add, subtract or round " +
+    "figures yourself. When short, " +
     "options are the moves the engine found (factor invoices, move a flexible bill, chase a late " +
-    "payer), each with its figures. Also the latest stored check's id and the open cards' ids. " +
+    "payer), each with its figures (a chase's newCashCents is the part the position does not " +
+    "already count). Also the latest stored check's id and the open cards' ids. " +
     "This only reads; a person runs a check and decides each card on the Friday's cash page.",
   tier: "read",
   roles: OPERATOR,
@@ -56,6 +59,8 @@ export const getCashFriday = defineTool({
         // instead of adding figures itself: cashByPayDayCents minus dueByPayDayCents is gapCents.
         cashByPayDayCents: sum([r.figures.cashOnHandCents, r.figures.expectedReceiptsCents]),
         dueByPayDayCents: sum([r.figures.payRunCents, r.figures.fuelLoadsCents, r.figures.vendorBillsDueCents]),
+        // What is due besides the pay run, so "the pay run plus X" quotes X instead of a difference.
+        fuelAndBillsDueCents: sum([r.figures.fuelLoadsCents, r.figures.vendorBillsDueCents]),
         linesTotal: r.lines.length,
         // rows are the receipt lines, counted ones first; the gateway cuts a long list from the end.
         rows: r.lines.slice(0, CASH_LINES_MAX).map((l) => ({
@@ -77,6 +82,8 @@ export const getCashFriday = defineTool({
               kind: o.kind,
               periodId: o.subjectId,
               amountCents: o.amountCents,
+              balanceCents: o.balanceCents,
+              advanceCents: o.advanceCents,
               feeCents: o.feeCents,
               reserveCents: o.reserveCents,
               coversShort: o.coversShort,
@@ -98,6 +105,7 @@ export const getCashFriday = defineTool({
             kind: o.kind,
             customerId: o.subjectId,
             amountCents: o.amountCents,
+            newCashCents: o.newCashCents,
             label: o.label,
             overdueInvoices: o.overdueInvoices,
           };
