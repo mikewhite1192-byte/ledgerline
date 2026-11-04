@@ -54,7 +54,8 @@ export const getSettlements = defineTool({
     "verdict, whether it is clean for Approve all clean, and parkedReason when it no longer " +
     "matches its records. For who has a problem on this week's paystub or why a driver's pay " +
     "is short this week, send run_checks with the week paid next's periodId (the state summary " +
-    "names it) in the same response as this call, so both come back together. noPaystubsYet " +
+    "names it) in the same response as this call, so both come back together; for a week named " +
+    "by periodId, send run_checks with that same periodId. noPaystubsYet " +
     "true means only that this open week has no paystubs " +
     "yet, never no problems or no pay: for who has a problem call run_checks with this " +
     "periodId, and for one driver's pay call explain_paystub with this periodId and the " +

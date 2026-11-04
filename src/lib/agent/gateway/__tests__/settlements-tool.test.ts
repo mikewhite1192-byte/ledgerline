@@ -231,6 +231,7 @@ describe("get_settlements", () => {
     expect(getSettlements.description).toContain(
       "send run_checks with the week paid next's periodId (the state summary names it) in the same response as this call",
     );
+    expect(getSettlements.description).toContain("for a week named by periodId, send run_checks with that same periodId");
     expect(getSettlements.description).toContain(
       "Never call report_driver_pay_summary or report_driver_insights for that week's problems or one driver's pay",
     );
