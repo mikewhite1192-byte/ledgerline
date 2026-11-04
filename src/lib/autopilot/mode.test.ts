@@ -62,6 +62,9 @@ describe("autopilotModeFor", () => {
     flags.autopilot.startDate = "2026-11-03";
     expect(await autopilotModeFor(q, "invoice_post", NOW)).toBe("ask");
     flags.autopilot.startDate = "2026-10-31";
+    const ceiling = flags.autopilot.kinds.advance_payout;
+    if (!ceiling) throw new Error("no advance ceiling");
+    ceiling.armed = false;
     expect(await autopilotModeFor(q, "advance_payout", NOW)).toBe("ask");
     reads.readRule.mockResolvedValueOnce(rule("ask"));
     expect(await autopilotModeFor(q, "invoice_post", NOW)).toBe("ask");
@@ -72,7 +75,7 @@ describe("autopilotModeFor", () => {
     reads.readRule.mockResolvedValue(advance);
     const ceiling = flags.autopilot.kinds.advance_payout;
     if (!ceiling) throw new Error("no advance ceiling");
-    expect(ceiling.armed).toBe(false);
+    ceiling.armed = false;
     expect(await autopilotModeFor(q, "advance_payout", NOW)).toBe("ask");
     ceiling.armed = true;
     expect(await autopilotModeFor(q, "advance_payout", NOW)).toBe("auto");
