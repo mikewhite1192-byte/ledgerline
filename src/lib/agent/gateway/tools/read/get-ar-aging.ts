@@ -29,7 +29,8 @@ export const getArAging = defineTool({
     "Age the carrier's open customer balances by days past due, as the rules engine buckets them " +
     "(currentCents, days1To30Cents, days31To60Cents, days61To90Cents, over90Cents), per customer " +
     "and in total, in integer cents. asOf defaults to today in the carrier's zone; minBucket " +
-    "keeps only customers with a balance in that bucket or a later one. This only reads.",
+    "(current, 1_30, 31_60, 61_90 or over_90) keeps only customers with a balance in that bucket " +
+    "or a later one. This only reads.",
   tier: "read",
   roles: OPERATOR,
   label: "Aging the receivables",
