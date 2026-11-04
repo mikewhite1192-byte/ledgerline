@@ -7,6 +7,7 @@ import { PageHeader } from "@/components/app/page-header";
 import { StatCard } from "@/components/app/stat-card";
 import { ErrorState } from "@/components/app/states";
 import { StatusBadge } from "@/components/app/status-badge";
+import { CarryOn } from "@/components/sweep/carry-on";
 import { StartSweep } from "@/components/sweep/start-sweep";
 import { Card } from "@/components/ui/card";
 import { formatInstant, formatPeriod } from "@/lib/format/dates";
@@ -56,6 +57,9 @@ export default async function SweepPage() {
   }
   const last = home?.runs[0] ?? null;
   const running = home?.runs.some((r) => r.status === "running") ?? false;
+  // A run started from the button and left before its own page opened would sit at its first
+  // slice: this page carries a running run on too (CarryOn skips the judge role).
+  const runningId = home?.runs.find((r) => r.status === "running")?.id;
   const simple = flags.simpleShape.enabled === true;
 
   type Run = NonNullable<typeof home>["runs"][number];
@@ -131,6 +135,7 @@ export default async function SweepPage() {
               </div>
               <div className="flex items-center gap-2">
                 {running ? <StatusBadge status="executing" label="Running" /> : null}
+                {runningId ? <CarryOn runId={runningId} /> : null}
                 <StartSweep hasOpenWeek={home.openPeriod !== null} running={running} />
               </div>
             </Card>
