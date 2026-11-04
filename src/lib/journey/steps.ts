@@ -374,7 +374,7 @@ function advancePaid(facts: JourneyFacts, drafted: Draft): Draft {
   if (payout !== null && payout.state === "failed") return stopped("The payout did not go through.", { ...link, at: payout.settledAt });
   if (payout !== null && payout.state === "unknown") return stopped(PAYOUT_UNCONFIRMED, link);
   if (payout !== null && payout.state !== "confirmed") return pending("Waiting for the payout to confirm", link);
-  if (card === null) return pending(advance !== null ? "Waiting for a person to approve" : "Paid after a person approves", link);
+  if (card === null) return pending(advance !== null ? "Waiting for a person to approve" : "Paid once approved, by a person or your autopilot", link);
   switch (card.status) {
     case "proposed":
       return pending(cardWaiting(card), link);
