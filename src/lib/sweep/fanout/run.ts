@@ -83,7 +83,10 @@ export const CHECK_LEASE_S = 30;
 // The slack PAY-SWEEP keeps before a slice's deadline, so a slice that starts with sliceMs left
 // can still start its checks.
 const SLICE_SLACK_MS = 6_000;
-const MAX_ATTEMPTS = 2;
+// One try each for the ordering call, every driver's check and the comparison (owner, 2026-11-03,
+// D-106): a timed-out check is charged its full hold each try, so a retry could exhaust the second
+// opinion's share of the run cap. A slice that dies mid-call leaves that call unanswered.
+const MAX_ATTEMPTS = 1;
 // Reasoning and the answer share these caps. Measured on muse-wonder-1.0 at medium effort
 // (2026-10-27): a two-driver plan spent 1,720 of 2,400 output tokens on reasoning and was cut off
 // before its JSON closed. A full roster's plan is a long answer (about 100 tokens a driver), so it
@@ -358,12 +361,14 @@ export async function planPhase(fx: FanoutCtx): Promise<"plan" | "check" | "draf
     }
     const week = await runWeek(q, fx.runId);
     const roster = await readRoster(q, fx.runId, week, l.maxDrivers);
-    // Nobody to order, two tries spent, or the switch went off: the server's own order.
+    // Nobody to order, its tries spent, or the switch went off: the server's own order.
     if (roster.rows.length === 0) {
       await writePlan(q, fx, defaultOrder(roster), "checking", null);
       return { kind: "next", phase: "check" };
     }
     if (!fanoutOn() || !(attempts < MAX_ATTEMPTS)) {
+      // A turn a dead slice left on the last try is closed here, as the next try would close it.
+      await closeLeftTurn(q, fx, "plan");
       await writePlan(q, fx, defaultOrder(roster), "plan_skipped", null);
       return { kind: "next", phase: "check" };
     }
@@ -486,7 +491,7 @@ export async function checkPhase(fx: FanoutCtx): Promise<"check" | "reconcile" |
 
   const start = await fx.leased(async (q): Promise<CheckStart> => {
     // The turn of a check a dead slice left running is closed: that check is leased again below
-    // or, on its second lease, ends here.
+    // or, on its last lease, ends here.
     await q.execute(
       `UPDATE turns SET status = 'failed', ended_reason = 'abandoned', finished_at = CAST($2 AS timestamptz)
         WHERE tenant_id = current_tenant_id() AND status = 'running' AND id IN (
@@ -496,7 +501,7 @@ export async function checkPhase(fx: FanoutCtx): Promise<"check" | "reconcile" |
              AND turn_id IS NOT NULL)`,
       [fx.runId, nowIso],
     );
-    // A check a dead slice left running on its second lease is not leased a third time.
+    // A check a dead slice left running on its last lease is not leased again.
     await q.execute(
       `UPDATE sweep_fanout_checks SET status = 'error', lease_token = NULL, lease_until = NULL,
               finished_at = CAST($2 AS timestamptz)
@@ -814,9 +819,11 @@ export async function reconcilePhase(fx: FanoutCtx): Promise<"reconcile" | "draf
       }
     }
     const attempts = Number(f.reconcile_attempts);
-    // Nothing for the comparison to say, two tries spent, or the switch went off: the counts stand
+    // Nothing for the comparison to say, its tries spent, or the switch went off: the counts stand
     // alone.
     if (!fanoutOn() || counts.drivers_checked === 0 || !(attempts < MAX_ATTEMPTS)) {
+      // A turn a dead slice left on the last try is closed here, as the next try would close it.
+      await closeLeftTurn(q, fx, "reconcile");
       await finishFanout(q, fx, null, null);
       return { kind: "next", phase: "draft" };
     }

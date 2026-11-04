@@ -349,7 +349,7 @@ describe("the sweep's second opinion", () => {
     expect((await readSweepPage(SESSION, runId, { db: app }))?.fanout).toBeNull();
   });
 
-  it("leases a check a dead slice left once more, and never a third time", async () => {
+  it("never leases again a check a dead slice left on its one try", async () => {
     const runId = await start();
     // Up to the checks: the ordering call takes 5 s of a 16 s slice, so too little is left to start
     // a check and the slice ends there. The clock stays 5 s on for the rest of the run.
@@ -363,7 +363,7 @@ describe("the sweep's second opinion", () => {
     expect(s).toMatchObject({ ok: true, phase: "check" });
     const rows = await checks(runId);
     expect(rows.every((c) => c.status === "queued")).toBe(true);
-    // A dead slice: one check on its first lease, one on its second, both lapsed.
+    // A dead slice: one check on its one lease, lapsed.
     const lapsed = new Date(NOW.getTime() - 1_000).toISOString();
     await admin.withTenant(T, async (q) => {
       await q.execute(
@@ -371,17 +371,11 @@ describe("the sweep's second opinion", () => {
           WHERE run_id = CAST($1 AS uuid) AND driver_id = CAST($2 AS uuid)`,
         [runId, rows[0].driver_id, randomUUID(), lapsed],
       );
-      await q.execute(
-        `UPDATE sweep_fanout_checks SET status = 'running', attempts = 2, lease_token = CAST($3 AS uuid), lease_until = CAST($4 AS timestamptz)
-          WHERE run_id = CAST($1 AS uuid) AND driver_id = CAST($2 AS uuid)`,
-        [runId, rows[1].driver_id, randomUUID(), lapsed],
-      );
     });
     await runToEnd(runId, d);
     const after = await checks(runId);
-    expect(after.find((c) => c.driver_id === rows[0].driver_id)).toMatchObject({ status: "done", attempts: 2 });
-    expect(after.find((c) => c.driver_id === rows[1].driver_id)).toMatchObject({ status: "error", attempts: 2 });
-    expect(after.filter((c) => c.driver_id !== rows[0].driver_id && c.driver_id !== rows[1].driver_id).every((c) => c.attempts === 1)).toBe(true);
+    expect(after.find((c) => c.driver_id === rows[0].driver_id)).toMatchObject({ status: "error", attempts: 1 });
+    expect(after.filter((c) => c.driver_id !== rows[0].driver_id).every((c) => c.status === "done" && c.attempts === 1)).toBe(true);
     expect(JSON.parse((await fanoutRow(runId)).counts ?? "{}")).toMatchObject({ drivers_unchecked: 1 });
     expect((await runRow(runId)).reserved_cents).toBe(0);
   });
@@ -400,7 +394,8 @@ describe("the sweep's second opinion", () => {
       }
       return opened;
     };
-    // The clock moves past a check's lease after each kill, so the next slice takes it again.
+    // The clock moves past a check's lease after each kill; with one try each, the next slice
+    // takes none of the three again.
     let at = NOW.getTime();
     const d = deps({ clock: () => new Date(at), openTurnIn: killing });
     const runId = await start();
@@ -430,9 +425,12 @@ describe("the sweep's second opinion", () => {
     );
     expect(unpointed[0].n).toBe(0);
     const f = await fanoutRow(runId);
-    expect(f.plan_turn_id).not.toBeNull();
-    expect(f.reconcile_turn_id).not.toBeNull();
-    expect((await checks(runId)).every((c) => c.status === "done" && c.turn_id !== null)).toBe(true);
+    expect(f.plan_turn_id).toBeNull();
+    expect(f.reconcile_turn_id).toBeNull();
+    const all = await checks(runId);
+    // The killed slice had leased a batch of checks at once; none is leased a second time.
+    expect(all.filter((c) => c.status === "error" && c.turn_id === null)).toHaveLength(Math.min(flags.fanoutLimits.parallel, all.length));
+    expect(all.filter((c) => c.status !== "error").every((c) => c.status === "done" && c.turn_id !== null)).toBe(true);
   });
 
   it("holds cents against the cap so two slices at once cannot pass it", async () => {
@@ -597,7 +595,7 @@ describe("the sweep's second opinion", () => {
   it.each([
     ["fanout_plan", "plan_turn_id"],
     ["fanout_reconcile", "reconcile_turn_id"],
-  ] as const)("closes the %s turn a dead slice left running before the next try opens its own", async (purpose, column) => {
+  ] as const)("closes the %s turn a dead slice left running on its one try, and asks no second time", async (purpose, column) => {
     const runId = await start();
     let died = false;
     const dying = vi.fn(async (target: string, req: AiRequest): Promise<AiResult> => {
@@ -621,7 +619,7 @@ describe("the sweep's second opinion", () => {
       (await read<{ status: string; ended_reason: string | null }>("SELECT status, ended_reason FROM turns WHERE id = CAST($1 AS uuid)", [id]))[0];
     const left = (await fanoutRow(runId))[column] as string;
     expect(await turn(left)).toMatchObject({ status: "running" });
-    // The dead slice's lease runs out, and the next slice tries again.
+    // The dead slice's lease runs out; the next slice closes its turn and does not try again.
     await admin.withTenant(T, (q) =>
       q.execute("UPDATE sweep_runs SET lease_token = NULL, lease_until = CAST($2 AS timestamptz) WHERE id = CAST($1 AS uuid)", [
         runId,
@@ -629,11 +627,9 @@ describe("the sweep's second opinion", () => {
       ]),
     );
     expect(await runToEnd(runId, d)).toMatchObject({ status: "done" });
-    expect(model.mock.calls.filter((c) => (c[1] as AiRequest).purpose === purpose)).toHaveLength(2);
+    expect(model.mock.calls.filter((c) => (c[1] as AiRequest).purpose === purpose)).toHaveLength(1);
     expect(await turn(left)).toMatchObject({ status: "failed", ended_reason: "abandoned" });
-    const next = (await fanoutRow(runId))[column] as string;
-    expect(next).not.toBe(left);
-    expect((await turn(next)).status).not.toBe("running");
+    expect((await fanoutRow(runId))[column]).toBe(left);
     const open = await read<{ n: string }>("SELECT COUNT(*) AS n FROM turns WHERE status = 'running'");
     expect(Number(open[0].n)).toBe(0);
   });
@@ -656,8 +652,9 @@ describe("the sweep's second opinion", () => {
     await runToEnd(runId, deps({ complete: once as unknown as SweepDeps["complete"] }));
     const n = (await checks(runId)).length;
     const extra = counted === "hold" ? flags.fanoutLimits.planCents : counted;
-    // The second try answers; the first counts nothing, or its whole hold.
-    expect(await runRow(runId)).toMatchObject({ spent_cents: 10 + 1 + 2 * n + 1 + extra, reserved_cents: 0 });
+    // No second try: the run goes on in the server's own order, and the refused call counts
+    // nothing, or its whole hold.
+    expect(await runRow(runId)).toMatchObject({ spent_cents: 10 + 2 * n + 1 + extra, reserved_cents: 0 });
   });
 
   it("keeps the sweep's own calls within its own budget inside the second opinion's larger cap: room for one", async () => {
