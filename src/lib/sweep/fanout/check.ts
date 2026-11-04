@@ -97,8 +97,17 @@ export const CHECK_PROMPT =
   "You check one truck driver's pay for one week. That driver's records for the week are in the " +
   "message (driver, pay items, loads, advances), read by the server from the carrier's own tables. " +
   "Report only issues you can point to a record for, citing table and id as the message shows " +
-  "them (drivers, pay_items, loads, advances, or the table a pay item's ref names). Never state an " +
-  "amount or any figure; name the record. Answer with a message that is only this JSON and " +
+  "them (drivers, pay_items, loads, advances, or the table a pay item's ref names). A load's own " +
+  "pay is not a pay item: it is computed at settlement from the load's rate, so a load with no pay " +
+  "item is never an issue. What each category means: newer_is_duplicate, two approved or paid " +
+  "advances of the same amount requested close together (cite both advances); " +
+  "purchase_on_other_driver, load_on_other_driver or purchase_not_found, a fuel pay item that " +
+  "does not fit this driver's loads; no_load_that_day, an insurance pay item on a day this driver " +
+  "delivered no load; rate_missing, a delivered load whose linehaulCents is null; over_limit, open " +
+  "advances above the driver's advanceLimitCents; over_load_cap, open advances on one load above " +
+  "what that load pays. Extras a driver paid on a load are not in these records, so never report " +
+  "no_reimbursement. Use other_for_review only for a clear record-level problem none of these " +
+  "names. Never state an amount or any figure; name the record. Answer with a message that is only this JSON and " +
   "nothing else: " +
   CHECK_SHAPE;
 
