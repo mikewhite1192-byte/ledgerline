@@ -261,7 +261,6 @@ describe("the menu registry", () => {
     expect(under("home")).toEqual([
       ["/", "Home"],
       ["/activity", "Live feed"],
-      ["/road", "On the road"],
     ]);
     expect(under("pay")).toEqual([
       ["/settlements", "Paystubs"],
@@ -282,6 +281,7 @@ describe("the menu registry", () => {
     ]);
     expect(under("drivers")).toEqual([
       ["/drivers", "Drivers"],
+      ["/road", "On the road"],
       ["/documents", "Documents"],
       ["/voice-notes", "Voice notes"],
       ["/clips", "Dock videos"],
