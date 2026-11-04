@@ -363,6 +363,27 @@ describe("runChildCheck", () => {
     expect(h.complete).not.toHaveBeenCalled();
   });
 
+  it("ends as timed out when a read fails because the clock ran out inside it, and as an error when time is left", async () => {
+    const failed = (tool: string) =>
+      (tool === "get_loads"
+        ? { decision: "failed", decisionId: `d-${tool}`, tool, reason: "tool_failed", result: { error: "tool_failed" }, latencyMs: 0 }
+        : allowed(tool)) as GatewayOutcome;
+    // The third read takes the rest of the check's clock and fails, as the gateway's timeout does.
+    let now = 0;
+    const late = harness([() => answer()], { read: failed });
+    late.callTool.mockImplementation(async (_ctx, call) => {
+      now += call.name === "get_loads" ? LIMITS.childTimeoutMs : 1_000;
+      return failed(call.name);
+    });
+    const out = await runChildCheck(input(), { ...late.deps, clock: () => now });
+    expect(out).toMatchObject({ status: "timed_out", costKnown: true, modelCalls: 0, toolSteps: 3 });
+    expect(late.complete).not.toHaveBeenCalled();
+    // The same failure with time left is an error.
+    const early = harness([() => answer()], { read: failed, readMs: 1_000 });
+    expect(await runChildCheck(input(), early.deps)).toMatchObject({ status: "error", modelCalls: 0 });
+    expect(early.complete).not.toHaveBeenCalled();
+  });
+
   it("never asks for longer than is left after the reads", async () => {
     const h = harness([() => answer()], { readMs: 2_000 });
     const out = await runChildCheck(input(), h.deps);

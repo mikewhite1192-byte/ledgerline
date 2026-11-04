@@ -10,9 +10,9 @@ import { CHECK_SHAPE, CheckAnswer, NOTE_MAX, isRecordTable, parseJson, scrubFigu
 
 // One driver's check (design 3.3): the server reads that driver's records for one week through
 // the gateway, then one Muse Spark call with no tools answers in JSON the server checks. It reads
-// only; it never proposes. Its own run rather than the operator's turn (operator/turn.ts fixes
-// its prompt, purpose, tools and escalation), reusing the operator's per-turn counter and writing
-// turn_steps the same way. A tool loop took about three model calls a check and ran past its
+// only; it never proposes. Its own run rather than the operator's turn, which has its own prompt,
+// purpose, tool list and escalation (operator/turn.ts); it reuses the operator's per-turn counter
+// and writes turn_steps the same way. A tool loop took about three model calls a check and ran past its
 // clock; the reads are fixed, so the code makes them. Caps: maxToolSteps tool steps (the four
 // reads), one model call of maxCallsPerDriver, driverCents in all (callCents the call) and
 // childTimeoutMs on the clock. A read the gateway does not allow ends the check before any call.
@@ -39,8 +39,11 @@ const MAX_CALL_MS = 60_000;
 // Reasoning and the answer share this cap. Measured on muse-spark-1.3 at low effort (2026-10-27):
 // the answering call spent 650 to 700 tokens on reasoning alone, so a 700 cap cut every answer
 // off. 3,000 leaves room for an eight-issue answer with reasoning to spare. Its reserve is about
-// 1.3 cents, so callCents (5) leaves about 59 KB for the request with its read results, and each
-// call's cap is also held to what the driver has left (driverCents).
+// 1.3 cents, so callCents (5) leaves about 59 KB for the request. The request at its largest is the
+// four read results at the gateway's 8,000-character cap, the prompt and about 1 KB around them:
+// about 34 KB, and under 40 KB once the request body's JSON escaping is added (about 12% on record
+// rows). The unit test holds that worst case to 55 KB. The call's cap is also held to what the
+// driver has left (driverCents).
 const MAX_OUTPUT_TOKENS = 3_000;
 
 export type CheckStatus = "done" | "unparsed" | "timed_out" | "budget" | "error";
@@ -131,12 +134,6 @@ export function sourcesFrom(tool: string, result: Record<string, unknown>): { ta
     for (const r of rowsOf(result)) add("loads", r.id);
   } else if (tool === "get_advances") {
     for (const r of rowsOf(result)) add("advances", r.id);
-  } else if (tool === "get_ledger") {
-    for (const r of rowsOf(result)) {
-      add("settlement_periods", r.periodId);
-      const s = r.settlement;
-      if (s && typeof s === "object") add("settlements", (s as Record<string, unknown>).id);
-    }
   }
   return out;
 }
@@ -273,7 +270,10 @@ export async function runChildCheck(input: ChildInput, deps: ChildDeps): Promise
       gatewayDecisionId: outcome.decisionId || null,
       detail: { tool: r.tool, decision: outcome.decision, reason: outcome.reason },
     });
-    if (!allowed) return end("error");
+    // The gateway reports a read that ran out of time as failed like any other (it keeps no
+    // separate mark), so the check's own clock tells the two apart: a read that failed with no
+    // time left is a timeout, any other refusal or failure an error.
+    if (!allowed) return end(budget.remainingMs() <= 0 ? "timed_out" : "error");
     records[r.key] = outcome.result;
   }
 
