@@ -1374,7 +1374,7 @@ export const flags: Flags = {
     graceMinutes: 60,
     purgePerCall: 2,
     deskDayCents: 100,
-    startSweep: false,
+    startSweep: true,
     sweepDayCents: 3000,
   },
   // Off until the owner turns it on in its own PR (D-104). Sandbox posts only, each through the
