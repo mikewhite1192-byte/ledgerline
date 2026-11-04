@@ -177,6 +177,9 @@ const KEPT_OFF = [
   // Read only, but it changes where sign-in lands and adds a panel on Home: the owner turns it on in
   // its own PR.
   "signInTour.enabled",
+  // A visit's copy starts its own pay check, which spends model cents: the owner turns it on in its
+  // own PR.
+  "visitCopies.startSweep",
 ] as const;
 
 // The on/off switches in flags.ts, by path: every top-level boolean and every boolean inside a
@@ -453,10 +456,22 @@ describe("flags", () => {
       graceMinutes: 60,
       purgePerCall: 2,
       deskDayCents: 100,
+      startSweep: false,
+      sweepDayCents: 3000,
     });
-    for (const v of [flags.visitCopies.sliceMs, flags.visitCopies.graceMinutes, flags.visitCopies.purgePerCall]) {
+    for (const v of [
+      flags.visitCopies.sliceMs,
+      flags.visitCopies.graceMinutes,
+      flags.visitCopies.purgePerCall,
+      flags.visitCopies.sweepDayCents,
+    ]) {
       expect(Number.isSafeInteger(v) && v > 0).toBe(true);
     }
+    // The copies' pay check day holds at least one run at its whole cap, second opinion included.
+    expect(flags.visitCopies.sweepDayCents).toBeGreaterThanOrEqual(flags.fanoutLimits.runCapCents);
+    expect(flags.visitCopies.sweepDayCents).toBeGreaterThanOrEqual(flags.sweepLimits.maxRunCents);
+    // Listed ahead of its release, so the demo-path run keeps it off once it ships on.
+    expect(LOCAL_OFF_ONLY as readonly string[]).toContain("visitCopies.startSweep");
     // A copy's desk day cap is never above the desk's own.
     expect(flags.visitCopies.deskDayCents).toBeLessThanOrEqual(flags.deskLoop.limits.dayCents);
     expect(LOCAL_OFF_ONLY as readonly string[]).toContain("visitCopies.enabled");
@@ -610,6 +625,7 @@ describe("flags", () => {
       "simpleShape.enabled",
       "visitCopies.enabled",
       "plainTrace.enabled",
+      "visitCopies.startSweep",
     ];
     const offOnly = LOCAL_OFF_ONLY as readonly string[];
     expect(KEPT_OFF.filter((k) => offOnly.includes(k))).toEqual(KEPT_OFF.filter((k) => armedAhead.includes(k)));

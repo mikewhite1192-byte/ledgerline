@@ -23,6 +23,7 @@ import { FeedCard } from "@/components/feed/feed-card";
 import { PaydayCard } from "@/components/home/payday-card";
 import { AskAnything, DidToday, NeedsYouShort } from "@/components/home/simple-home";
 import { TodayCard } from "@/components/home/today-card";
+import { CarryOn } from "@/components/sweep/carry-on";
 import { Tour } from "@/components/home/tour";
 import { NewHereLine } from "@/components/help/how-pay-works";
 import { Button } from "@/components/ui/button";
@@ -272,6 +273,17 @@ export default async function Home({
   };
   // The bell's dot counts only a read that came back; an unread list never reads as zero.
   const needsYouCount = needsYou.unread ? undefined : needsYou.rows.length;
+  // A visit's copy starts its own pay check as it opens (flags.visitCopies.startSweep,
+  // src/lib/visit-copy/story.ts): while that switch is on and the newest run is running, Home carries
+  // it on in the visitor's browser. Only in a copy, and never for a demo visitor's judge role.
+  const carryOn =
+    flags.visitCopies.startSweep === true &&
+    carrier.session.visitTicketId !== undefined &&
+    carrier.role !== "judge" &&
+    lastSweep?.ok === true &&
+    lastSweep.value?.status === "running" ? (
+      <CarryOn runId={lastSweep.value.id} />
+    ) : null;
 
   if (simple) {
     return (
@@ -309,6 +321,7 @@ export default async function Home({
             today={today}
             timezone={carrier.timezone}
           />
+          {carryOn}
           <NeedsYouShort view={needsYou} />
           {flags.agentEnabled ? <AskAnything suggestions={suggestions} /> : null}
         </div>
@@ -353,6 +366,7 @@ export default async function Home({
           />
           <NeedsYou view={needsYou} />
         </div>
+        {carryOn}
         {cards.feed ? <FeedCard feed={cards.feed} /> : null}
         <NewHereLine />
         {/* Then payday: this pay week's paystubs, Friday's pay run and the drivers on file. */}

@@ -27,7 +27,13 @@ import { demoCarrierOf, demoTemplateOf, heroNet } from "../seed/reset";
 import { countRows } from "../seed/summary";
 import { buildCopySlice, copyPlan, copySlug, templatePlan, type CopyTarget } from "./build";
 import { NotACopy, PURGED_TOTALS_SQL, purgeCopy, purgeExpired } from "./purge";
+import { startCopySweep } from "./story";
 import { VISIT_EMAIL } from "./visitor";
+import type { VisitTicket } from "../auth/session";
+import type { AuditResult } from "../agent/auditor/run";
+import type { Explained } from "../agent/sweep/explain";
+import { advanceSweep, type SweepDeps } from "../sweep/run";
+import { readSweepPage } from "../sweep/view";
 
 // A visit's own copy of a demo carrier against a real, freshly migrated database, as the app's
 // role: migration 0091's grants and checks, a whole copy built in slices (its counts are the
@@ -468,6 +474,144 @@ describe("the demo carrier's day cap", () => {
   });
 });
 
+// The sweep's tables and the agent rows a run writes, in one tenant.
+const SWEEP_TABLES = ["sweep_runs", "sweep_items", "sweep_fanout", "sweep_fanout_checks", "proposals", "conversations", "turns"];
+const sweepRows = (tenantId: string) =>
+  admin.withoutTenant(async (q) => {
+    const out: Record<string, number> = {};
+    for (const t of SWEEP_TABLES) {
+      const [row] = await q.query<{ n: string }>(
+        `SELECT CAST(count(*) AS text) AS n FROM ${t} WHERE tenant_id = CAST($1 AS uuid)`,
+        [tenantId],
+      );
+      out[t] = Number(row.n);
+    }
+    return out;
+  });
+
+describe("a copy's pay check", () => {
+  // The seeded week's own day, so the run sweeps the open week the copy was built with.
+  const NOW = new Date(`${DEMO_ANCHOR}T16:00:00.000Z`);
+  const clock = () => NOW;
+  const saved = {
+    visitCopies: { ...flags.visitCopies },
+    sweepEnabled: flags.sweepEnabled,
+    fanoutEnabled: flags.fanoutEnabled,
+  };
+  const lines: string[] = [];
+  const log = (line: string) => lines.push(line);
+  const visitOf = (t: Ticket): VisitTicket => ({
+    token: { sub: JUDGE, email: "judge@blueridge.example", tenantId: HOME },
+    ticketId: t.id,
+    copy: {
+      tenantId: t.copy.copyTenantId,
+      sessionId: t.copy.copySessionId,
+      ready: true,
+      deleted: false,
+      expiresAt: t.copy.expiresAt,
+    },
+  });
+  // The two model calls are stand-ins, as in src/lib/sweep/run.db.test.ts: the explanation, and the
+  // auditor, which stores a pass.
+  const sweepDeps = (): SweepDeps => ({
+    db: app,
+    clock,
+    explain: async (): Promise<Explained> => ({
+      ok: true,
+      text: "The engine found this and the fix corrects it.",
+      callId: randomUUID(),
+      costNanocents: 0,
+    }),
+    runAudit: async (s: Session, proposalId: string): Promise<AuditResult> => {
+      await admin.withTenant(s.tenantId, (q) =>
+        q.execute(
+          `UPDATE proposals SET auditor_verdict = 'pass', auditor_agrees = true,
+                  auditor_checked_at = CAST($2 AS timestamptz)
+            WHERE id = CAST($1 AS uuid)`,
+          [proposalId, NOW.toISOString()],
+        ),
+      );
+      return { state: "done", verdict: "pass", concerns: [], checkedAt: NOW.toISOString() };
+    },
+  });
+
+  beforeAll(() => {
+    // The second opinion ships on; this run is the sweep alone (fanout.db.test.ts runs it).
+    Object.assign(flags.visitCopies, { startSweep: true, sweepDayCents: 3000 });
+    flags.sweepEnabled = true;
+    flags.fanoutEnabled = false;
+  });
+
+  afterAll(() => {
+    Object.assign(flags.visitCopies, saved.visitCopies);
+    flags.sweepEnabled = saved.sweepEnabled;
+    flags.fanoutEnabled = saved.fanoutEnabled;
+  });
+
+  it("starts one run in copy A as the copy's session, which drafts the seeded week's fixes and writes no seeded row", async () => {
+    const homeBefore = await sweepRows(HOME);
+    const bBefore = await sweepRows(B.copy.copyTenantId);
+    const runId = A.copy.copySessionId;
+    expect(await startCopySweep(app, visitOf(A), { clock, log })).toEqual({ started: true, runId, existing: false });
+    // A second start for the same copy replays its one run.
+    expect(await startCopySweep(app, visitOf(A), { clock, log })).toEqual({ started: true, runId, existing: true });
+    expect(lines.slice(-2)).toEqual([`visit copy: sweep ${runId} started`, `visit copy: sweep ${runId} kept`]);
+
+    // Home carries it on as the copy's session, as the visitor's browser does.
+    const s = copySession(A);
+    const deps = sweepDeps();
+    let state = await advanceSweep(s, runId, NOW.getTime() + 20_000, deps);
+    for (let i = 0; i < 30 && state.ok && state.status === "running"; i++) {
+      state = await advanceSweep(s, runId, NOW.getTime() + 20_000, deps);
+    }
+    expect(state).toMatchObject({ ok: true, status: "done" });
+    const page = await readSweepPage(s, runId, { db: app });
+    expect(page?.counts).toMatchObject({ fixes_drafted: 5, needs_person: 3, clean: 5 });
+    expect(page?.run).toMatchObject({ trigger: "button" });
+    const runs = await app.withTenant(s.tenantId, (q) =>
+      q.query<{ id: string; started_by: string }>("SELECT CAST(id AS text) AS id, started_by FROM sweep_runs"),
+    );
+    expect(runs).toEqual([{ id: runId, started_by: visitSub(A.id) }]);
+    // Fixes are drafted, never approved or paid: every seeded table, money included, is as built,
+    // but for the pay week the start's roll opens (D-090), past the seeded week's end on this clock:
+    // one open week with no stub in it.
+    const built = countRows(templatePlan(template).rows);
+    expect(await app.withTenant(s.tenantId, (q) => countTenantRows(q))).toEqual({
+      ...built,
+      settlement_periods: built.settlement_periods + 1,
+    });
+    const rolled = await app.withTenant(s.tenantId, (q) =>
+      q.query<{ status: string; stubs: number }>(
+        `SELECT p.status, CAST(count(st.id) AS integer) AS stubs FROM settlement_periods p
+           LEFT JOIN settlements st ON st.period_id = p.id
+          WHERE p.period_start = (SELECT max(period_start) FROM settlement_periods)
+          GROUP BY p.status`,
+      ),
+    );
+    expect(rolled).toEqual([{ status: "open", stubs: 0 }]);
+    const statuses = await app.withTenant(s.tenantId, (q) =>
+      q.query<{ status: string }>("SELECT DISTINCT status FROM proposals"),
+    );
+    expect(statuses).toEqual([{ status: "proposed" }]);
+    // The demo carrier and copy B have nothing new.
+    expect(await sweepRows(HOME)).toEqual(homeBefore);
+    expect(await sweepRows(B.copy.copyTenantId)).toEqual(bBefore);
+    expect(bBefore.sweep_runs).toBe(0);
+  }, 120_000);
+
+  it("starts nothing in copy B once the day's ready copies at their whole run cap would pass the day's cap", async () => {
+    const before = await sweepRows(B.copy.copyTenantId);
+    // Copy A was made ready today: with room for one run only, copy B's would be the second.
+    flags.visitCopies.sweepDayCents = Math.max(flags.fanoutLimits.runCapCents, flags.sweepLimits.maxRunCents);
+    expect(await startCopySweep(app, visitOf(B), { clock, log })).toEqual({ started: false, reason: "day_full" });
+    flags.visitCopies.startSweep = false;
+    flags.visitCopies.sweepDayCents = 3000;
+    expect(await startCopySweep(app, visitOf(B), { clock, log })).toEqual({ started: false, reason: "off" });
+    flags.visitCopies.startSweep = true;
+    expect(await sweepRows(B.copy.copyTenantId)).toEqual(before);
+  });
+});
+
 describe("isolation", () => {
   it("walls the two copies and the demo carrier off from each other", async () => {
     const want = countRows(templatePlan(template).rows);
@@ -539,6 +683,8 @@ describe("the purge", () => {
       ]),
     );
     expect(rowsLeft).toEqual([{ n: "0" }]);
+    // Its pay check went with it: no sweep or agent row of the copy is left.
+    expect(Object.values(await sweepRows(A.copy.copyTenantId)).every((n) => n === 0)).toBe(true);
     // The ticket says so, and reads as an ended visit with a purged copy.
     const read = await app.withTenant(HOME, (q) => readVisit(q, JUDGE, A.id));
     expect(read).toMatchObject({ live: false, copy: { deleted: true } });

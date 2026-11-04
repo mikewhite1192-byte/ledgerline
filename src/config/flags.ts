@@ -1006,7 +1006,19 @@ export type Flags = {
   // while its visit does plus graceMinutes, then is purged (purgePerCall at each new build, and
   // the purge script). deskDayCents caps the desk loop's model spend in one copy each day, under
   // deskLoop.limits.dayCents. Off, a visit shares the demo carrier as before.
-  visitCopies: { enabled: boolean; sliceMs: number; graceMinutes: number; purgePerCall: number; deskDayCents: number };
+  // startSweep: once a copy is ready, one real pay check starts inside it (src/lib/visit-copy/story.ts)
+  // and Home carries it on in the visitor's browser. It drafts fixes only, never money. Its model
+  // spend runs as the copy's sweep login, not the visit, so sweepDayCents bounds it instead: a
+  // demo carrier's copies made ready in one UTC day, each at its run's whole cap, stay within it.
+  visitCopies: {
+    enabled: boolean;
+    sliceMs: number;
+    graceMinutes: number;
+    purgePerCall: number;
+    deskDayCents: number;
+    startSweep: boolean;
+    sweepDayCents: number;
+  };
   // The plain trace (src/components/trace/plain-mode.tsx): under an answer or a card, "How I
   // checked" lists the steps and the records they read, with one line for the second check, and no
   // model names, cents or seconds; a card shows one trust line and folds its reasons under Details.
@@ -1329,7 +1341,15 @@ export const flags: Flags = {
   // Released by the owner (D-103, 2026-11-03). Presentation only.
   plainTrace: { enabled: true },
   // Released by the owner (D-100, D-103, 2026-11-03). Each visit builds its own copy.
-  visitCopies: { enabled: true, sliceMs: 12_000, graceMinutes: 60, purgePerCall: 2, deskDayCents: 100 },
+  visitCopies: {
+    enabled: true,
+    sliceMs: 12_000,
+    graceMinutes: 60,
+    purgePerCall: 2,
+    deskDayCents: 100,
+    startSweep: false,
+    sweepDayCents: 3000,
+  },
 };
 
 applyLocalOverrides(flags);
