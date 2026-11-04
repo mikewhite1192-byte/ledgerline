@@ -173,4 +173,10 @@ describe("the checklist rule", () => {
   it("sends the checklist with the first reads, never alone in a response", () => {
     expect(CHECKLIST_RULE).toContain("set_checklist goes in the same response as your first reads, never alone in a response");
   });
+
+  // Production, Nov 4: "Can we make Friday's pay run?" listed "List moves if short", and Friday was
+  // covered, so the answer showed that item as not finished.
+  it("lists only steps that do not hang on what the reads find", () => {
+    expect(CHECKLIST_RULE).toContain("List only steps you will take whatever the reads find, never one that hangs on them");
+  });
 });

@@ -185,6 +185,9 @@ export const CHECKLIST_RULE = [
   "  answer has a short clock.",
   "- set_checklist goes in the same response as your first reads, never alone in a response: a",
   "  response with only the checklist reads nothing and spends the answer's clock.",
+  "- List only steps you will take whatever the reads find, never one that hangs on them (such as",
+  "  \"List moves if short\"): an item left to do when you answer shows as not finished. What to",
+  "  do if the reads show a problem goes in the answer.",
 ].join("\n");
 
 export const CHECKLIST_TOOL = "set_checklist";
