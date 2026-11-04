@@ -107,6 +107,11 @@ export default async function MockLoadPage({ params }: { params: Promise<{ ref: 
             Open in LedgerLine
           </Link>
         ) : null}
+        {ourId !== null && flags.journey.enabled ? (
+          <Link href={`/records/loads/${ourId}/journey`} className="text-body text-foreground underline">
+            Watch the journey
+          </Link>
+        ) : null}
       </div>
       <Card>
         <CardHeader>

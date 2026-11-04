@@ -39,6 +39,7 @@ const savedCardRecon = flags.cardRecon.enabled;
 const savedFactoring = flags.factoring.enabled;
 const savedMoneyCodes = flags.moneyCodes.enabled;
 const savedActivityFeed = flags.activityFeed.enabled;
+const savedJourney = flags.journey.enabled;
 const savedSimple = flags.simpleShape.enabled;
 // Written for the full menu; the five-word menu's tests turn its switch on.
 beforeEach(() => {
@@ -51,6 +52,7 @@ afterEach(() => {
   flags.factoring.enabled = savedFactoring;
   flags.moneyCodes.enabled = savedMoneyCodes;
   flags.activityFeed.enabled = savedActivityFeed;
+  flags.journey.enabled = savedJourney;
   cleanup();
 });
 
@@ -60,6 +62,7 @@ function setAll(on: boolean) {
   flags.factoring.enabled = on;
   flags.moneyCodes.enabled = on;
   flags.activityFeed.enabled = on;
+  flags.journey.enabled = on;
 }
 
 const shape = (current: NavKey) => appNav(current).map((i) => [i.group, i.href, i.label, i.current ?? false]);
@@ -70,6 +73,7 @@ describe("appNav", () => {
     expect(shape("/invoices")).toEqual([
       ["Today", "/", "Home", false],
       ["Today", "/activity", "Live feed", false],
+      ["Today", "/road", "On the road", false],
       ["Today", "/profit", "Profit brief", false],
       ["Today", "/quarter", "Quarter review", false],
       ["Pay", "/sweep", "Pay check", false],
@@ -144,6 +148,10 @@ describe("appNav", () => {
     expect(appNav("none").map((i) => i.href)).not.toContain("/factoring");
     flags.factoring.enabled = true;
     expect(appNav("none").map((i) => i.href)).toContain("/factoring");
+    flags.journey.enabled = false;
+    expect(appNav("none").map((i) => i.href)).not.toContain("/road");
+    flags.journey.enabled = true;
+    expect(appNav("none").map((i) => i.href)).toContain("/road");
   });
 
   it("lists the Settings page only under the simple shape, where it is the fifth word's own page", () => {
@@ -212,6 +220,7 @@ describe("the menu registry", () => {
         "Driver notes",
         "Drivers",
         "Live feed",
+        "On the road",
         "Driver codes",
         "Pay check",
         "Pay",
@@ -252,6 +261,7 @@ describe("the menu registry", () => {
     expect(under("home")).toEqual([
       ["/", "Home"],
       ["/activity", "Live feed"],
+      ["/road", "On the road"],
     ]);
     expect(under("pay")).toEqual([
       ["/settlements", "Paystubs"],

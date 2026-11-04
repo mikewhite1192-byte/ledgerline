@@ -1,3 +1,5 @@
+import Link from "next/link";
+import { flags } from "@/config/flags";
 import { DataTable } from "@/components/app/data-table";
 import { Money } from "@/components/app/money";
 import { PageHeader } from "@/components/app/page-header";
@@ -46,6 +48,11 @@ export default async function LoadRecord({ params }: { params: Promise<{ id: str
             <StatusBadge status={l.status} />
             {l.status === "planned" ? <MoveButton loadId={l.id} to="in_transit" /> : null}
             {l.status === "in_transit" ? <MoveButton loadId={l.id} to="delivered" /> : null}
+            {flags.journey.enabled ? (
+              <Link href={`/records/loads/${l.id}/journey`} className="text-small text-link underline-offset-4 hover:underline">
+                Journey
+              </Link>
+            ) : null}
           </div>
         }
       />

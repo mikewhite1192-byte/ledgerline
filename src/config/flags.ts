@@ -984,6 +984,12 @@ export type Flags = {
   // pollSeconds: how often an open page reads itself again while its tab is visible. pageSize: the
   // lines on one page.
   activityFeed: { enabled: boolean; pollSeconds: number; pageSize: number };
+  // The load journey (src/lib/journey): one load's whole road from the bill of lading to the
+  // paystub in QuickBooks, eight fixed steps, and the On the road board of every load still on its
+  // way. Read only: nothing on either page writes, and they show what was stored, never a number
+  // computed on the page. pollSeconds: how often an open page reads itself again while some step
+  // is still to come and its tab is visible.
+  journey: { enabled: boolean; pollSeconds: number };
   // The walkthrough on Home after a sign-in (src/lib/tour): both sign-in actions land on
   // /?welcome=1, and Home opens a short panel of steps, each with the carrier's own number read
   // from what Home already reads, the morning digest's stored line first. Reads only: no model call
@@ -1363,6 +1369,8 @@ export const flags: Flags = {
   morningDigest: { enabled: true, startDate: "2026-11-02", maxCostCents: 4, maxOutputTokens: 1600 },
   // On by the owner's call (D-071, D-097, 2026-11-03). Read only; it moves no money.
   activityFeed: { enabled: true, pollSeconds: 15, pageSize: 50 },
+  // Off until the owner turns it on in its own PR. Read only; it moves no money.
+  journey: { enabled: false, pollSeconds: 5 },
   // Off until the owner turns it on in its own PR. Read only.
   signInTour: { enabled: false },
   // Released by the owner (D-098, D-103, 2026-11-03). One model read per tap; moves no money.

@@ -24,6 +24,7 @@ export { portalRuns } from "./portal-runs";
 export { profitBrief } from "./profit-brief";
 export { quarterReview } from "./quarter-review";
 export { rates } from "./rates";
+export { road } from "./road";
 export { settings } from "./settings";
 export { settlements } from "./settlements";
 export { sweep } from "./sweep";

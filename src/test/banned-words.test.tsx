@@ -110,6 +110,8 @@ import { PROPOSAL_CHECK_WORDS } from "@/lib/agent/verify/required";
 import { escalatedRow } from "@/lib/home/needs-you";
 import { VOICE_STATUS_WORDS } from "@/lib/voice/words";
 import * as fx from "./page-fixtures";
+import { atAdvanceCard, emptyChain, failedPayout, fullChain } from "@/lib/journey/test-fixtures";
+import type { JourneyFacts } from "@/lib/journey/steps";
 import * as autopilotWords from "@/app/settings/autopilot/words";
 import { RULE_KINDS, autoOffered } from "@/lib/autopilot/rules-admin";
 
@@ -572,6 +574,15 @@ vi.mock("@/lib/feed/read", async (importOriginal) => ({
   readFeed: async () => get("feed"),
   readFeedHeader: async () => get("feedHeader"),
 }));
+// The journey reads: the loads named, in order, from the variant's facts.
+vi.mock("@/lib/journey/read", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("@/lib/journey/read")>()),
+  readBoardLoadIds: async () => (get<JourneyFacts[]>("journeys") ?? []).map((f) => f.load.id),
+  readJourneys: async (_q: unknown, ids: readonly string[]) => {
+    const all = get<JourneyFacts[]>("journeys") ?? [];
+    return new Map(ids.map((id, i) => [id, all[i]] as const).filter((e): e is readonly [string, JourneyFacts] => e[1] !== undefined));
+  },
+}));
 vi.mock("@/lib/tour/facts", async (importOriginal) => ({
   ...(await importOriginal<typeof import("@/lib/tour/facts")>()),
   readTourFacts: async () => get("tourFacts"),
@@ -763,6 +774,25 @@ async function feedPage(search: Record<string, string> = {}): Promise<ReactNode>
   } finally {
     flags.activityFeed = savedFeed;
   }
+}
+
+// A journey page with its switch on: one load's road, or the On the road board.
+async function journeyPage(load: () => Promise<ReactNode>): Promise<ReactNode> {
+  const saved = { ...flags.journey };
+  flags.journey = { ...saved, enabled: true };
+  try {
+    return await load();
+  } finally {
+    flags.journey = saved;
+  }
+}
+
+// Synthetic loads at different stages for the board, each its own id and number.
+function boardJourneys(): JourneyFacts[] {
+  return [atAdvanceCard(), emptyChain(), failedPayout(), fullChain()].map((f, i) => ({
+    ...f,
+    load: { ...f.load, id: `00000000-0000-4000-8000-0000000000${String(40 + i)}`, number: `L-2041${i}` },
+  }));
 }
 
 // Home after a sign-in with the walkthrough's switch on: its first step, then each one in turn.
@@ -2033,6 +2063,37 @@ const PAGES: PageCase[] = [
         setup: () => (state.fx.factoredLine = { ...fx.FACTORED_LINE, status: "unknown" }),
         load: async () => (await import("@/app/records/invoices/[id]/page")).default({ params: p({ id: ID }) }),
         shows: "Sent, not confirmed yet (Test mode)",
+      },
+    ],
+  },
+  {
+    file: "records/loads/[id]/journey/page.tsx",
+    variants: [
+      { name: "the whole road", facts: fullChain(), shows: ["Paystub recorded in QuickBooks", "Read by Muse Spark", "Matched to load L-20417"] },
+      { name: "nothing yet", facts: emptyChain(), shows: ["Waiting for the driver's bill of lading"] },
+      { name: "waiting on the advance card", facts: atAdvanceCard(), shows: ["Waiting for a person to approve", "Read by Muse Spark"] },
+      { name: "the advance payout failed", facts: failedPayout(), shows: ["The payout did not go through."] },
+    ].map(({ name, facts, shows }) => ({
+      name,
+      setup: () => (state.fx.journeys = [facts]),
+      load: () => journeyPage(async () => (await import("@/app/records/loads/[id]/journey/page")).default({ params: p({ id: ID }) })),
+      shows,
+    })),
+  },
+  {
+    file: "road/page.tsx",
+    variants: [
+      {
+        name: "loads on the road",
+        setup: () => (state.fx.journeys = boardJourneys()),
+        load: () => journeyPage(async () => (await import("@/app/road/page")).default()),
+        shows: ["On the road", "Load L-20410", "Watch the journey", "Latest steps"],
+      },
+      {
+        name: "nothing on the road",
+        setup: () => (state.fx.journeys = []),
+        load: () => journeyPage(async () => (await import("@/app/road/page")).default()),
+        shows: "No loads on the road.",
       },
     ],
   },
