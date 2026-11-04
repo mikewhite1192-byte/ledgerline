@@ -96,7 +96,7 @@ export const LEG_LABELS = {
   settlement_bill_payment: "Bill payment in QuickBooks",
 } as const;
 
-export const LEG_NOT_SENT = "Not sent because the leg before it failed";
+export const LEG_NOT_SENT = "Not sent because the step before it failed";
 
 type LegFacts = {
   kind: string;

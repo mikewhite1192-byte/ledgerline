@@ -189,7 +189,7 @@ export default async function DriversPage({
               <span className="flex flex-wrap gap-1">
                 <Badge tone={r.departed ? "neutral" : "success"}>{r.departed ? "Departed" : "Active"}</Badge>
                 <Badge tone={r.driver.moneyArmed ? "info" : "warning"}>
-                  {r.driver.moneyArmed ? "Armed" : "Not armed"}
+                  {r.driver.moneyArmed ? "Cleared to pay" : "Not cleared to pay"}
                 </Badge>
                 {carded.has(r.driver.id) ? null : (
                   <Link href={recordHref({ table: "drivers", id: r.driver.id })}>

@@ -19,7 +19,7 @@ export const REFUSAL_SENTENCES: Readonly<Record<MoneyCodeRefusal, string>> = {
   voice_other_driver: "The voice note came from a different driver.",
   voice_driver_unmatched: "This voice note did not come from a known driver, so it cannot back a code. Use the form instead.",
   voice_amount_differs: "The driver did not say that amount in the voice note.",
-  driver_not_armed: "This driver is not armed to receive money. An admin can arm them on the driver page.",
+  driver_not_armed: "This driver is not cleared to be paid yet. An admin can clear them on the driver page.",
   duplicate_code: "A code for this load, purpose and amount was already asked for in the last 24 hours.",
   evidence_reused: "This receipt or voice note already backs another code.",
   daily_limit: "This driver already has the most money codes allowed for today.",
@@ -29,7 +29,7 @@ export const REFUSAL_SENTENCES: Readonly<Record<MoneyCodeRefusal, string>> = {
 const OUTCOME_SENTENCES: Readonly<Record<string, string>> = {
   codes_off: "Money codes are off for this carrier, so no code was issued.",
   codes_payouts_off: "Payments are switched off, so no code was issued.",
-  codes_not_armed: "Issuing money codes is not armed yet, so no code was issued.",
+  codes_not_armed: "Issuing money codes is not switched on yet, so no code was issued.",
   codes_before_start: "Money codes start on a later date, so no code was issued.",
   code_exists: "A code was already asked for on this card. Open it from the Money codes page.",
   code_declined: "The card provider declined the code. Nothing was charged to the driver.",

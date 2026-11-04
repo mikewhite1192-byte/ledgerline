@@ -54,8 +54,8 @@ export default async function LoadRecord({ params }: { params: Promise<{ id: str
           <Facts
             items={[
               { label: "Route", value: l.lane },
-              { label: "Picked up", value: <Day value={l.pickupOn} /> },
-              { label: "Delivered", value: <Day value={l.deliveredOn} /> },
+              { label: "Picked up", value: <Day value={l.pickupOn} empty="Not yet" /> },
+              { label: "Delivered", value: <Day value={l.deliveredOn} empty="Not yet" /> },
               { label: "Loaded miles", term: "loaded-miles", value: l.loadedMiles.toLocaleString("en-US") },
               { label: "Empty miles", term: "empty-miles", value: l.emptyMiles.toLocaleString("en-US") },
               {

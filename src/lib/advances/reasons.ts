@@ -25,7 +25,7 @@ const percent = (bps: number) => {
 
 const REFUSAL_SENTENCES: Readonly<Record<AdvanceRefusal, (n: RefusalNumbers) => string>> = {
   driver_not_armed: () =>
-    "This driver is not armed to receive money. An admin can arm them on the driver page.",
+    "This driver is not cleared to be paid yet. An admin can clear them on the driver page.",
   driver_inactive: () => "The driver is not active.",
   below_minimum: (n) => `Below the carrier's minimum advance of ${dollars(n.minCents)}.`,
   no_unpaid_earnings: () => "No earned pay is unpaid yet this period.",
@@ -96,7 +96,7 @@ export type FlowOutcome = (typeof FLOW_OUTCOMES)[number];
 const OUTCOME_SENTENCES: Readonly<Record<FlowOutcome, string>> = {
   disabled: "Advances are switched off, so nothing was paid.",
   payouts_off: "Payouts are switched off, so nothing was paid.",
-  not_armed: "Advance payouts are not armed yet, so nothing was paid.",
+  not_armed: "Advance payouts are not switched on yet, so nothing was paid.",
   over_cap: "The amount is over the advance payout cap, so nothing was paid.",
   before_start: "Advance payouts start on a later date, so nothing was paid.",
   stale_eligibility: "The numbers changed since this was proposed. Ask again.",
@@ -104,7 +104,7 @@ const OUTCOME_SENTENCES: Readonly<Record<FlowOutcome, string>> = {
   eligibility_unavailable: "Eligibility could not be checked, so nothing was paid. Try again.",
   no_card: "This driver has no fuel card on file, so nothing was paid.",
   driver_not_armed:
-    "This driver is not armed to receive money. An admin can arm them on the driver page.",
+    "This driver is not cleared to be paid yet. An admin can clear them on the driver page.",
   driver_inactive: "This driver is no longer active with the carrier, so nothing was paid.",
   card_not_drivers: "That card is not one of this driver's active cards, so nothing was paid.",
   load_not_drivers: "That load is not one of this driver's loads, so nothing was paid.",

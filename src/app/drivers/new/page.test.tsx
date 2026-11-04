@@ -59,7 +59,7 @@ describe("/drivers/new", () => {
     expect(screen.getByRole("heading", { level: 1, name: "Add a driver" })).toBeTruthy();
     expect(screen.getByRole("button", { name: "Add driver" })).toBeTruthy();
     expect(screen.getByLabelText("Driver code")).toBeTruthy();
-    expect(screen.getByText(/starts not armed and with no card/)).toBeTruthy();
+    expect(screen.getByText(/starts not cleared to pay and with no card/)).toBeTruthy();
   });
 
   it("shows staff and a demo visitor a sentence and no form", async () => {

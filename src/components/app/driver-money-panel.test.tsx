@@ -57,12 +57,12 @@ describe("DriverMoneyPanel", () => {
     const { send, calls } = sender();
     const onDone = vi.fn();
     render(<DriverMoneyPanel identity={identity} canAdmin timezone="America/Chicago" send={send} onDone={onDone} />);
-    expect(screen.getByText("Not armed")).toBeTruthy();
-    fireEvent.click(button("Arm"));
+    expect(screen.getByText("Not cleared to pay")).toBeTruthy();
+    fireEvent.click(button("Clear to pay"));
     expect(calls).toEqual([]);
-    expect(screen.getByText(/Arm Sample Driver\? Approved advances can then be paid to their default card\./)).toBeTruthy();
-    fireEvent.click(button("Arm"));
-    await waitFor(() => expect(screen.getByText("Armed. Advances can be paid to this driver.")).toBeTruthy());
+    expect(screen.getByText(/Clear Sample Driver to be paid\? Approved advances can then be paid to their default card\./)).toBeTruthy();
+    fireEvent.click(button("Clear to pay"));
+    await waitFor(() => expect(screen.getByText("Cleared to pay. Advances can be paid to this driver.")).toBeTruthy());
     expect(calls).toEqual([{ path: `/api/drivers/${DRIVER}/arm`, body: { armed: true } }]);
     expect(onDone).toHaveBeenCalledTimes(1);
   });
@@ -71,17 +71,17 @@ describe("DriverMoneyPanel", () => {
     const { send, calls } = sender();
     const armed = { ...identity, armed: { on: true, since: "2026-10-05T14:00:00.000Z" } };
     render(<DriverMoneyPanel identity={armed} canAdmin timezone="UTC" send={send} />);
-    expect(screen.getByText(/^Armed since /)).toBeTruthy();
-    fireEvent.click(button("Disarm"));
-    expect(screen.getByText(/Disarm Sample Driver\? No advance can be paid to them/)).toBeTruthy();
+    expect(screen.getByText(/^Cleared to pay since /)).toBeTruthy();
+    fireEvent.click(button("Stop paying"));
+    expect(screen.getByText(/Stop paying Sample Driver\? No advance can be paid to them/)).toBeTruthy();
     fireEvent.click(button("Never mind"));
     expect(calls).toEqual([]);
   });
 
   it("gives staff no arm or card buttons, and says who can", () => {
     render(<DriverMoneyPanel identity={identity} canAdmin={false} timezone="UTC" send={sender().send} />);
-    expect(screen.getByText("Only an admin arms or disarms a driver.")).toBeTruthy();
-    for (const name of ["Arm", "Make default", "Close", "Add card"]) {
+    expect(screen.getByText("Only an admin clears a driver to be paid or stops it.")).toBeTruthy();
+    for (const name of ["Clear to pay", "Make default", "Close", "Add card"]) {
       expect(screen.queryByRole("button", { name })).toBeNull();
     }
     // Any member may add an id.
@@ -154,8 +154,8 @@ describe("DriverMoneyPanel", () => {
   it("shows a refusal as its fixed sentence, never the route's own text", async () => {
     const { send } = sender({ ok: false, error: "role" });
     render(<DriverMoneyPanel identity={identity} canAdmin timezone="UTC" send={send} />);
-    fireEvent.click(button("Arm"));
-    fireEvent.click(button("Arm"));
+    fireEvent.click(button("Clear to pay"));
+    fireEvent.click(button("Clear to pay"));
     await waitFor(() => expect(screen.getByText("Only an admin can arm a driver or change their cards.")).toBeTruthy());
     cleanup();
     render(<DriverMoneyPanel identity={identity} canAdmin timezone="UTC" send={sender({ ok: false, error: "<b>raw</b>" }).send} />);
@@ -194,7 +194,7 @@ describe("DriverMoneyPanel", () => {
     fireEvent.change(screen.getByLabelText(/Last day/), { target: { value: "2026-11-05" } });
     fireEvent.change(screen.getByLabelText(/Note/), { target: { value: "  moving on  " } });
     fireEvent.click(button("Deactivate"));
-    await waitFor(() => expect(screen.getByText("Deactivated. They are not armed, so no new money can go to this driver.")).toBeTruthy());
+    await waitFor(() => expect(screen.getByText("Deactivated. They are not cleared to pay, so no new money can go to this driver.")).toBeTruthy());
     expect(calls).toEqual([
       { path: `/api/drivers/${DRIVER}/status`, body: { active: false, effectiveOn: "2026-11-05", note: "moving on" } },
     ]);
@@ -218,31 +218,31 @@ describe("DriverMoneyPanel", () => {
     render(<DriverMoneyPanel identity={departed} canAdmin timezone="UTC" send={send} statusAdminOn today="2026-11-01" />);
     expect(screen.getByText("Departed, last day Oct 31, 2026")).toBeTruthy();
     fireEvent.click(button("Reactivate"));
-    expect(screen.getByText(/Reactivate Sample Driver\? They stay not armed/)).toBeTruthy();
+    expect(screen.getByText(/Reactivate Sample Driver\? They stay not cleared to pay/)).toBeTruthy();
     expect(screen.queryByLabelText(/Last day/)).toBeNull();
     fireEvent.click(button("Reactivate"));
     await waitFor(() =>
-      expect(screen.getByText("Reactivated. They are not armed: an admin arms them again before any advance.")).toBeTruthy(),
+      expect(screen.getByText("Reactivated. They are not cleared to pay: an admin clears them again before any advance.")).toBeTruthy(),
     );
     expect(calls).toEqual([{ path: `/api/drivers/${DRIVER}/status`, body: { active: true } }]);
   });
 
-  it("offers no Arm for a driver with a last day on file, says why, and still offers Disarm", () => {
+  it("offers no Clear to pay for a driver with a last day on file, says why, and still offers Stop paying", () => {
     const leaving = { ...identity, activeTo: "2026-11-20" };
     render(<DriverMoneyPanel identity={leaving} canAdmin timezone="UTC" send={sender().send} />);
-    expect(screen.queryByRole("button", { name: "Arm" })).toBeNull();
+    expect(screen.queryByRole("button", { name: "Clear to pay" })).toBeNull();
     expect(screen.getByText("This driver is deactivated. Reactivate them before arming.")).toBeTruthy();
     cleanup();
     const armedLeaving = { ...leaving, armed: { on: true, since: "2026-10-05T14:00:00.000Z" } };
     render(<DriverMoneyPanel identity={armedLeaving} canAdmin timezone="UTC" send={sender().send} />);
-    expect(button("Disarm")).toBeTruthy();
+    expect(button("Stop paying")).toBeTruthy();
     expect(screen.queryByText("This driver is deactivated. Reactivate them before arming.")).toBeNull();
   });
 
   it("shows an arm refused for a departed driver as its fixed sentence", async () => {
     render(<DriverMoneyPanel identity={identity} canAdmin timezone="UTC" send={sender({ ok: false, error: "driver_inactive" }).send} />);
-    fireEvent.click(button("Arm"));
-    fireEvent.click(button("Arm"));
+    fireEvent.click(button("Clear to pay"));
+    fireEvent.click(button("Clear to pay"));
     await waitFor(() => expect(screen.getByText("This driver is deactivated. Reactivate them before arming.")).toBeTruthy());
   });
 
@@ -276,13 +276,13 @@ describe("DriverMoneyPanel", () => {
 
     it("shows nothing new while the checklist is off", () => {
       render(<DriverMoneyPanel identity={identity} canAdmin timezone="UTC" send={sender().send} />);
-      expect(screen.queryByText("Before arming")).toBeNull();
+      expect(screen.queryByText("Before clearing to pay")).toBeNull();
       expect(screen.queryByRole("button", { name: "Record" })).toBeNull();
     });
 
     it("words each step Done or Not done, with Record only on a step not done", () => {
       render(<DriverMoneyPanel identity={identity} canAdmin timezone="UTC" send={sender().send} activation={checklist} />);
-      expect(screen.getByText("Before arming")).toBeTruthy();
+      expect(screen.getByText("Before clearing to pay")).toBeTruthy();
       expect(rowOf("Identity confirmed").textContent).toBe("Identity confirmedDone");
       expect(rowOf("Zero test sent").textContent).toBe("Zero test sentNot doneRecord");
       expect(rowOf("Hand loads acknowledged").textContent).toBe("Hand loads acknowledgedNot doneRecord");
@@ -316,8 +316,8 @@ describe("DriverMoneyPanel", () => {
           activation={checklist}
         />,
       );
-      fireEvent.click(button("Arm"));
-      fireEvent.click(button("Arm"));
+      fireEvent.click(button("Clear to pay"));
+      fireEvent.click(button("Clear to pay"));
       await waitFor(() =>
         expect(screen.getByText("Send the zero-dollar test to the card and record it before arming.")).toBeTruthy(),
       );

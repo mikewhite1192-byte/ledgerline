@@ -30,7 +30,7 @@ function cardWords(line: ListCardLine): string {
 
 // Every advance on file, newest first: who, when, how much, its status and where it was paid. The
 // driver's name opens the advance's record, where the reference, the load and the pay rules check
-// are. "Not armed" narrows the list to drivers no one has armed to receive money. Dark while the
+// are. "Not cleared to pay" narrows the list to drivers no one has cleared to receive money. Dark while the
 // advances switch is off.
 export default async function AdvancesPage({
   searchParams,
@@ -99,15 +99,15 @@ export default async function AdvancesPage({
             notArmed && "font-semibold",
           )}
         >
-          Not armed
+          Not cleared to pay
         </Link>
       </nav>
       <DataTable<AdvanceListRow>
-        caption={`${status ? `${statusLabel(status)} advances` : "All advances"}${notArmed ? ", drivers not armed" : ""}`}
+        caption={`${status ? `${statusLabel(status)} advances` : "All advances"}${notArmed ? ", drivers not cleared to pay" : ""}`}
         rows={page.rows}
         rowKey={(r) => r.id}
         empty={{
-          title: `${status ? `${statusLabel(status)} advances` : "Advances"}${notArmed ? " for drivers not armed" : ""} appear here`,
+          title: `${status ? `${statusLabel(status)} advances` : "Advances"}${notArmed ? " for drivers not cleared to pay" : ""} appear here`,
           body: canRequest
             ? "A new request shows up on Home first, with the pay rules check. Once a person approves it, the advance appears here. Use Request an advance to start one."
             : "A new request shows up on Home first, with the pay rules check. Once a person approves it, the advance appears here. Requests start once the agent is switched on.",
@@ -129,7 +129,7 @@ export default async function AdvancesPage({
                   {r.driverCode}
                   {r.driverArmed ? null : (
                     <Badge tone="warning" className="ml-2">
-                      Not armed
+                      Not cleared to pay
                     </Badge>
                   )}
                 </span>

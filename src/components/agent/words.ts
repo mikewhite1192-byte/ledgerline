@@ -19,6 +19,9 @@ export const ASK_WORDS = {
   arrivedAsk: "New question from the agent",
   arrivedTold: "New note from the agent",
   region: "The agent's questions",
+  // A morning digest waits folded beside the button until opened, so it never covers the page.
+  digestReady: "Morning digest ready",
+  digestRead: "Read the morning digest",
 } as const;
 
 // "2 more waiting", under the bubble while others show too.

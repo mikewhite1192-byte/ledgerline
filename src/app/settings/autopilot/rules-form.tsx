@@ -26,16 +26,27 @@ export type RuleRowView = {
 
 type Draft = { mode: string; maxCents: string; dayMaxCents: string; dayMaxCount: string; driverDayMaxCents: string };
 
+// Whole cents as the owner types them: 30000 is "$300.00".
+export const dollarsOf = (cents: number): string => `$${Math.trunc(cents / 100)}.${String(cents % 100).padStart(2, "0")}`;
+
 const draftOf = (r: RuleRowView): Draft => ({
   mode: r.mode,
-  maxCents: String(r.maxCents),
-  dayMaxCents: String(r.dayMaxCents),
+  maxCents: dollarsOf(r.maxCents),
+  dayMaxCents: dollarsOf(r.dayMaxCents),
   dayMaxCount: String(r.dayMaxCount),
-  driverDayMaxCents: r.driverDayMaxCents === null ? "" : String(r.driverDayMaxCents),
+  driverDayMaxCents: r.driverDayMaxCents === null ? "" : dollarsOf(r.driverDayMaxCents),
 });
 
 // A whole number as typed, or NaN (the server refuses it and names the field).
 const whole = (s: string): number => (/^\d{1,10}$/.test(s.trim()) ? Number(s.trim()) : Number.NaN);
+
+// Dollars as typed ("300", "$1,500.5", "300.00") to whole cents, read from the digits so nothing
+// is rounded; anything else is NaN, which the server refuses.
+export function centsOf(s: string): number {
+  const m = /^\$?(\d{1,3}(?:,\d{3})+|\d{1,8})(?:\.(\d{1,2}))?$/.exec(s.trim());
+  if (m === null) return Number.NaN;
+  return Number(m[1].replaceAll(",", "")) * 100 + Number((m[2] ?? "").padEnd(2, "0"));
+}
 
 const isMode = (v: unknown): v is RuleRowView["mode"] => v === "off" || v === "ask" || v === "auto";
 
@@ -72,12 +83,12 @@ function RuleRow({ initial }: { initial: RuleRowView }) {
     const body: Record<string, unknown> = {
       kind: row.kind,
       mode: draft.mode,
-      maxCents: whole(draft.maxCents),
-      dayMaxCents: whole(draft.dayMaxCents),
+      maxCents: centsOf(draft.maxCents),
+      dayMaxCents: centsOf(draft.dayMaxCents),
       dayMaxCount: whole(draft.dayMaxCount),
       expectedVersion: row.version,
     };
-    if (row.driver) body.driverDayMaxCents = whole(draft.driverDayMaxCents);
+    if (row.driver) body.driverDayMaxCents = centsOf(draft.driverDayMaxCents);
     const reply = await postJson("/api/autopilot/rules", body);
     const saved = savedOf(row, reply.data.rule);
     if (reply.ok && reply.error === null && saved) {
@@ -119,11 +130,11 @@ function RuleRow({ initial }: { initial: RuleRowView }) {
         </label>
         <label className="grid gap-0.5 text-caption text-foreground-2">
           {LIMIT_LABELS.maxCents}
-          <input name="maxCents" inputMode="numeric" value={draft.maxCents} onChange={set("maxCents")} disabled={pending} className={input} />
+          <input name="maxCents" inputMode="decimal" value={draft.maxCents} onChange={set("maxCents")} disabled={pending} className={input} />
         </label>
         <label className="grid gap-0.5 text-caption text-foreground-2">
           {LIMIT_LABELS.dayMaxCents}
-          <input name="dayMaxCents" inputMode="numeric" value={draft.dayMaxCents} onChange={set("dayMaxCents")} disabled={pending} className={input} />
+          <input name="dayMaxCents" inputMode="decimal" value={draft.dayMaxCents} onChange={set("dayMaxCents")} disabled={pending} className={input} />
         </label>
         <label className="grid gap-0.5 text-caption text-foreground-2">
           {LIMIT_LABELS.dayMaxCount}
@@ -134,7 +145,7 @@ function RuleRow({ initial }: { initial: RuleRowView }) {
             {LIMIT_LABELS.driverDayMaxCents}
             <input
               name="driverDayMaxCents"
-              inputMode="numeric"
+              inputMode="decimal"
               value={draft.driverDayMaxCents}
               onChange={set("driverDayMaxCents")}
               disabled={pending}

@@ -321,7 +321,7 @@ describe("the facts", () => {
     const facts = await readDigestFacts(app, A.service, PERIOD, "America/Chicago");
     expect(facts.map((f) => f.key)).toEqual(facts.map((_, i) => `f${i + 1}`));
     expect(Object.fromEntries(facts.map((f) => [f.id, f.known ? f.value : NOT_READ]))).toEqual({
-      card_check: "no check yet",
+      card_check: "not run yet",
       card_breaks: 0,
       cancelled: 1,
       hand_loads: 1,
@@ -473,7 +473,7 @@ describe("the desk's digest", () => {
       ["2026-11-05", "done"],
       ["2026-11-06", "open"],
     ]);
-    expect(rows[2].text).toMatch(/^Morning digest\. Needs you: nothing\. Card check: no check yet\. /);
+    expect(rows[2].text).toMatch(/^Morning digest\. Needs you: nothing\. Card check: not run yet\. /);
     expect(rows[2].text).toContain("This week: 0 paystubs paid ($0.00).");
     expect((await doneLines(c)).at(-1)).toMatchObject({ event_key: "digest:2026-11-06", detail: { category: "check_number_mismatch", cents: 3 } });
 

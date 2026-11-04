@@ -30,12 +30,12 @@ function setupCue(identity: DriverIdentity, activation: ActivationChecklist | nu
   if (!driverAdminOn() || identity.activeTo !== null) return null;
   const noCard = !identity.cards.some((c) => c.status === "active");
   const notArmed = !identity.armed.on;
-  if (noCard && notArmed) return "Before this driver can take an advance: add a card, then arm them.";
+  if (noCard && notArmed) return "Before this driver can take an advance: add a card, then clear them to be paid.";
   if (noCard) return "Before this driver can take an advance: add a card.";
   if (notArmed && activation !== null && activation.blockers.length > 0) {
-    return "Before this driver can take an advance: complete the activation checklist, then arm them.";
+    return "Before this driver can take an advance: complete the activation checklist, then clear them to be paid.";
   }
-  if (notArmed) return "Before this driver can take an advance: arm them.";
+  if (notArmed) return "Before this driver can take an advance: clear them to be paid.";
   return null;
 }
 

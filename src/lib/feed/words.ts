@@ -195,9 +195,68 @@ function moneyWords(r: FeedRow): string | null {
   return null;
 }
 
+// A desk step's outcome, in words. A code not listed here is left off the line (it stays in the
+// log), so no internal code reaches the screen.
+const DESK_CODE_WORDS: Readonly<Record<string, string>> = {
+  drafted: "drafted",
+  ready: "ready",
+  recorded: "recorded",
+  sorted: "sorted",
+  held: "held for a person",
+  already: "already done",
+  covered: "already covered",
+  moved: "brought into LedgerLine",
+  card: "a card for a person",
+  cap: "stopped at the day's limit",
+  invoice_proposed: "an invoice drafted",
+  deficit_proposed: "a deficit drafted",
+  advance_proposed: "an advance drafted",
+  ruling_drafted: "a ruling drafted",
+  handed_off: "handed to the coworker",
+  already_handed_off: "already handed over",
+  not_pickup: "not a pickup, nothing to do",
+  not_cancel: "not a cancellation, nothing to do",
+  after_payment: "reminders checked after the payment",
+  model_incomplete: "written from the facts",
+  check_incomplete: "written from the facts",
+  check_too_long: "written from the facts",
+  statement_verified: "statement verified",
+  statement_hold: "statement on hold",
+  statement_empty: "no statement lines",
+  pass: "passed",
+  concerns: "concerns raised",
+  block: "blocked",
+  unknown: "outcome not known yet",
+  threw: "it hit an error",
+  busy: "busy, tried again later",
+  switched_off: "switched off",
+  disabled: "switched off",
+  unarmed: "not switched on",
+  kind_unarmed: "not switched on for this kind",
+  paused: "paused",
+  not_waiting: "nothing waiting",
+  before_start: "before its start date",
+  no_rule: "no rule set",
+  no_open_period: "no open pay week",
+  no_work: "nothing to do",
+  agent_off: "switched off",
+  ai_off: "switched off",
+  kept_off: "switched off",
+  not_configured: "not set up yet",
+  already_asked: "already asked",
+  decided_by_person: "a person already decided",
+  in_progress: "still in progress",
+  not_auditable: "nothing to check",
+  outcome_unknown: "outcome not known yet",
+  read_failed: "it could not read the record",
+  executor_failed: "the step failed",
+  executor_refused: "the step was refused",
+  bad_request: "the request was not understood",
+};
+
 function deskWords(r: FeedRow): string | null {
   const thing = deskThing(r.kind);
-  const cat = r.code === null ? "" : `: ${words(r.code)}`;
+  const cat = r.code !== null && Object.hasOwn(DESK_CODE_WORDS, r.code) ? `: ${DESK_CODE_WORDS[r.code]}` : "";
   switch (r.event) {
     case "desk_claimed":
       return `Picked up ${thing}`;

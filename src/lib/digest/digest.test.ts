@@ -94,7 +94,7 @@ describe("the facts", () => {
     expect(text).toContain("[f2] Card check differences waiting for a person (needs a person): 2");
     expect(text).toContain("[f3] Trips cancelled yesterday: 1");
     expect(text).toContain("[f5] Hand loads yesterday, total: $150.00");
-    expect(text).toContain("[f16] FYI: past due balance: $1,200.00");
+    expect(text).toContain("[f16] Past due balance: $1,200.00");
   });
 });
 

@@ -433,6 +433,7 @@ vi.mock("@/lib/mock-tms/store", async (importOriginal) => {
           statusLabel: "In Transit",
           customerName: "Sample Shipper",
           driverExternalId: "drv-1",
+          driverName: "Sample Driver One",
           truckUnit: "101",
           lane: "Joliet, IL to Gary, IN",
           updatedAt: at,
@@ -1357,7 +1358,7 @@ const PAGES: PageCase[] = [
         name: "empty, drivers not armed",
         setup: () => (state.fx.advances = []),
         load: async () => (await import("@/app/advances/page")).default(sp({ armed: "no" })),
-        shows: "for drivers not armed appear here",
+        shows: "for drivers not cleared to pay appear here",
       },
     ],
   },
@@ -1923,7 +1924,7 @@ const PAGES: PageCase[] = [
             flags.activationChecklist.enabled = checklistWas;
           }
         },
-        shows: ["Before this driver can take an advance: add a card, then arm them.", "Not armed", "Status", "Active", "Deactivate"],
+        shows: ["Before this driver can take an advance: add a card, then clear them to be paid.", "Not cleared to pay", "Status", "Active", "Deactivate"],
       },
       {
         name: "departed, driver admin on",
@@ -1959,7 +1960,7 @@ const PAGES: PageCase[] = [
             flags.activationChecklist.enabled = checklistWas;
           }
         },
-        shows: ["Before this driver can take an advance: arm them.", "Not armed"],
+        shows: ["Before this driver can take an advance: clear them to be paid.", "Not cleared to pay"],
       },
       {
         name: "deactivated, driver admin on",
@@ -1975,7 +1976,7 @@ const PAGES: PageCase[] = [
             flags.driverAdmin.enabled = false;
           }
         },
-        shows: "Not armed",
+        shows: "Not cleared to pay",
       },
     ],
   },
@@ -2119,7 +2120,7 @@ const PAGES: PageCase[] = [
             flags.driverAdmin.enabled = false;
           }
         },
-        shows: ["Add a driver", "Driver code", "starts not armed and with no card"],
+        shows: ["Add a driver", "Driver code", "starts not cleared to pay and with no card"],
       },
     ],
   },
@@ -2278,7 +2279,7 @@ const PAGES: PageCase[] = [
             kinds: AUTOPILOT_PICTURE.kinds.map((k) => (k.kind === "advance_payout" ? { ...k, mode: "auto", armed: false } : k)),
           }),
         load: () => autopilotPage("staff"),
-        shows: [autopilotWords.NOT_ARMED_NOTE, autopilotWords.LIMIT_LABELS.driverDayMaxCents, "150000"],
+        shows: [autopilotWords.NOT_ARMED_NOTE, autopilotWords.LIMIT_LABELS.driverDayMaxCents, "$1,500.00"],
       },
     ],
   },

@@ -188,7 +188,7 @@ describe("the sentences a person sees", () => {
       }),
     ).toBe("Advances on load L-1042 are capped at $600.00; $450.00 is still open, so $145.00 is the most for this load.");
     expect(refusalSentence("over_load_cap", numbers)).toBe("This would take advances on this load past the load's cap.");
-    expect(refusalSentence("driver_not_armed", numbers)).toContain("An admin can arm them");
+    expect(refusalSentence("driver_not_armed", numbers)).toContain("An admin can clear them");
   });
 
   it("has its own sentences for Take back and the driver's money panel, from a closed list", () => {

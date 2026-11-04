@@ -152,14 +152,14 @@ export default async function SettlementRecord({ params }: { params: Promise<{ i
         />
       ) : null}
       <DataTable
-        caption="Money legs"
+        caption="Payments and bookings"
         rows={view.legs}
         rowKey={(r) => r.id}
         empty={{ title: "Nothing sent yet", body: "The payout, the bill and its payment show here once approved." }}
         columns={[
-          { key: "leg", header: "Leg", cell: (r) => LEG_LABELS[r.kind] },
+          { key: "leg", header: "Step", cell: (r) => LEG_LABELS[r.kind] },
           { key: "attempt", header: "Attempt", cell: (r) => `#${r.attempt}` },
-          { key: "state", header: "State", cell: (r) => <StatusBadge status={r.state} /> },
+          { key: "state", header: "Status", cell: (r) => <StatusBadge status={r.state} /> },
           { key: "amount", header: "Amount", align: "right", cell: (r) => <Money cents={r.amountCents} tone="plain" /> },
           {
             key: "why",

@@ -270,7 +270,7 @@ export function DriverForm({ today, send = postDriver }: { today: string; send?:
         Carries their own insurance
       </label>
       <p className="text-small text-muted-foreground">
-        A new driver starts not armed and with no card. Add a card and arm them on their page before an advance can be paid.
+        A new driver starts not cleared to pay and with no card. Add a card and clear them to be paid on their page before an advance can be paid.
       </p>
       {notice ? <InlineAlert tone="destructive">{notice}</InlineAlert> : null}
       <div>

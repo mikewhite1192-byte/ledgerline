@@ -143,6 +143,13 @@ function driverWords(item: SweepItemView): string {
   return item.driverName ?? item.driverCode ?? "a driver";
 }
 
+// A fix card about a driver names the driver ("Pay correction for Dana Reyes (BR-D07)"), not the
+// code alone the proposal view reads.
+function named(p: ProposalView, item: SweepItemView): ProposalView {
+  if (p.subjectTable !== "drivers" || !item.driverName || p.subjectLabel !== item.driverCode) return p;
+  return { ...p, subjectLabel: driverWords(item) };
+}
+
 export function SweepRun({
   initial,
   auditorOn,
@@ -379,7 +386,7 @@ export function SweepRun({
     return (
       <div key={item.id} className="grid gap-1.5">
         <ProposalCard
-          {...proposalCardFrom(p, { on: auditorOn, checking: item.status === "audit_pending", timezone })}
+          {...proposalCardFrom(named(p, item), { on: auditorOn, checking: item.status === "audit_pending", timezone })}
           pending={busy === p.id || busy === "all"}
           onApprove={(_id, reason) => void approve(p, reason)}
           onReject={(id) => void reject(id)}
