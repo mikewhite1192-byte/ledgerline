@@ -199,8 +199,8 @@ export const PLAN_PROMPT =
   PLAN_FOCUS_CATEGORIES.join(" and ") +
   " (the only ones the second check can judge), or none, and write a brief of a few words, " +
   "twelve at most, of what to look at. Write the summary as one short sentence. Never state an " +
-  "amount or any figure. Put each roster driver in order exactly once; skipped lists only the " +
-  "drivers given to you as skipped. Answer as JSON.";
+  "amount or any figure. Put each roster driver in order exactly once. Return skipped as an " +
+  "empty list: the server keeps its own. Answer as JSON.";
 
 // The ordering call's user message: ids, counts and categories only.
 export function planInput(roster: Roster, window: Window): string {

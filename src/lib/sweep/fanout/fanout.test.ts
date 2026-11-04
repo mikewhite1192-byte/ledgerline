@@ -149,6 +149,7 @@ describe("validatePlan", () => {
     expect(PLAN_PROMPT).toContain("name at most two focus categories, only from newer_is_duplicate and rate_missing");
     expect(PLAN_PROMPT).toContain("write a brief of a few words, twelve at most");
     expect(PLAN_PROMPT).toContain("Write the summary as one short sentence.");
+    expect(PLAN_PROMPT).toContain("Return skipped as an empty list: the server keeps its own.");
     expect(PLAN_PROMPT).not.toContain("up to four");
   });
 
