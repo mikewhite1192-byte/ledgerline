@@ -48,6 +48,7 @@ describe("ar_aging", () => {
       days31To60Cents: b["31_60"].cents,
       days61To90Cents: b["61_90"].cents,
       over90Cents: b.over_90.cents,
+      past60Cents: b["61_90"].cents + b.over_90.cents,
       totalCents: b.current.cents + b["1_30"].cents + b["31_60"].cents + b["61_90"].cents + b.over_90.cents,
     });
     for (const key of Object.keys(r.totals ?? {})) {
@@ -62,6 +63,18 @@ describe("ar_aging", () => {
     expect(r.args).toEqual({ asOf: "2026-11-02" });
     expect(r.truncated).toBe(false);
     expect(r.rowsTotal).toBe(r.rows.length);
+  });
+
+  it("gives each customer and the totals a past-60 figure the server summed, kept out of the table", async () => {
+    const r = await run("ar_aging", { asOf: "2026-11-02" });
+    expect(r.totals?.past60Cents).toBe(5135860);
+    for (const row of r.rows) {
+      expect(row.past60Cents).toBe((row.days61To90Cents as number) + (row.over90Cents as number));
+    }
+    expect(r.rows.filter((row) => (row.past60Cents as number) > 0).length).toBeGreaterThan(0);
+    expect(total(column(r.rows, "past60Cents"))).toBe(5135860);
+    expect(r.columns.map((c) => c.key)).not.toContain("past60Cents");
+    expect(reportCsv(r)).not.toContain("51358.60");
   });
 
   it("ages as of the carrier's today when no date is asked for", async () => {
