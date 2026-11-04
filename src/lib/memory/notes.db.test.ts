@@ -632,7 +632,8 @@ describe("carrier memory in the database", () => {
 
     const own = counted();
     const asked = await openIn(M, conversation, 31, { db: own.db });
-    expect(own.transactions()).toBe(2);
+    // The notes, the week paid next (read beside them for the same turns) and the turn.
+    expect(own.transactions()).toBe(3);
     expect(asked.summary).toContain("\n\nCarrier notes:\n");
     expect(asked.summary).toContain("Bill detention the same week");
     expect((await notesUsedOf(M, asked.turnId)).length).toBeGreaterThan(0);

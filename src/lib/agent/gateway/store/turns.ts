@@ -8,7 +8,7 @@ import type { NoteRow } from "../../../memory/notes";
 import { checklistSchema, type Checklist } from "../../checklist";
 import type { StepView } from "../../view";
 import { readFocus, type FocusSubject, type PageFocus } from "../focus";
-import { buildStateSummary } from "./summary";
+import { buildStateSummary, type PaidNextRead } from "./summary";
 import type { OpenTurnRefusal, OpenedTurn, StepFinish, StepStart, TurnFinish } from "./types";
 
 // Conversations, turns and steps (migration 0009). Each function runs inside a tenant
@@ -31,6 +31,9 @@ export type OpenTurnInput = {
   // The carrier notes read for this turn (openAgentTurn reads them for an operator's own question
   // while carrierMemoryEnabled is on); none otherwise.
   notes?: readonly NoteRow[];
+  // The week paid next, read beside the notes for the same turns (openAgentTurn); absent for the
+  // rest, whose summary keeps today's pay week line.
+  paidNext?: PaidNextRead;
   // The record the page the question was asked from is about (the chat's turn route only), as
   // the client sent it: checked here under the tenant before any row is written. Absent or null:
   // no focus, and the turn opens as it always has.
@@ -135,6 +138,7 @@ export async function openTurn(
     input.text,
     input.notes ?? [],
     focus,
+    input.paidNext,
   );
   const next = await q.query<{ seq: number | string }>(
     "SELECT COALESCE(MAX(seq), 0) + 1 AS seq FROM turns WHERE conversation_id = CAST($1 AS uuid)",
