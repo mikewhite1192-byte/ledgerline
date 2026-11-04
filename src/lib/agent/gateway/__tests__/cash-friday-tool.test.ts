@@ -60,6 +60,10 @@ describe("get_cash_friday", () => {
       gapCents: want.gapCents,
     });
     expect(r.payRunSource).toBe(want.payRunSource);
+    // The two sides of the gap, summed by the server so a covered or short answer quotes them.
+    expect(r.cashByPayDayCents).toBe(want.cashOnHandCents + want.expectedReceiptsCents);
+    expect(r.dueByPayDayCents).toBe(r.figures.payRunCents + r.figures.fuelLoadsCents + want.vendorBillsDueCents);
+    expect((r.cashByPayDayCents as number) - (r.dueByPayDayCents as number)).toBe(want.gapCents);
     const options = r.options as { kind: string; billRef?: string }[];
     expect(options.map((o) => o.kind).sort()).toEqual([
       "bill_defer",
