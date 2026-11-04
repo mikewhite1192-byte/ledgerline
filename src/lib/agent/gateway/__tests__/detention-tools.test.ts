@@ -98,8 +98,10 @@ describe("find_unbilled_detention", () => {
     const { out } = await run("find_unbilled_detention", { month: "2026-10" });
     if (out.decision !== "allowed") throw new Error(`not allowed: ${out.reason}`);
     expect((out.result as { note: string }).note).toBe(DETENTION_NEXT);
-    expect(DETENTION_NEXT).toContain("call propose_detention_charge once for every row with canPropose true");
+    expect(DETENTION_NEXT).toContain("call propose_detention_charge once for each of the first four rows with canPropose true");
     expect(DETENTION_NEXT).toContain("all in that one response beside set_checklist, then answer");
+    expect(DETENTION_NEXT).toContain("Never more than four in one answer");
+    expect(DETENTION_NEXT).not.toContain("every row");
     expect(DETENTION_NEXT).toContain("a person's approval");
     expect(DETENTION_NEXT).not.toMatch(/[\u2013\u2014]/);
   });

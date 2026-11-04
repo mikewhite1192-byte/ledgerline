@@ -50,13 +50,15 @@ function blockedFor(rows: DetentionChargeRows | null, amountCents: number): stri
   }
 }
 
-// What the result tells the model to do next: every card in the next response, beside the
+// What the result tells the model to do next: the cards in the next response, beside the
 // checklist, so the found charges become cards in the same answer (each one a person approves).
+// At most four, so the turn's tool steps leave room for the answer; the rest wait for a next ask.
 export const DETENTION_NEXT =
   "Each charge needs propose_detention_charge with the row's loadId and amountCents and a " +
-  "person's approval. In your next response, call propose_detention_charge once for every row " +
-  "with canPropose true, all in that one response beside set_checklist, then answer. A row with " +
-  "canPropose false is not proposed: say why from blockedBy.";
+  "person's approval. In your next response, call propose_detention_charge once for each of the " +
+  "first four rows with canPropose true, all in that one response beside set_checklist, then " +
+  "answer. Never more than four in one answer: name any other proposable rows as waiting for the " +
+  "next ask. A row with canPropose false is not proposed: say why from blockedBy.";
 
 export const findUnbilledDetentionTool = defineTool({
   name: "find_unbilled_detention",
