@@ -247,7 +247,7 @@ const fakeQ = {
     // The sample board's load page, with the driver's phone on: our own load's status.
     if (/^SELECT status FROM loads WHERE/.test(sql)) return [{ status: "in_transit" }];
     // The live feed's newest pay check: none unless a variant sets one.
-    if (/FROM sweep_runs ORDER BY started_at DESC, id LIMIT 1/.test(sql)) return (state.fx.payCheck as unknown[]) ?? [];
+    if (/FROM sweep_runs WHERE status IN/.test(sql)) return (state.fx.payCheck as unknown[]) ?? [];
     throw new Error(`unexpected read: ${sql.slice(0, 80)}`);
   },
 } as unknown as Queryable;
@@ -376,7 +376,8 @@ vi.mock("@/lib/ai/watch", async (importOriginal) => ({
 vi.mock("@/lib/sweep/view", async (importOriginal) => ({
   ...(await importOriginal<typeof import("@/lib/sweep/view")>()),
   readSweepHome: async () => get("sweepHome"),
-  readLatestSweepRun: async () => ((await get("sweepHome")) as { runs: unknown[] }).runs[0] ?? null,
+  readLatestSweepRun: async (_session: unknown, _deps: unknown, which?: "newest" | "done") =>
+    ((await get("sweepHome")) as { runs: { status: string }[] }).runs.find((r) => which !== "done" || r.status === "done") ?? null,
   readSweepPage: async () => get("sweepPage"),
 }));
 vi.mock("@/lib/fuel/view", async (importOriginal) => ({
@@ -1190,6 +1191,21 @@ const PAGES: PageCase[] = [
           "Customer payments in",
           "On 3 open invoices",
         ],
+      },
+      {
+        // A new pay check still going: Needs you keeps the last finished one's items.
+        name: "home, a new pay check running",
+        setup: () => {
+          state.fx.sweepHome = {
+            ...fx.SWEEP_HOME,
+            runs: [
+              { ...fx.SWEEP_HOME.runs[0], id: "0f0e0d0c-0b0a-4908-8706-050403020199", status: "running", finishedAt: null, counts: {} },
+              { ...fx.SWEEP_HOME.runs[0], counts: { ...fx.SWEEP_HOME.runs[0].counts, needs_person: 2 } },
+            ],
+          };
+        },
+        load: async () => (await import("@/app/page")).default(sp()),
+        shows: "2 pay check items need you",
       },
       {
         name: "home, the walkthrough",

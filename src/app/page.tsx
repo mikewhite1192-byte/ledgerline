@@ -194,6 +194,9 @@ export default async function Home({
         tourShown
           ? readTourFacts({ now, today: carrierToday(carrier.timezone, now), timezone: carrier.timezone })
           : null,
+        // The last finished pay check, for its items on Needs you: a newer run still going (the
+        // Today card's) has not set any aside yet.
+        flags.sweepEnabled ? loaded("sweep done", () => readLatestSweepRun(carrier.session, {}, "done")) : null,
       ])
     : null;
 
@@ -213,13 +216,13 @@ export default async function Home({
     );
   }
 
-  const [turns, needsRows, lastSweep, cashHome, cards, tourFacts] = reads;
+  const [turns, needsRows, lastSweep, cashHome, cards, tourFacts, lastDoneSweep] = reads;
   const agentTurns = turns.turns;
   // "Needs you" never reads as "nothing is waiting" when its rows or the agent's turns were not read.
   const rows = needsRows ?? [];
   const cardsAsk = flags.agentEnabled ? cardsRow(agentTurns) : null;
-  // The last pay check's items set aside for a person, from the run already read for the Today card.
-  const payCheck = lastSweep?.ok === true ? payCheckRow(lastSweep.value) : null;
+  // The last finished pay check's items set aside for a person.
+  const payCheck = lastDoneSweep?.ok === true ? payCheckRow(lastDoneSweep.value) : null;
   const needsYou: NeedsYouView = {
     rows: [...(cardsAsk ? [cardsAsk] : []), ...rows, ...(payCheck ? [payCheck] : [])],
     unread: turns.unread || needsRows === null,

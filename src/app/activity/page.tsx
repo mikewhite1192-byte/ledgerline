@@ -23,11 +23,14 @@ type View = { shell: ShellTenant; feed: Feed | null };
 
 const LINK = "text-small text-link underline-offset-4 hover:underline";
 
+// The newest running pay check, else the newest finished one. A failed or stopped run after a
+// finished one leaves the finished one's time on the line.
 async function readPayCheck(q: Queryable): Promise<PayCheck | null> {
   if (!flags.sweepEnabled) return null;
   const rows = await q.query<{ status: string; finished_at: string | null }>(
     `SELECT status, to_char(finished_at AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"') AS finished_at
-       FROM sweep_runs ORDER BY started_at DESC, id LIMIT 1`,
+       FROM sweep_runs WHERE status IN ('running', 'done')
+      ORDER BY status = 'running' DESC, started_at DESC, id LIMIT 1`,
   );
   const run = rows[0];
   if (!run) return null;

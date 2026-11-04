@@ -91,6 +91,7 @@ let feedAnswer: Answer;
 let reads: string[] = [];
 let deskRows: unknown[] = [];
 let sweepRows: unknown[] = [];
+let sweepAnswer: ((sql: string) => unknown[]) | null = null;
 
 function fakeQ(): Queryable {
   return {
@@ -106,7 +107,7 @@ function fakeQ(): Queryable {
       } else if (sql.includes("FROM autopilot_state")) {
         rows = [{ paused_at: "2026-11-10T14:00:00.000000Z", paused_until: null, paused_by: "sub-test", revision: "7" }];
       } else if (sql.includes("FROM sweep_runs")) {
-        rows = sweepRows;
+        rows = sweepAnswer ? sweepAnswer(sql) : sweepRows;
       } else if (sql.includes("UNION ALL")) {
         rows = feedAnswer(sql, params);
       } else {
@@ -131,6 +132,7 @@ beforeEach(() => {
   feedAnswer = () => FEED_ROWS;
   deskRows = [{ at: "2026-11-10T14:55:00.000000Z" }];
   sweepRows = [];
+  sweepAnswer = null;
   mocks.withRequestTenant.mockImplementation((fn: (q: Queryable, s: Session) => Promise<unknown>) => fn(fakeQ(), SESSION));
 });
 
@@ -233,6 +235,33 @@ describe("/activity", () => {
     cleanup();
 
     sweepRows = [];
+    await page();
+    expect(screen.getByText(/^Has not checked the books yet\./)).toBeTruthy();
+  });
+
+  it("keeps the last finished pay check's time when a newer one failed or stopped", async () => {
+    flags.sweepEnabled = true;
+    deskRows = [{ at: null }];
+    feedAnswer = () => [];
+    // Runs newest first. The read must pass over the failed one rather than take the newest run.
+    const runs = [
+      { status: "failed", finished_at: "2026-11-10T15:10:00.000Z" },
+      { status: "done", finished_at: "2026-11-10T14:40:00.000Z" },
+    ];
+    let sweepSql = "";
+    sweepAnswer = (sql) => {
+      sweepSql = sql;
+      const kept = sql.includes("WHERE status IN ('running', 'done')") ? runs.filter((r) => r.status !== "failed") : runs;
+      return kept.slice(0, 1);
+    };
+    await page();
+    expect(sweepSql).toMatch(/ORDER BY status = 'running' DESC, started_at DESC, id LIMIT 1/);
+    expect(screen.getByText(/^Checked every driver's pay at Nov 10, 2026, 8:40 AM CST\./)).toBeTruthy();
+    expect(screen.queryByText(/Has not checked the books yet\./)).toBeNull();
+    cleanup();
+
+    // Only failed runs so far: no pay check has finished, so the old line stays.
+    runs.splice(1, 1);
     await page();
     expect(screen.getByText(/^Has not checked the books yet\./)).toBeTruthy();
   });

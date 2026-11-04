@@ -144,10 +144,11 @@ export function AgentLauncher({
   // The morning digest the person unfolded; any other digest shows folded beside the button.
   const [readDigest, setReadDigest] = useState<string | null>(null);
   const folded = current !== null && current.kind === "digest" && readDigest !== current.id;
-  // On a phone (below sm) any other question also waits as a pill until opened, so the bubble never
-  // covers the page's text there; from sm up it shows open as before.
+  // On a phone (below sm) a question that is not a digest also waits as a pill until opened, so the
+  // bubble never covers the page's text there; from sm up it shows open as before. A digest folds
+  // by its own rule above, so one already opened stays open.
   const [readAsk, setReadAsk] = useState<string | null>(null);
-  const phoneFolded = current !== null && !folded && readAsk !== current.id;
+  const phoneFolded = current !== null && current.kind !== "digest" && readAsk !== current.id;
   // The unfolded digest takes the cursor when the pill's read button opened it, because that
   // button leaves with the pill and the cursor would fall back to the page.
   const digestBubble = useRef<HTMLElement>(null);

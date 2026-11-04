@@ -528,3 +528,17 @@ describe("the agent's question on a phone", () => {
     expect(screen.queryByRole("button", { name: "Read the agent's question" })).toBeNull();
   });
 });
+
+describe("a morning digest on a phone", () => {
+  it("stays open once opened, with no phone pill over it", async () => {
+    vi.stubGlobal("localStorage", memoryStorage());
+    stubServer({ reads: [showing([DIGEST])] });
+    page();
+    const folded = await findBubble();
+    expect(screen.queryByRole("button", { name: "Read the agent's question" })).toBeNull();
+    fireEvent.click(within(folded).getByRole("button", { name: "Read the morning digest" }));
+    await waitFor(() => expect(within(bubble()).getByText(DIGEST.text)).toBeTruthy());
+    expect(bubble().className).not.toContain("max-sm:hidden");
+    expect(screen.queryByRole("button", { name: "Read the agent's question" })).toBeNull();
+  });
+});
