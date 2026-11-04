@@ -108,9 +108,11 @@ export function finalChecklist(list: Checklist, ended: "done" | "partial" | "fai
 // why", "I never located her driver record"). Beside one, nothing still in hand reads as done. The
 // withheld figure note is the mask's words, not the answer's, so it never counts.
 // "Read", "look" and "reach" are left out: finished answers use them too ("the drivers I could not
-// reach are listed below").
+// reach are listed below"). One adverb may sit before the verb ("I could not fully verify"). A
+// check, confirm, verify or locate followed by "any" or "anything" is a search that finished and
+// found nothing ("I could not locate any unpaid invoices"), so it never counts.
 const LEFT_UNCHECKED =
-  /\bI (?:could not|couldn['\u2019]t|cannot|can['\u2019]t|was not able to|wasn['\u2019]t able to|was unable to|am unable to|did not|didn['\u2019]t|never) (?:check|confirm|verif|locat|get to|got to)/i;
+  /\bI (?:could not|couldn['\u2019]t|cannot|can['\u2019]t|was not able to|wasn['\u2019]t able to|was unable to|am unable to|did not|didn['\u2019]t|never) (?:(?:fully|yet|independently) )?(?:(?:check|confirm|verif|locat)\w*\b(?!\s+any(?:thing)?\b)|get to|got to)/i;
 
 export function answerLeftWork(text: string): boolean {
   return LEFT_UNCHECKED.test(text.split(WITHHELD).join(" "));

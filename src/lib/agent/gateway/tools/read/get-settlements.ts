@@ -11,10 +11,11 @@ export const getSettlements = defineTool({
     "List one pay week's paystubs (the newest open week unless periodId is given), in driver " +
     "order: each one's driver, gross, deductions and net in integer cents, status, the exception " +
     "categories on its approval card, the auditor's verdict, whether it is clean for Approve all " +
-    "clean, and parkedReason when it no longer matches its records. notRunYet true (an open week " +
-    "with no paystubs) means the week has not been run yet: say so plainly and tell the person to " +
-    "press Run the week on the Paystubs page under Pay; to preview one driver before then, call " +
-    "explain_paystub with this periodId and the driver's id. This only reads; explain_paystub " +
+    "clean, and parkedReason when it no longer matches its records. noPaystubsYet true means only " +
+    "that this open week has no paystubs yet: say so plainly, and that if the week has not been " +
+    "run, pressing Run the week on the Paystubs page under Pay makes them; never say it was not " +
+    "run. To preview one driver, call explain_paystub with this periodId and the driver's id. " +
+    "This only reads; explain_paystub " +
     "explains one paystub line by line.",
   tier: "read",
   roles: OPERATOR,
@@ -53,8 +54,9 @@ export const getSettlements = defineTool({
         })),
         // Cards still waiting for the auditor: none of them is clean yet.
         awaitingAuditor,
-        // An open week no one has run yet has no paystubs at all, which is not a week with none due.
-        ...(rows.length === 0 && period.status === "open" ? { notRunYet: true } : {}),
+        // An open week with no paystubs yet: not run, or run with no driver to pay. The period
+        // records no run, so this says only that none exist yet, never which.
+        ...(rows.length === 0 && period.status === "open" ? { noPaystubsYet: true } : {}),
       },
     };
   },

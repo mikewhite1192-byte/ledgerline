@@ -148,4 +148,13 @@ describe("an answer that says it could not check part of the work", () => {
     expect(answerLeftWork("The two drivers I could not reach are listed below.")).toBe(false);
     expect(answerLeftWork("I did not read any problem in the week.")).toBe(false);
   });
+
+  it("reads an adverb before the verb, and never a search that found nothing", () => {
+    expect(answerLeftWork("I could not fully verify the paystub.")).toBe(true);
+    expect(answerLeftWork("I was not able to independently confirm the rate.")).toBe(true);
+    expect(answerLeftWork("I could not yet check the fuel card loads.")).toBe(true);
+    expect(answerLeftWork("I could not locate any unpaid invoices.")).toBe(false);
+    expect(answerLeftWork("I could not confirm anything wrong with the week.")).toBe(false);
+    expect(answerLeftWork("I did not get to any of the paystubs.")).toBe(true);
+  });
 });

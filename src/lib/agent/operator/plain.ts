@@ -23,9 +23,12 @@ const KEPT = /(`[^`]*`|https?:\/\/[^\s`]+)/;
 // "this weeks" is never a plural ("this" takes one week), so it is the possessive missing its
 // apostrophe.
 const THIS_WEEKS = /\b([Tt]his) weeks\b(?!['\u2019])/g;
-// A table or report said to be above: "the table above", "the report shown above", "the above table".
-// "Above" before a figure is a comparison ("the table above $2,000"), never a place, so it stays.
-const TABLE_ABOVE = /\b(tables?|report)((?:\s+(?:is|are|shown|listed))?)\s+above\b(?!\s*[$\d])/gi;
+// A table or report said to be above: "the table above.", "the report shown above", "the table
+// above lists", "the above table". Only "above" that ends the sentence or is followed by a verb
+// saying what the table holds names a place; any other "above" is a comparison ("the table above
+// $2,000", "the table above the limit") and stays.
+const TABLE_ABOVE =
+  /\b(tables?|report)((?:\s+(?:is|are|shown|listed))?)\s+above(?=\s*(?:[.,;:!?]|$)|\s+(?:lists?|listed|shows?|showed|has|have|had|gives?|gave|covers?|covered)\b)/gi;
 const ABOVE_TABLE = /\b([Tt]he) above (tables?|report)\b/g;
 
 function plainWords(part: string): string {
@@ -56,6 +59,20 @@ function plainLine(line: string): string {
   return parts
     .map((part, i) => (i % 2 === 1 ? part : plainProse(part, i === 0, i === parts.length - 1)))
     .join("");
+}
+
+// Each line's prose passed through fn, with its code spans and web links kept as written (the same
+// split plainAnswer uses), so a rewrite of figures never reaches a link or a code span.
+export function onProse(text: string, fn: (prose: string) => string): string {
+  return text
+    .split("\n")
+    .map((line) =>
+      line
+        .split(KEPT)
+        .map((part, i) => (i % 2 === 1 ? part : fn(part)))
+        .join(""),
+    )
+    .join("\n");
 }
 
 export function plainAnswer(text: string): string {

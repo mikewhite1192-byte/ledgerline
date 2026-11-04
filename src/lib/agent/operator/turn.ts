@@ -31,7 +31,7 @@ import type { StepView } from "../view";
 import { TurnBudget, type CapReason, type TurnLimits } from "./budget";
 import { idsIn, validateRefs } from "./citations";
 import { centsIn, houseDollars, maskFigures, typedCentsIn } from "./figures";
-import { plainAnswer } from "./plain";
+import { onProse, plainAnswer } from "./plain";
 import type { TurnEmitter } from "./stream";
 
 // The operator loop (design 2.2): short Muse Spark turns over a compact state summary, every
@@ -598,8 +598,10 @@ export async function runTurn(input: TurnInput, deps: TurnDeps): Promise<TurnOut
     return outcome.decision === "invalid_args" ? "failed" : "ok";
   };
 
-  // The response before this call held only set_checklist: it read nothing, so this call is not
-  // offered set_checklist and must read or answer (CHECKLIST_ALONE_NOTE says so too).
+  // The response before this call held only set_checklist and a checklist was accepted: it read
+  // nothing, so this call is not offered set_checklist and must read or answer
+  // (CHECKLIST_ALONE_NOTE says so too). A list the schema refused leaves the tool offered, so the
+  // model can send it again as it was told.
   let afterListAlone = false;
 
   const loop = async (): Promise<Ending> => {
@@ -628,12 +630,13 @@ export async function runTurn(input: TurnInput, deps: TurnDeps): Promise<TurnOut
       const { result } = called;
       response += 1;
       // Figures the tools did not return, and the person did not type, are withheld before the
-      // text is kept anywhere; then each kept dollar figure is written with its commas and cents
-      // ("$1,707.75"), and dashes and dates the way a person reads them.
+      // text is kept anywhere; then each kept dollar figure in the prose (never in a code span or a
+      // link) is written with its commas and cents ("$1,707.75"), and dashes and dates the way a
+      // person reads them.
       const masked = maskFigures(result.text.trim(), allowedCents);
-      const shown = { ...masked, text: plainAnswer(houseDollars(masked.text)) };
+      const shown = { ...masked, text: plainAnswer(onProse(masked.text, houseDollars)) };
       const note = result.reasoningSummary
-        ? plainAnswer(houseDollars(maskFigures(result.reasoningSummary.trim(), allowedCents).text))
+        ? plainAnswer(onProse(maskFigures(result.reasoningSummary.trim(), allowedCents).text, houseDollars))
         : "";
       await finish(step, "done", {
         modelCallId: result.callId,
@@ -681,7 +684,6 @@ export async function runTurn(input: TurnInput, deps: TurnDeps): Promise<TurnOut
       // first checklist write in a response is not a counted step; it still waits on the clock.
       let checklistWritten = false;
       const checklistAlone = result.toolCalls.every((c) => c.name === CHECKLIST_TOOL);
-      afterListAlone = checklistAlone;
       for (let i = 0; i < result.toolCalls.length; i += 1) {
         const call = result.toolCalls[i];
         const free = call.name === CHECKLIST_TOOL && !checklistWritten;
@@ -690,6 +692,7 @@ export async function runTurn(input: TurnInput, deps: TurnDeps): Promise<TurnOut
         if (stepCap) return stopped(stepCap);
         const outcome = await dispatch({ ...call, modelCallId: result.callId }, "spark", !free);
         messages.push(toolMessage(call, outcome, checklistAlone));
+        if (checklistAlone && outcome.decision === "allowed") afterListAlone = true;
         // The rest of this response's calls are not run: the request goes to a person.
         if (toPerson) return await personEnd(toPerson);
         if (outcome.decision !== "invalid_args") continue;

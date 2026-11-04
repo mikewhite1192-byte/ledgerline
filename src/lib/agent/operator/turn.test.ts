@@ -579,6 +579,17 @@ describe("runTurn", () => {
     expect(h.notes.get(models[1].id)).toBe("Net is $2,375.00; say it.");
   });
 
+  it("leaves a dollar figure inside a code span or a link as written", async () => {
+    const h = harness(
+      [
+        result({ toolCalls: [call("c1", "get_pay_items")] }),
+        result({ text: "Gross is $1707.75; see https://x.io/receipt/$1707.75 or `$1707.75`." }),
+      ],
+      () => allowed("get_pay_items", { grossCents: 170_775 }),
+    );
+    expect((await h.run()).text).toBe("Gross is $1,707.75; see https://x.io/receipt/$1707.75 or `$1707.75`.");
+  });
+
   it("lets a figure the person typed this turn through, and still withholds an invented one", async () => {
     const h = harness(
       [result({ text: "Sam can get $500 once a person approves it, not $612.34." })],
@@ -1878,6 +1889,28 @@ describe("runTurn near the end of its clock", () => {
     expect(offered(2)).toContain("set_checklist");
     expect(h.requests.map((r) => answerNote(r.request))).toEqual([false, false, true]);
     expect(h.finished()?.checklist?.items.map((i) => i.state)).toEqual(["done"]);
+  });
+
+  it("still offers set_checklist after a checklist sent alone was refused, and drops it only after one is kept", async () => {
+    const now = { t: 1_000_000 };
+    const h = harness(
+      [
+        result({ toolCalls: [call("l1", "set_checklist", { items: "not a list" })] }),
+        result({ toolCalls: [call("l2", "set_checklist", { items: [{ text: "Read the week", state: "doing" }] })] }),
+        result({ toolCalls: [call("c1", "get_pay_items")] }),
+        result({ text: "Pay is $1,500.00 this week." }),
+      ],
+      (c) => (c.id === "l1" ? invalid("set_checklist") : gateway(c)),
+      { now },
+    );
+    h.deps.tools = [...TOOLS, { name: "set_checklist", description: "checklist", parameters: {} }];
+    const out = await h.run();
+    expect(out).toMatchObject({ status: "done", text: "Pay is $1,500.00 this week." });
+    const offered = (i: number) => (h.requests[i].request.tools ?? []).map((t) => t.name);
+    expect(offered(1)).toContain("set_checklist");
+    expect(offered(2)).not.toContain("set_checklist");
+    expect(offered(2)).toContain("get_pay_items");
+    expect(offered(3)).toContain("set_checklist");
   });
 
   it("still stops on the clock when a checklist sent alone left no room for a read and an answer", async () => {

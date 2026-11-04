@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
-import { plainAnswer } from "./plain";
+import { houseDollars } from "./figures";
+import { onProse, plainAnswer } from "./plain";
 
 // The dashes are written as escapes so this file holds none itself.
 const EM = "\u2014";
@@ -51,6 +52,16 @@ describe("plainAnswer", () => {
     expect(plainAnswer("Two advances are above the limit.")).toBe("Two advances are above the limit.");
     expect(plainAnswer("Drivers in the table above $2,000 gross.")).toBe("Drivers in the table above $2,000 gross.");
     expect(plainAnswer("Run `table above` then wait.")).toBe("Run `table above` then wait.");
+    expect(plainAnswer("Drivers in the table above the limit need review.")).toBe(
+      "Drivers in the table above the limit need review.",
+    );
+  });
+
+  it("passes only the prose to a rewrite, never a code span or a link", () => {
+    expect(onProse("Paid $1707.75, see https://x.io/receipt/$100 and `$2000` today.", houseDollars)).toBe(
+      "Paid $1,707.75, see https://x.io/receipt/$100 and `$2000` today.",
+    );
+    expect(onProse("Net $2375\n`$5` then $5", houseDollars)).toBe("Net $2,375.00\n`$5` then $5.00");
   });
 
   it("leaves text with neither unchanged", () => {
