@@ -378,7 +378,10 @@ export type Flags = {
     // The caps on the ordering call and the comparison call, in cents.
     planCents: number;
     reconcileCents: number;
-    // One driver's check, start to answer, in milliseconds.
+    // One driver's check, start to answer, in milliseconds. Raised by the owner from 19 s to 23 s
+    // (D-108, 2026-11-03): each check reads more now, so its answer got about 7 s. 23 s fits the
+    // 30 s route and the 30 s check lease (CHECK_LEASE_S); the slice's deadline plus the model
+    // overrun still caps it, so a check started late in its slice gets less.
     childTimeoutMs: number;
     // Sweep model spend one carrier may count in one of its local days, in cents. A run that
     // reaches the second opinion with the day already at it skips it and finishes as a plain
@@ -1169,7 +1172,7 @@ export const flags: Flags = {
     driverCents: 9,
     planCents: 30,
     reconcileCents: 40,
-    childTimeoutMs: 19_000,
+    childTimeoutMs: 23_000,
     // Raised by the owner (D-102, 2026-11-03): three full runs (runCapCents each) fit in a day.
     tenantDayCents: 1_500,
     runsPerTenantDay: 3,

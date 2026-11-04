@@ -7,9 +7,12 @@ import { assertMoneyEnvSafe, MoneyEnvRefused } from "../lib/money/guard";
 import { payoutSwitchOn } from "../lib/money/ledger";
 import { DEMO_CARRIERS } from "../lib/seed/carriers";
 import { isLocalDate } from "../lib/time/local-date";
+import { CHECK_LEASE_S, MODEL_OVERRUN_MS } from "../lib/sweep/fanout/run";
 import { MAX_HISTORY_PAGES } from "../lib/tms/sync";
 import { flags, stepThroughShown, type Flags } from "./flags";
 import { LOCAL_SWITCHES } from "../../e2e/env.local-mode";
+import { maxDuration as internalSweepLimitS } from "../app/api/internal/sweep/route";
+import { maxDuration as advanceSweepLimitS } from "../app/api/sweeps/[id]/advance/route";
 import { applyLocalOverrides, LOCAL_OFF_ONLY, LOCAL_OVERRIDABLE } from "./local-overrides";
 
 // Keys are put together at run time so no scanner reads a key shape in this file.
@@ -997,7 +1000,7 @@ describe("flags", () => {
       driverCents: 9,
       planCents: 30,
       reconcileCents: 40,
-      childTimeoutMs: 19_000,
+      childTimeoutMs: 23_000,
       tenantDayCents: 1_500,
       runsPerTenantDay: 3,
       runCapCents: 500,
@@ -1006,8 +1009,16 @@ describe("flags", () => {
     // calls together never pass driverCents), and the sweep's own spend still fits inside the run's.
     expect(l.callCents).toBeLessThanOrEqual(l.driverCents);
     expect(l.runCapCents).toBeGreaterThan(flags.sweepLimits.maxRunCents);
-    // A whole check ends well inside one slice.
-    expect(l.childTimeoutMs).toBeLessThan(flags.sweepLimits.sliceMs);
+    // A check stops by the sooner of its own clock and its slice's deadline plus MODEL_OVERRUN_MS
+    // (the min() for childDeadline in src/lib/sweep/fanout/run.ts). The real bound, the slice plus
+    // the overrun, ends inside the check's lease and inside both routes that run a slice.
+    expect(flags.sweepLimits.sliceMs + MODEL_OVERRUN_MS).toBeLessThan(CHECK_LEASE_S * 1000);
+    for (const limitS of [advanceSweepLimitS, internalSweepLimitS]) {
+      expect(flags.sweepLimits.sliceMs + MODEL_OVERRUN_MS).toBeLessThan(limitS * 1000);
+    }
+    // The check's own clock, with the overrun, also fits the lease.
+    expect(l.childTimeoutMs).toBeLessThanOrEqual(flags.sweepLimits.sliceMs + MODEL_OVERRUN_MS);
+    expect(l.childTimeoutMs + MODEL_OVERRUN_MS).toBeLessThan(CHECK_LEASE_S * 1000);
   });
 
   it("releases invoicing, invoice review and customer payments, with small caps and a start date", () => {
