@@ -18,8 +18,10 @@ export const runChecks = defineTool({
     "category, an amount in integer cents when there is one, and the records behind it. With " +
     "periodId it lists what the pay check lists for that week: only the pay findings whose " +
     "record at fault falls in the week, under the week's pay rules, and the payment findings as " +
-    "of its last day; the fuel findings are left out. Without it the pay findings cover every " +
-    "week. For who has a problem on one week's paystub, pass that week's periodId.",
+    "of its last day; the fuel findings are left out, and so is the over-limit balance unless the " +
+    "week is open (it is what a driver owes now). A paystub held back for a person is not a " +
+    "finding here: get_settlements shows those. Without it the pay findings cover every week. " +
+    "For who has a problem on one week's paystub, pass that week's periodId.",
   tier: "read",
   roles: OPERATOR_AUDITOR,
   label: "Running the pay checks",
@@ -35,13 +37,19 @@ export const runChecks = defineTool({
     // payment findings as of the week's last day. The ref check already proved the week is this
     // carrier's.
     let week: Period | null = null;
+    let open = true;
     if (a.periodId) {
       const [row] = await readRowsWhereId(q, "settlement_periods", "id", a.periodId);
       if (!row) throw new Error("period vanished after the ref check");
       week = { start: row.period_start, end: row.period_end };
+      open = row.status === "open";
     }
     const input = await readCheckInput(q, week?.start);
-    const pay = runAllChecks(input).filter((f) => week === null || findingInWeek(f, input, week));
+    // The over-limit finding is what the driver owes now, so it belongs to the open week only (a
+    // paid week never had it), as the pay check runs only on an open week.
+    const pay = runAllChecks(input).filter(
+      (f) => week === null || ((open || f.check !== "over_advance_limit") && findingInWeek(f, input, week)),
+    );
     const findings = [...pay, ...findPaymentOnWrongInvoice(await readReceivablesInput(q, week?.end ?? asOf))];
     const rows: Record<string, unknown>[] = findings
       .filter((f) => !a.driverId || f.driverId === a.driverId)

@@ -70,6 +70,12 @@ describe("run_checks for one week", () => {
     expect(week.length).toBe(all.filter((c) => pay.has(c)).length - 1);
   });
 
+  it("names the over-limit balance in the open week only, since it is what a driver owes now", async () => {
+    expect(checks(await rows({}))).toContain("over_advance_limit");
+    expect(checks(await rows({ periodId: open.id }))).toContain("over_advance_limit");
+    expect(checks(await rows({ periodId: paid.id }))).not.toContain("over_advance_limit");
+  });
+
   it("narrows one week to one driver", async () => {
     const dup = runAllChecks(checkInputOf(plan.rows)).find((f) => f.check === "duplicate_advance")!;
     const mine = await rows({ periodId: open.id, driverId: dup.driverId! });
@@ -90,5 +96,6 @@ describe("run_checks for one week", () => {
   it("says what periodId does", () => {
     expect(runChecks.description).toContain("With periodId it lists what the pay check lists for that week");
     expect(runChecks.description).toContain("the fuel findings are left out");
+    expect(runChecks.description).toContain("get_settlements shows those");
   });
 });
