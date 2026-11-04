@@ -17,7 +17,9 @@ import type { ReportResult, ReportRow } from "./types";
 // cents, so a "past 60 days" answer quotes a record figure instead of adding two buckets itself.
 // It is not a column: the table and the CSV show the buckets only.
 
-const BUCKET_KEYS: Readonly<Record<AgingBucket, string>> = {
+// Each bucket's name ending in Cents, here and in get_ar_aging's result, so a figure quoted from
+// either one is read as a record figure by the answer's check.
+export const BUCKET_KEYS: Readonly<Record<AgingBucket, string>> = {
   current: "currentCents",
   "1_30": "days1To30Cents",
   "31_60": "days31To60Cents",
