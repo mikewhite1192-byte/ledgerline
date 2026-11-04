@@ -19,8 +19,11 @@ import { CALL_UPDATE_FORMAT, MAX_TURNS } from "./update";
 const saved = structuredClone(flags);
 const T0 = Date.UTC(2026, 10, 2, 16, 0, 0);
 // The hand-off runs inline only while a whole agent turn, and MIN_CALL_MS for the writes after it,
-// fit in the 27 second step budget.
-const STEP_LEFT_FOR_TURN = STEP_BUDGET_MS - saved.agentTurnLimits.wallClockMs - MIN_CALL_MS;
+// fit in the 27 second step budget. The shipped 27 second turn never fits (the test "with the
+// shipped turn clock" below), so these tests give the turn a 22 second clock to keep the inline
+// path covered.
+const INLINE_TURN_MS = 22_000;
+const STEP_LEFT_FOR_TURN = STEP_BUDGET_MS - INLINE_TURN_MS - MIN_CALL_MS;
 const session = { sub: "sub-1", email: "staff@example.test", tenantId: "11111111-1111-4111-8111-111111111111" };
 const CALL = "22222222-2222-4222-8222-222222222222";
 const DRIVER = "33333333-3333-4333-8333-333333333333";
@@ -46,6 +49,7 @@ beforeEach(() => {
   flags.aiEnabled = true;
   flags.agentEnabled = true;
   flags.voiceIntakeEnabled = true;
+  flags.agentTurnLimits = { ...flags.agentTurnLimits, wallClockMs: INLINE_TURN_MS };
   now = { t: T0 };
   logged = [];
   vi.spyOn(console, "error").mockImplementation((...args: unknown[]) => {
@@ -738,6 +742,19 @@ describe("receiveSegment", () => {
     expect(h.handOff).toHaveBeenCalledTimes(3);
     expect(h.db.state().notes).toHaveLength(3);
     expect(h.db.state().call).toMatchObject({ segments: 4, hand_offs: 3 });
+  });
+
+  it("with the shipped turn clock, always leaves the hand-off for its route", async () => {
+    flags.agentTurnLimits = { ...saved.agentTurnLimits };
+    expect(STEP_BUDGET_MS - flags.agentTurnLimits.wallClockMs - MIN_CALL_MS).toBeLessThan(0);
+    const h = harness();
+    const result = await h.send(0);
+    expect(result).toMatchObject({ ok: true, status: "done" });
+    expect(result.ok && result.turns[1]).toMatchObject({ voiceNoteId: expect.any(String), conversationId: null });
+    expect(h.handOff).not.toHaveBeenCalled();
+    const finished = await P.finishHandOff(session, CALL, 0, h.deps);
+    expect(finished.ok && finished.turns[1].conversationId).toBe(CONVERSATION);
+    expect(h.handOff).toHaveBeenCalledTimes(1);
   });
 
   it("leaves the hand-off for its route when a whole agent turn no longer fits in the request", async () => {

@@ -805,7 +805,7 @@ describe("flags", () => {
       maxToolSteps: 6,
       maxModelCalls: 6,
       maxTurnCents: 40,
-      wallClockMs: 22_000,
+      wallClockMs: 27_000,
       summaryChars: 10_000,
     });
     for (const v of Object.values(flags.agentTurnLimits)) {

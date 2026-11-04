@@ -181,6 +181,9 @@ describe("phone line (database)", () => {
     flags.voiceIntakeEnabled = true;
     flags.aiEnabled = true;
     flags.agentEnabled = true;
+    // The shipped 27 second turn never fits a segment's 27 second step budget, so the hand-off
+    // always waits for its route; a 22 second turn keeps the inline path covered here.
+    flags.agentTurnLimits = { ...flags.agentTurnLimits, wallClockMs: 22_000 };
     vi.spyOn(console, "error").mockImplementation(() => undefined);
     const tag = randomBytes(4).toString("hex");
     A = await makeTenant(admin, `call-a-${tag}`);
