@@ -503,12 +503,14 @@ export async function checkPhase(fx: FanoutCtx): Promise<"check" | "reconcile" |
              AND turn_id IS NOT NULL)`,
       [fx.runId, nowIso],
     );
-    // A check a dead slice left running on its last lease is not leased again.
+    // A check a dead slice left running on its last lease is not leased again. Nor is one still
+    // queued with no tries left (queued for a retry before D-106 lowered the tries to one): the
+    // lease below skips it, so left queued it would hold the phase on "wait" for good.
     await q.execute(
       `UPDATE sweep_fanout_checks SET status = 'error', lease_token = NULL, lease_until = NULL,
               finished_at = CAST($2 AS timestamptz)
-        WHERE run_id = CAST($1 AS uuid) AND tenant_id = current_tenant_id() AND status = 'running'
-          AND lease_until <= CAST($2 AS timestamptz) AND attempts >= $3`,
+        WHERE run_id = CAST($1 AS uuid) AND tenant_id = current_tenant_id() AND attempts >= $3
+          AND (status = 'queued' OR (status = 'running' AND lease_until <= CAST($2 AS timestamptz)))`,
       [fx.runId, nowIso, MAX_ATTEMPTS],
     );
     // The room is what reserveRunCents would still hold: within the run's cap, within the second

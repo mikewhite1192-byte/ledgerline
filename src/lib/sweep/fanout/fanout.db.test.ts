@@ -380,6 +380,33 @@ describe("the sweep's second opinion", () => {
     expect((await runRow(runId)).reserved_cents).toBe(0);
   });
 
+  it("closes a check still queued with its one try used, so the checks reach the comparison", async () => {
+    const runId = await start();
+    let at = NOW.getTime();
+    const slowPlan = vi.fn(async (target: string, req: AiRequest) => {
+      if (req.purpose === "fanout_plan") at += 5_000;
+      return model(target, req);
+    });
+    const d = deps({ clock: () => new Date(at), complete: slowPlan as unknown as SweepDeps["complete"] });
+    const s = await advanceSweep(SESSION, runId, NOW.getTime() + 16_000, d);
+    expect(s).toMatchObject({ ok: true, phase: "check" });
+    const rows = await checks(runId);
+    // Queued for a retry before the tries went down to one: queued, its one try used.
+    await admin.withTenant(T, async (q) => {
+      await q.execute(
+        `UPDATE sweep_fanout_checks SET status = 'queued', attempts = 1, lease_token = NULL, lease_until = NULL
+          WHERE run_id = CAST($1 AS uuid) AND driver_id = CAST($2 AS uuid)`,
+        [runId, rows[0].driver_id],
+      );
+    });
+    await runToEnd(runId, d);
+    const after = await checks(runId);
+    expect(after.find((c) => c.driver_id === rows[0].driver_id)).toMatchObject({ status: "error", attempts: 1 });
+    expect(after.filter((c) => c.driver_id !== rows[0].driver_id).every((c) => c.status === "done" && c.attempts === 1)).toBe(true);
+    expect(JSON.parse((await fanoutRow(runId)).counts ?? "{}")).toMatchObject({ drivers_unchecked: 1 });
+    expect((await runRow(runId)).reserved_cents).toBe(0);
+  });
+
   it("leaves no turn running when a slice dies between a turn's open and its id write, for the plan, a check and the comparison", async () => {
     // A slice killed right after each kind of turn opens, once each, before its id is written.
     const phaseOf = (text: string) =>
