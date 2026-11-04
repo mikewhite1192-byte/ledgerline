@@ -10,6 +10,7 @@ import {
   type Checklist,
 } from "./checklist";
 import { WITHHELD } from "./operator/figures";
+import { CHECKLIST_RULE } from "./policy";
 
 const item = (text: string, state?: string) => (state ? { text, state } : { text });
 
@@ -158,5 +159,12 @@ describe("an answer that says it could not check part of the work", () => {
     expect(answerLeftWork("I could not locate any unpaid invoices.")).toBe(false);
     expect(answerLeftWork("I could not confirm anything wrong with the week.")).toBe(false);
     expect(answerLeftWork("I did not get to any of the paystubs.")).toBe(true);
+  });
+});
+
+describe("the checklist rule", () => {
+  it("asks for every card of an answer in one response, so a short clock fits them all", () => {
+    expect(CHECKLIST_RULE).toContain("send every propose call in one response");
+    expect(CHECKLIST_RULE).toContain("never one card per response");
   });
 });

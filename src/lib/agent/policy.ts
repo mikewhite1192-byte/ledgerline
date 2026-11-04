@@ -179,6 +179,9 @@ export const CHECKLIST_RULE = [
   "  set_checklist alone or with your final answer: items still doing when you answer are marked",
   "  done for you, and an item you never marked doing shows as not finished. If you send only one",
   "  call in a response, send the read, never set_checklist. A one-tool answer needs no checklist.",
+  "- When the answer proposes more than one card, send every propose call in one response, beside",
+  "  set_checklist, never one card per response: each card is still checked on its own, and the",
+  "  answer has a short clock.",
 ].join("\n");
 
 export const CHECKLIST_TOOL = "set_checklist";
