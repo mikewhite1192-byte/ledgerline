@@ -23,7 +23,7 @@ import { QUIET_JOB } from "./test-fixtures";
 // ledger; nothing leaves the test (the agent test files may not import the wrapper).
 
 const QUESTION = "Who has a problem on this week's paystub?";
-const RECORDED_KEY = "a982319d3a12c36b";
+const RECORDED_FINGERPRINT = "53329b621ec4df57";
 const SETTLEMENT = "33333333-3333-4333-8333-333333333333";
 const NOW = Date.parse("2026-10-27T15:00:00.000Z");
 const SESSION: Session = { sub: "sub-test", email: "desk@example.test", tenantId: "11111111-1111-4111-8111-111111111111" };
@@ -172,8 +172,8 @@ afterEach(() => {
 describe("the page focus and the recorded demo path", () => {
   it("runs with the focus switch on and the recorded tool set", () => {
     expect(flags.agentFocusEnabled).toBe(true);
-    expect(toolsFor("operator", { defer: flags.agentToolSearch })).toHaveLength(27);
-    expect(Object.keys(parseFixture(readFileSync(REPLAY_FIXTURE, "utf8")).entries)).toContain(RECORDED_KEY);
+    expect(toolsFor("operator", { defer: flags.agentToolSearch })).toHaveLength(28);
+    expect(Object.keys(parseFixture(readFileSync(REPLAY_FIXTURE, "utf8")).entries)).toContain(RECORDED_FINGERPRINT);
   });
 
   it("sends the recorded request, fingerprint unchanged, with a focus in the summary or without one", async () => {
@@ -185,8 +185,8 @@ describe("the page focus and the recorded demo path", () => {
       expect(run.sent[0].path).toBe(RESPONSES_PATH);
       const parts = fingerprintParts(RESPONSES_PATH, run.sent[0].body);
       expect(parts.user).toBe(QUESTION);
-      expect(parts.tools).toHaveLength(27);
-      expect(fingerprint(parts)).toBe(RECORDED_KEY);
+      expect(parts.tools).toHaveLength(28);
+      expect(fingerprint(parts)).toBe(RECORDED_FINGERPRINT);
     }
     // The focus is in the summary the model reads, and only there.
     const line = `settlements ${SETTLEMENT}, settlement for Sam Rivera (AG-1), week ending 2026-10-25, status draft, net $1,234.56`;

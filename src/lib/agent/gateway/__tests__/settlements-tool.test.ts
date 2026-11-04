@@ -1,6 +1,13 @@
 import { describe, expect, it } from "vitest";
 import type { CarrierPlan } from "../../../seed/plan";
-import { getSettlements, READ_NEXT } from "../tools/read/get-settlements";
+import { MAX_RESULT_CHARS } from "../index";
+import {
+  getSettlements,
+  PAYABLE_DRIVERS_CAP,
+  PAYABLE_DRIVERS_CHARS,
+  payableDriversList,
+  READ_NEXT,
+} from "../tools/read/get-settlements";
 import { context, TENANT } from "./fake-db";
 import { blueRidgePlan, planDb } from "./plan-db";
 
@@ -109,6 +116,76 @@ describe("get_settlements", () => {
     expect(out).not.toHaveProperty("notRunYet");
   });
 
+  // Production, Nov 4: "Why is Monique's pay short this week?" before Run the week had no way to
+  // her driver id, so it spent its clock on two reports. The empty week lists the drivers the run
+  // would draft for, by the run's own statement, with the ids explain_paystub takes.
+  it("lists an empty week's payable drivers with their ids and names, as the run would draft them", async () => {
+    const out = (await run({}, rolled)).result as Out & {
+      payableDrivers: { driverId: string; driverCode: string; driverName: string }[];
+      payableDriversTotal: number;
+    };
+    expect(out.payableDrivers.length).toBeGreaterThan(0);
+    expect(out.payableDriversTotal).toBe(out.payableDrivers.length);
+    const monique = out.payableDrivers.find((d) => d.driverCode === "BR-D07");
+    const row = plan.rows.drivers.find((d) => d.code === "BR-D07")!;
+    expect(monique).toEqual({ driverId: row.id, driverCode: "BR-D07", driverName: `${row.first_name} ${row.last_name}` });
+    // Each one is a driver with work in the week or an advance still owed, in code order.
+    const codes = out.payableDrivers.map((d) => d.driverCode);
+    expect([...codes].sort()).toEqual(codes);
+    expect(PAYABLE_DRIVERS_CAP).toBe(40);
+    expect(JSON.stringify(out).length).toBeLessThan(MAX_RESULT_CHARS);
+    expect(getSettlements.description).toContain("takes that driver's driverId from it to explain_paystub");
+    expect(READ_NEXT).toContain("takes that driver's driverId from payableDrivers here to explain_paystub");
+  });
+
+  // Long names: 40 entries of the list alone would cross the gateway's cap and drop the whole
+  // result, so the list stops at its character budget and the total still counts every driver.
+  it("cuts the payable list at its character budget when the names are long, and still counts them all", async () => {
+    const long = (n: string) => `${n} ${"x".repeat(240)}`;
+    const p: CarrierPlan = {
+      ...rolled,
+      rows: {
+        ...rolled.rows,
+        drivers: rolled.rows.drivers.map((d) => ({ ...d, first_name: long(d.first_name), last_name: long(d.last_name) })),
+      },
+    };
+    const out = (await run({}, p)).result as Out & {
+      payableDrivers: { driverId: string; driverCode: string; driverName: string }[];
+      payableDriversTotal: number;
+    };
+    const full = (await run({}, rolled)).result as Out & { payableDriversTotal: number };
+    expect(out.payableDriversTotal).toBe(full.payableDriversTotal);
+    expect(out.payableDrivers.length).toBeGreaterThan(0);
+    expect(out.payableDrivers.length).toBeLessThan(out.payableDriversTotal);
+    expect(JSON.stringify(out.payableDrivers).length).toBeLessThanOrEqual(PAYABLE_DRIVERS_CHARS);
+    expect(out.payableDrivers[0].driverName.length).toBeGreaterThan(480);
+    expect(JSON.stringify(out).length).toBeLessThan(MAX_RESULT_CHARS);
+    expect(PAYABLE_DRIVERS_CHARS).toBeLessThan(MAX_RESULT_CHARS);
+  });
+
+  it("keeps 40 as the most entries, and the budget holds to the character", () => {
+    const short = Array.from({ length: 60 }, (_, i) => ({
+      id: `00000000-0000-4000-8000-0000000000${String(10 + i)}`,
+      code: `D${String(i)}`,
+      first_name: "A",
+      last_name: "B",
+    }));
+    expect(payableDriversList(short)).toHaveLength(PAYABLE_DRIVERS_CAP);
+    const wide = short.map((d) => ({ ...d, first_name: "y".repeat(400) }));
+    const list = payableDriversList(wide);
+    expect(JSON.stringify(list).length).toBeLessThanOrEqual(PAYABLE_DRIVERS_CHARS);
+    // One more entry would have crossed the budget.
+    expect(list.length).toBeLessThan(PAYABLE_DRIVERS_CAP);
+    expect(JSON.stringify([...list, list[0]]).length).toBeGreaterThan(PAYABLE_DRIVERS_CHARS);
+    expect(payableDriversList([])).toEqual([]);
+  });
+
+  it("lists no drivers for a week with no pay", async () => {
+    const out = (await run({ periodId: NEWER_ID }, rolled)).result as Out;
+    expect(out.noPayYet).toBe(true);
+    expect(out).not.toHaveProperty("payableDrivers");
+  });
+
   it("never says so for a week that has paystubs", async () => {
     const paid = plan.rows.settlement_periods.find((p) => p.status === "paid")!;
     const out = (await run({ periodId: paid.id })).result as Out;
@@ -117,6 +194,7 @@ describe("get_settlements", () => {
     expect(out).not.toHaveProperty("runTheWeek");
     expect(out).not.toHaveProperty("noPayYet");
     expect(out).not.toHaveProperty("readNext");
+    expect(out).not.toHaveProperty("payableDrivers");
   });
 
   it("answers no week when none is open", async () => {
@@ -143,5 +221,23 @@ describe("get_settlements", () => {
     expect(getSettlements.description).toContain("(from run_checks, or from get_settlements for a week that has paystubs)");
     expect(READ_NEXT).toContain("run_checks with this periodId");
     expect(READ_NEXT).toContain("explain_paystub with this periodId and a driver's id (from run_checks, or from get_settlements for a week that has paystubs)");
+  });
+
+  // Production, Nov 4: asked about this week's pay before Run the week, one turn read the paystubs
+  // alone and was told to answer before the pay check came back, and another spent its clock on
+  // the pay summary and the driver ranking. The pay check rides with the first read, and neither
+  // report is named for that week's problems or one driver's pay.
+  it("sends the pay check with the first read and keeps the summary and ranking out of the week", () => {
+    expect(getSettlements.description).toContain(
+      "send run_checks with the week paid next's periodId (the state summary names it) in the same response as this call",
+    );
+    expect(getSettlements.description).toContain("for a week named by periodId, send run_checks with that same periodId");
+    expect(getSettlements.description).toContain(
+      "Never call report_driver_pay_summary or report_driver_insights for that week's problems or one driver's pay",
+    );
+    expect(READ_NEXT).toContain("call it next unless it already came back");
+    expect(READ_NEXT).toContain("report_driver_pay_summary has no rows for this week");
+    expect(READ_NEXT).toContain("neither answers this week's problems or one driver's pay");
+    for (const text of [getSettlements.description, READ_NEXT]) expect(text).not.toMatch(/[\u2013\u2014]/);
   });
 });

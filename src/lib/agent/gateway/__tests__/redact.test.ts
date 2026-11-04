@@ -57,6 +57,20 @@ describe("redactArgs", () => {
     expect(strings(out)).toEqual([ID]);
   });
 
+  it("keeps only the length of a key the tool declares free text, whatever it reads as", () => {
+    const args = { name: "2026-10-24", alias: "eligible", other: ID, requestedOn: "2026-10-24", status: "eligible" };
+    expect(redactArgs(args, REDACT_ENUMS, ["name", "alias", "other", "missing"])).toEqual({
+      name: { len: 10 },
+      alias: { len: 8 },
+      other: { len: 36 },
+      requestedOn: "2026-10-24",
+      status: "eligible",
+    });
+    // With no free-text keys every field keeps the usual exemptions.
+    expect(redactArgs(args, REDACT_ENUMS)).toEqual(args);
+    expect(redactArgs({ name: 3 }, REDACT_ENUMS, ["name"])).toEqual({ name: 3 });
+  });
+
   it("bounds depth and array length, and drops values with no JSON meaning", () => {
     let deep: unknown = "leaf";
     for (let i = 0; i < 10; i++) deep = { d: deep };

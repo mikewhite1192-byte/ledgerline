@@ -1,16 +1,49 @@
 import { z } from "zod";
 import { readDueWeekAndPay, readRowsWhereId } from "../../../../data/read";
-import { readSettlementRows } from "../../../../settlements/list";
+import { nameOf, readPayRunDrivers, readSettlementRows } from "../../../../settlements/list";
 import { defineTool, type GatewayRef } from "../../types";
 import { idField } from "../../validate";
 import { OPERATOR } from "../shared";
 
+// The most drivers an open week's list carries: about 100 characters each, so 40 with the rest of
+// the result stays well under the gateway's 8,000 (MAX_RESULT_CHARS), which would otherwise drop
+// the whole result. payableDriversTotal says how many there are.
+export const PAYABLE_DRIVERS_CAP = 40;
+
+// The most characters of JSON the list may take, whatever the names' lengths: about 5,000 of the
+// gateway's 8,000, leaving the rest for readNext and the week (a test holds the whole result
+// under the cap with long names). The list stops at the driver that would cross it.
+export const PAYABLE_DRIVERS_CHARS = 5_000;
+
+type PayableDriver = { driverId: string; driverCode: string; driverName: string };
+
+// The payable drivers in order, at most the cap and at most the character budget as JSON.
+export function payableDriversList(
+  payable: readonly { id: string; code: string; first_name: string; last_name: string }[],
+): PayableDriver[] {
+  const out: PayableDriver[] = [];
+  // The empty list's brackets; each entry adds itself and, after the first, a comma.
+  let chars = 2;
+  for (const d of payable.slice(0, PAYABLE_DRIVERS_CAP)) {
+    const entry = { driverId: d.id, driverCode: d.code, driverName: nameOf(d.first_name, d.last_name) };
+    const size = JSON.stringify(entry).length + (out.length > 0 ? 1 : 0);
+    if (chars + size > PAYABLE_DRIVERS_CHARS) break;
+    chars += size;
+    out.push(entry);
+  }
+  return out;
+}
+
 // What to read next on an open week with pay and no paystubs yet, as the result says it.
 export const READ_NEXT =
   "No paystubs yet does not mean no problems or no pay: run_checks with this periodId lists " +
-  "this week's pay problems now, as the pay check lists them, and explain_paystub with this " +
+  "this week's pay problems now, as the pay check lists them (call it next unless it already " +
+  "came back), and explain_paystub with this " +
   "periodId and a driver's id (from run_checks, or from get_settlements for a week that has paystubs) previews that driver's pay for " +
-  "this week, computed by the rules engine.";
+  "this week, computed by the rules engine. A question about one driver takes that driver's " +
+  "driverId from payableDrivers here to explain_paystub. Answer from those two: report_driver_pay_summary " +
+  "has no rows for this week and report_driver_insights ranks drivers, so neither answers " +
+  "this week's problems or one driver's pay.";
 
 export const getSettlements = defineTool({
   name: "get_settlements",
@@ -19,10 +52,20 @@ export const getSettlements = defineTool({
     "periodId is given), in driver order: each one's driver, gross, deductions and net in " +
     "integer cents, status, the exception categories on its approval card, the auditor's " +
     "verdict, whether it is clean for Approve all clean, and parkedReason when it no longer " +
-    "matches its records. noPaystubsYet true means only that this open week has no paystubs " +
+    "matches its records. For who has a problem on this week's paystub or why a driver's pay " +
+    "is short this week, send run_checks with the week paid next's periodId (the state summary " +
+    "names it) in the same response as this call, so both come back together; for a week named " +
+    "by periodId, send run_checks with that same periodId. noPaystubsYet " +
+    "true means only that this open week has no paystubs " +
     "yet, never no problems or no pay: for who has a problem call run_checks with this " +
     "periodId, and for one driver's pay call explain_paystub with this periodId and the " +
-    "driver's id (from run_checks, or from get_settlements for a week that has paystubs), then answer from what they find. With runTheWeek true it is the week paid next and has pay: say " +
+    "driver's id (from run_checks, or from get_settlements for a week that has paystubs), then answer from what they find. " +
+    "Such a week lists payableDrivers, the drivers Run the week would draft a paystub for (driverId, " +
+    "driverCode, driverName; at most 40, fewer when the names are long, payableDriversTotal counting them all): a question about " +
+    "one driver takes that driver's driverId from it to explain_paystub. " +
+    "Never call report_driver_pay_summary or report_driver_insights for that week's problems " +
+    "or one driver's pay: the summary has no rows before paystubs and the ranking explains no " +
+    "one's pay. With runTheWeek true it is the week paid next and has pay: say " +
     "plainly that pressing " +
     "Run the week on the Pay page runs it and makes paystubs for the drivers with " +
     "payable work; never say it was not run. With noPayYet true it has no pay yet: say so and " +
@@ -69,11 +112,18 @@ export const getSettlements = defineTool({
       // A week with pay and no paystubs still has problems to find and pay to preview: readNext
       // names the reads that answer from the rules engine now, so an answer never stops at no
       // paystubs. A week with no pay has nothing to preview, so it carries none.
+      // The drivers the run would draft for (the run's own statement), so a question about one
+      // driver has their id for explain_paystub without another read.
+      const payable = hasPay ? await readPayRunDrivers(q, period) : [];
+      const drivers = {
+        payableDrivers: payableDriversList(payable),
+        payableDriversTotal: payable.length,
+      };
       empty =
         isDue && hasPay
-          ? { noPaystubsYet: true, runTheWeek: true, readNext: READ_NEXT }
+          ? { noPaystubsYet: true, runTheWeek: true, readNext: READ_NEXT, ...drivers }
           : hasPay
-            ? { noPaystubsYet: true, waitsForWeekPaidNext: true, readNext: READ_NEXT, ...next }
+            ? { noPaystubsYet: true, waitsForWeekPaidNext: true, readNext: READ_NEXT, ...drivers, ...next }
             : { noPaystubsYet: true, noPayYet: true, ...next };
     }
     return {

@@ -259,7 +259,7 @@ async function dispatch(
     );
   }
   const args = parsed.args;
-  row.argsRedacted = redactArgs(args, REDACT_ENUMS);
+  row.argsRedacted = redactArgs(args, REDACT_ENUMS, tool.freeTextArgs);
   const refs = distinctRefs(tool.refs(args));
   row.refs = refs;
 

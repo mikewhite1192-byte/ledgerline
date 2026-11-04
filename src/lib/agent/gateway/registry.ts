@@ -17,6 +17,7 @@ import { getCustomerPayments } from "./tools/read/get-customer-payments";
 import { getFactoringPacket } from "./tools/read/get-factoring-packet";
 import { getFactoringRequests } from "./tools/read/get-factoring-requests";
 import { getDocument } from "./tools/read/get-document";
+import { findDriver } from "./tools/read/find-driver";
 import { getDriver } from "./tools/read/get-driver";
 import { getDriverIdentity } from "./tools/read/get-driver-identity";
 import { getInboundMessage } from "./tools/read/get-inbound-message";
@@ -82,6 +83,7 @@ export const TOOL_NAME = /^[a-z_]{3,40}$/;
 export const STRICT_TOOL_SCHEMAS = false;
 
 const TOOLS: readonly AnyToolDef[] = [
+  findDriver,
   getDriver,
   getLoads,
   getPayItems,

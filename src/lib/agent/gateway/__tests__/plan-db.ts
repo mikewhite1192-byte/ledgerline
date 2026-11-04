@@ -29,7 +29,8 @@ import type { TenantRows } from "../../../data/rows";
 import { buildCarrierPlan, type CarrierPlan } from "../../../seed/plan";
 import { DEMO_CARRIERS } from "../../../seed/carriers";
 import { withShortFriday } from "../../../seed/test-short-friday.test-util";
-import { SETTLEMENT_ROWS } from "../../../settlements/list";
+import { PAY_RUN_DRIVERS_SQL, SETTLEMENT_ROWS } from "../../../settlements/list";
+import { FIND_DRIVER_CAP, FIND_DRIVER_SQL } from "../tools/read/find-driver";
 import { FakeDb, TENANT, type Handler, type Row } from "./fake-db";
 
 // A FakeDb that serves one synthetic carrier's seed plan through the record readers' own SQL, so
@@ -95,6 +96,60 @@ export function planDb(plan: CarrierPlan, extra?: Handler): FakeDb {
       return (tables.money_actions ?? [])
         .filter((r) => r.subject_table === params[0] && r.subject_id === params[1])
         .map((r) => ({ ...r }));
+    }
+    // find_driver: a contains match, ignoring case, on first, last or full name or code, an
+    // exact code then an exact full name first, then by last name, one more than the cap. The
+    // pattern is the tool's own (%text% with LIKE escapes); the second param is the text itself.
+    if (sql === FIND_DRIVER_SQL) {
+      const text = String(params[0]).slice(1, -1).replace(/\\(.)/g, "$1").toLowerCase();
+      const exact = String(params[1]).toLowerCase();
+      const hit = (v: string) => v.toLowerCase().includes(text);
+      const rank = (d: { code: string; first_name: string; last_name: string }) =>
+        d.code.toLowerCase() === exact ? 0 : `${d.first_name} ${d.last_name}`.toLowerCase() === exact ? 1 : 2;
+      return plan.rows.drivers
+        .filter((d) => hit(d.first_name) || hit(d.last_name) || hit(`${d.first_name} ${d.last_name}`) || hit(d.code))
+        .sort((a, b) =>
+          rank(a) !== rank(b)
+            ? rank(a) - rank(b)
+            : a.last_name !== b.last_name
+              ? a.last_name < b.last_name ? -1 : 1
+              : a.first_name !== b.first_name
+                ? a.first_name < b.first_name ? -1 : 1
+                : a.code < b.code ? -1 : a.code > b.code ? 1 : 0,
+        )
+        .slice(0, FIND_DRIVER_CAP + 1)
+        .map((d) => ({
+          id: d.id,
+          code: d.code,
+          first_name: d.first_name,
+          last_name: d.last_name,
+          active_from: d.active_from,
+          active_to: d.active_to,
+        }));
+    }
+    // The drivers Run the week drafts for (PAY_RUN_DRIVERS_SQL), over the plan's rows: a delivered
+    // load, a day worked or a pay item in the week, an advance still owed, or a draft in the week.
+    if (sql === PAY_RUN_DRIVERS_SQL) {
+      const [start, end, periodId] = params as string[];
+      const inWeek = (day: unknown) => typeof day === "string" && day >= start && day <= end;
+      const has = (table: string, test: (r: Row) => boolean) => (tables[table] ?? []).some(test);
+      return plan.rows.drivers
+        .filter(
+          (d) =>
+            has("loads", (l) => l.driver_id === d.id && ["delivered", "invoiced"].includes(String(l.status)) && inWeek(l.delivered_on)) ||
+            has("driver_days", (x) => x.driver_id === d.id && inWeek(x.day)) ||
+            has("pay_items", (i) => i.driver_id === d.id && inWeek(i.item_date)) ||
+            has(
+              "advances",
+              (a) =>
+                a.driver_id === d.id &&
+                ["approved", "paid"].includes(String(a.status)) &&
+                Number(a.recovered_cents) < Number(a.amount_cents) + Number(a.fee_cents),
+            ) ||
+            has("settlements", (x) => x.driver_id === d.id && x.period_id === periodId),
+        )
+        .sort((a, b) => (a.code < b.code ? -1 : a.code > b.code ? 1 : a.id < b.id ? -1 : a.id > b.id ? 1 : 0))
+        .map((d) => ({ id: d.id, code: d.code, first_name: d.first_name, last_name: d.last_name }));
     }
     // get_settlements' list: the plan's stored paystubs for the week with their drivers. A seed
     // plan holds no approval cards, so every card column is null.

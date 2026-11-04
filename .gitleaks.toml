@@ -12,3 +12,15 @@ condition = "AND"
 paths = ['''^src/lib/reports/types\.ts$''']
 regexTarget = "secret"
 regexes = ['''^(days1To30Cents|days31To60Cents|days61To90Cents)$''']
+
+# The replay fixture fingerprint an earlier commit of the focus replay test named RECORDED_KEY reads
+# as a key to the generic key rule. It is a hash of the recorded request, not a credential, and
+# the constant is now RECORDED_FINGERPRINT. The exception matches that one value, only in that
+# test file, and only for that one rule.
+[[allowlists]]
+description = "The focus replay test's recorded fixture fingerprint is a request hash, not a credential"
+targetRules = ["generic-api-key"]
+condition = "AND"
+paths = ['''^src/lib/ai/focus-replay\.test\.ts$''']
+regexTarget = "secret"
+regexes = ['''^53329b621ec4df57$''']
