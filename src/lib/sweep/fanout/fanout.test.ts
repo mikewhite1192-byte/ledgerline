@@ -330,6 +330,18 @@ describe("runChildCheck", () => {
     ]);
   });
 
+  it("never says it checked everything when a read came back cut at the size cap", async () => {
+    const cut = harness([() => answer()], {
+      read: (tool) =>
+        tool === "get_loads" ? ({ ...allowed(tool), reason: "result_truncated" } as GatewayOutcome) : allowed(tool),
+    });
+    const out = await runChildCheck(input(), cut.deps);
+    expect(out.status).toBe("done");
+    expect(out.answer?.checkedAll).toBe(false);
+    const whole = await runChildCheck(input(), harness([() => answer()]).deps);
+    expect(whole.answer?.checkedAll).toBe(true);
+  });
+
   it("ends as an error with no model call when a read is refused, fails or throws", async () => {
     const refused = (decision: "blocked" | "failed" | "denied", reason: string) => (tool: string) =>
       (tool === "get_loads"

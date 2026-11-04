@@ -234,6 +234,9 @@ export async function runChildCheck(input: ChildInput, deps: ChildDeps): Promise
   // The reads, one after another: each step takes the turn's next seq, so two at once would
   // collide. Any read the gateway does not allow ends the check with no model call.
   const records: Record<string, Record<string, unknown>> = {};
+  // A read the gateway cut at its size cap left records unread, so the check never claims it
+  // checked them all.
+  let truncated = false;
   for (const r of CHECK_READS) {
     const cap = budget.beforeToolStep();
     if (cap === "clock") return end("timed_out");
@@ -274,6 +277,7 @@ export async function runChildCheck(input: ChildInput, deps: ChildDeps): Promise
     // separate mark), so the check's own clock tells the two apart: a read that failed with no
     // time left is a timeout, any other refusal or failure an error.
     if (!allowed) return end(budget.remainingMs() <= 0 ? "timed_out" : "error");
+    if (outcome.reason === "result_truncated") truncated = true;
     records[r.key] = outcome.result;
   }
 
@@ -338,5 +342,6 @@ export async function runChildCheck(input: ChildInput, deps: ChildDeps): Promise
   if (result.toolCalls.length > 0) return end("unparsed");
   const checked = validateCheck(result.text, input.driverId, read);
   if (!checked) return end("unparsed");
+  if (truncated) checked.answer.checkedAll = false;
   return end("done", checked.answer, checked.dropped);
 }
