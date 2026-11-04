@@ -143,7 +143,9 @@ export const findUnbilledDetentionTool = defineTool({
         rows,
         count: rows.length,
         totalCents: sum(found.map((f) => f.amountCents)),
-        note: DETENTION_NEXT,
+        // Only the operator can propose: the auditor reads the rows and gets no steer to a tool
+        // it is never offered.
+        ...(ctx.role === "operator" ? { note: DETENTION_NEXT } : {}),
       },
     };
   },

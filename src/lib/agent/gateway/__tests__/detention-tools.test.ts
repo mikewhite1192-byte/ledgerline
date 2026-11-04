@@ -111,6 +111,7 @@ describe("find_unbilled_detention", () => {
     const { out } = await run("find_unbilled_detention", {}, plan, "auditor");
     if (out.decision !== "allowed") throw new Error(`not allowed: ${out.reason}`);
     expect(out.result).toMatchObject({ window: { start: "2026-10-01", end: "2026-10-31" }, totalCents: 237_500 });
+    expect(out.result).not.toHaveProperty("note");
   });
 
   it("says why a found charge cannot go on its invoice", async () => {
