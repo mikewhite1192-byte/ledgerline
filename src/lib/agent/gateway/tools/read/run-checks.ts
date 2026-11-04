@@ -19,8 +19,9 @@ export const runChecks = defineTool({
     "periodId it lists what the pay check lists for that week: only the pay findings whose " +
     "record at fault falls in the week, under the week's pay rules. An open week also lists the " +
     "over-limit balance (what a driver owes now) and the payment findings as of its last day; a " +
-    "week no longer open lists neither, since they cannot be read as of a past day. The fuel " +
-    "findings are left out. A paystub held back for a person is not a " +
+    "week no longer open lists neither, since they cannot be read as of a past day. An advance " +
+    "over its load's cap is listed in the week its load was delivered, though the pay check does " +
+    "not list it yet. The fuel findings are left out. A paystub held back for a person is not a " +
     "finding here: get_settlements shows those. Without it the pay findings cover every week. " +
     "For who has a problem on one week's paystub, pass that week's periodId.",
   tier: "read",

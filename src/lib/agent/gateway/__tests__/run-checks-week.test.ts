@@ -119,6 +119,7 @@ describe("run_checks for one week", () => {
     expect(runChecks.description).toContain("With periodId it lists what the pay check lists for that week");
     expect(runChecks.description).toContain("The fuel findings are left out");
     expect(runChecks.description).toContain("a week no longer open lists neither");
+    expect(runChecks.description).toContain("though the pay check does not list it yet");
     expect(runChecks.description).toContain("get_settlements shows those");
   });
 });
