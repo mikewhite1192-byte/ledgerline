@@ -173,4 +173,31 @@ describe("the checklist rule", () => {
   it("sends the checklist with the first reads, never alone in a response", () => {
     expect(CHECKLIST_RULE).toContain("set_checklist goes in the same response as your first reads, never alone in a response");
   });
+
+  // Production, Nov 4: "Can we make Friday's pay run?" listed "List moves if short", and Friday was
+  // covered, so the answer showed that item as not finished.
+  it("lists only steps that do not hang on what the reads find", () => {
+    expect(CHECKLIST_RULE).toContain("List only steps you will take whatever the reads find, never one that hangs on them");
+  });
+
+  // Production, Nov 4: "Who has a problem on this week's paystub?" read the paystubs and the pay
+  // check and answered well, but wrote "I could not check fuel purchase problems here because the
+  // pay check leaves those out", so both items it had marked doing showed as not finished. A limit
+  // the tool states is said as what the check does not cover; undone work still reads undone.
+  it("keeps \"I could not check\" for undone work, and says a tool's stated limit plainly", () => {
+    expect(CHECKLIST_RULE).toContain("Say you could not check something only for work this answer left undone");
+    expect(CHECKLIST_RULE).toContain("is said as what that check does not cover, never as something you could not check");
+    expect(answerLeftWork("I could not check fuel purchase problems here because the pay check leaves those out.")).toBe(true);
+    expect(answerLeftWork("The pay check does not cover fuel purchases.")).toBe(false);
+    const doing: Checklist = {
+      v: 1,
+      by: "model",
+      items: [
+        { key: "m1", text: "Check this week's paystubs", state: "doing" },
+        { key: "m2", text: "Check who has a pay problem", state: "doing" },
+      ],
+    };
+    expect(finalChecklist(doing, "done").items.map((i) => i.state)).toEqual(["done", "done"]);
+    expect(finalChecklist(doing, "partial").items.map((i) => i.state)).toEqual(["not_done", "not_done"]);
+  });
 });

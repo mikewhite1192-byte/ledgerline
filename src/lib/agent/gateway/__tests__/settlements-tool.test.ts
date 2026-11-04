@@ -8,6 +8,7 @@ import {
   payableDriversList,
   READ_NEXT,
 } from "../tools/read/get-settlements";
+import { explainPaystub } from "../tools/read/explain-paystub";
 import { context, TENANT } from "./fake-db";
 import { blueRidgePlan, planDb } from "./plan-db";
 
@@ -239,5 +240,19 @@ describe("get_settlements", () => {
     expect(READ_NEXT).toContain("report_driver_pay_summary has no rows for this week");
     expect(READ_NEXT).toContain("neither answers this week's problems or one driver's pay");
     for (const text of [getSettlements.description, READ_NEXT]) expect(text).not.toMatch(/[\u2013\u2014]/);
+  });
+
+  // Production, Nov 4: "Why is Monique's pay short this week?" found her, then read the paystubs
+  // and the pay check, and the clock ran out before explain_paystub, so the answer could not say
+  // why. Her driverId is known after find_driver, so her preview goes with the other two.
+  it("sends one driver's pay preview beside the paystubs and the pay check", () => {
+    expect(getSettlements.description).toContain(
+      "For one driver whose driverId you already have (from find_driver), send explain_paystub with that periodId and driverId in that same response too",
+    );
+    expect(explainPaystub.description).toContain(
+      "send it with the week paid next's periodId (the state summary names it) and the driverId from find_driver, in the same response as get_settlements and run_checks",
+    );
+    expect(explainPaystub.description).toContain("it previews a week that has no paystubs yet");
+    expect(explainPaystub.description).not.toMatch(/[\u2013\u2014]/);
   });
 });

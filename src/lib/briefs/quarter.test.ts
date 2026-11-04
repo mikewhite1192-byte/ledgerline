@@ -3,6 +3,7 @@ import { flags } from "../../config/flags";
 import { blueRidgePlan, PLAN_ANCHOR, planDb } from "../agent/gateway/__tests__/plan-db";
 import { TENANT, type FakeDb } from "../agent/gateway/__tests__/fake-db";
 import { getQuarterReview } from "../agent/gateway/tools/read/get-quarter-review";
+import { centsIn, maskFigures } from "../agent/operator/figures";
 import type { GatewayContext } from "../agent/gateway/types";
 import { AiError, complete, type AiRequest, type AiResult } from "../ai";
 import { NANOCENTS_PER_CENT } from "../ai/prices";
@@ -788,5 +789,16 @@ describe("get_quarter_review", () => {
       "never call find_unbilled_detention, run_checks or a propose_* tool from them in this answer",
     );
     expect(getQuarterReview.description).not.toMatch(/[\u2013\u2014]/);
+  });
+
+  // Production, Nov 4: the quarter's answer wrote a customer's openCents with a dollar sign on the
+  // raw cents, then a correction with the right dollars, so one figure was withheld and the answer
+  // was not verified. The description shows the conversion and asks for each figure once.
+  it("shows how a cents field is written in dollars, once", () => {
+    expect(getQuarterReview.description).toContain("openCents 1234500 is $12,345.00, never $1234500 or 1234500 dollars");
+    expect(getQuarterReview.description).toContain("Write each figure once; never leave a correction in the answer");
+    const allowed = centsIn({ customers: [{ openCents: 1_234_500 }] });
+    expect(maskFigures("Open $12,345.00.", allowed).masked).toBe(0);
+    expect(maskFigures("Open $1234500 cents.", allowed).masked).toBe(1);
   });
 });
