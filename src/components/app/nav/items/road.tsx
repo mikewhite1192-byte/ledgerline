@@ -10,6 +10,6 @@ export const road = {
   label: "On the road",
   icon: <Truck aria-hidden />,
   shown: () => flags.journey.enabled === true,
-  section: "home",
-  sectionOrder: 20,
+  section: "drivers",
+  sectionOrder: 15,
 } as const satisfies MenuItem;
