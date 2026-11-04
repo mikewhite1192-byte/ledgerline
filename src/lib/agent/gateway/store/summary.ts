@@ -1,9 +1,11 @@
 import { flags } from "../../../../config/flags";
 import type { Session } from "../../../auth/claims";
-import { readPayConfigFor, readTenant } from "../../../data/read";
+import { configForDay } from "../../../data/config-version";
+import { readPayConfigVersions, readTenant } from "../../../data/read";
 import { payConfigOf } from "../../../data/records";
 import type { Queryable } from "../../../db";
 import { notesSection, type NoteRow } from "../../../memory/notes";
+import { formatPeriod } from "../../../format/dates";
 import { dollars } from "../../../money/format";
 import { localDateOf, periodContaining } from "../../../time/local-date";
 import { feedLine, readFeedState } from "../../../tms/read";
@@ -64,7 +66,42 @@ function wholeLinesOfLast(sections: readonly SummarySection[], cap: number): str
   return kept < joined.length && joined[kept] !== "\n" ? lines.slice(0, -1) : lines;
 }
 
+// The longest carrier name the Carrier section shows.
+const CARRIER_NAME_MAX = 120;
+
 const DOW = ["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"];
+
+// The week paid next as the turn read it (store/index.ts readTurnDueWeek): the week, null when no
+// week is open, "unavailable" when the read failed. Left out (undefined) for a turn that does not
+// read it (a sweep or fan-out check turn, which names its own week).
+export type PaidNextRead = { id: string; start: string; end: string } | null | "unavailable";
+
+// Pure: the pay week line of the Carrier section. With the week paid next read, the calendar week
+// holding today is named as today's week, so "this week" is left to the week paid next line below.
+// Not read, or no week open, it is today's line exactly.
+export function payWeekLine(dow: number, week: { start: string; end: string }, paidNext: PaidNextRead | undefined): string {
+  const which = paidNext === undefined || paidNext === null ? "this week" : "today's week";
+  return `Pay week: ${DOW[dow]} to ${DOW[(dow + 6) % 7]}, ${which} ${week.start} to ${week.end}`;
+}
+
+// Pure: the week paid next line (the week the pay check and the sweep read), so "this week" in a
+// pay question means the week with pay to check, not the newest open week, which the roll opens
+// empty. None when it was not read or no week is open; a failed read says so and claims no week.
+// It is added outside the pay rules read, so it stays when that read fails; a week whose dates
+// do not read is not available too.
+export function paidNextLine(paidNext: PaidNextRead | undefined): string | null {
+  if (paidNext === undefined || paidNext === null) return null;
+  let dates: string | null = null;
+  if (paidNext !== "unavailable") {
+    try {
+      dates = formatPeriod(paidNext.start, paidNext.end);
+    } catch {
+      dates = null;
+    }
+  }
+  if (paidNext === "unavailable" || dates === null) return "Week paid next: not available";
+  return `Week paid next (the pay check's week): ${dates}, periodId ${paidNext.id}; read "this week" in a pay question as the week paid next`;
+}
 
 type PriorRow = { seq: number; summary: string; tools?: string | null };
 
@@ -193,6 +230,8 @@ export function voiceNoteLines(row: VoiceRow | undefined, money: (n: number) => 
 // this one); they add the last section only while carrierMemoryEnabled is on, checked here again.
 // focus: the page's record, already checked under the tenant by the store (gateway/focus.ts); it
 // replaces the Subject section only while agentFocusEnabled is on, checked here again.
+// paidNext: the week paid next, read by the store beside the notes (PaidNextRead); left out, the
+// pay week line is today's.
 export async function buildStateSummary(
   q: Queryable,
   _session: Session,
@@ -202,6 +241,7 @@ export async function buildStateSummary(
   text = "",
   notes: readonly NoteRow[] = [],
   focus: FocusSubject | null = null,
+  paidNext: PaidNextRead | undefined = undefined,
 ): Promise<{ text: string; chars: number; cents: number[]; notesUsed: string[] }> {
   const cents: number[] = [];
   const money = (n: number) => {
@@ -214,15 +254,19 @@ export async function buildStateSummary(
   const zone = tenant?.timezone ?? "UTC";
   const today = localDateOf(now.toISOString(), zone);
   const header: string[] = [];
-  if (tenant) header.push(`Carrier: ${tenant.name}`);
+  // The name is cut to its own length, so the section's worst case (about 450 characters with
+  // the week paid next line) stays under its 480 cap and the cap never reaches the periodId.
+  if (tenant) header.push(`Carrier: ${cut(tenant.name, CARRIER_NAME_MAX)}`);
   header.push(`Time zone: ${zone}`, `Today: ${today}`);
 
   const rules: string[] = [];
   try {
-    const config = payConfigOf(await readPayConfigFor(q, today));
+    // The version of the week holding today: readPayConfigFor takes a period start, so today read
+    // through it failed on every day but the week's first.
+    const config = payConfigOf(configForDay(await readPayConfigVersions(q), today));
     const dow = config.weekStartDow;
     const week = periodContaining(today, dow);
-    header.push(`Pay week: ${DOW[dow]} to ${DOW[(dow + 6) % 7]}, this week ${week.start} to ${week.end}`);
+    header.push(payWeekLine(dow, week, paidNext));
     rules.push(`Advance fee: ${money(config.advanceFeeCents)}`);
     rules.push(`Default advance limit per driver: ${money(config.advanceLimitDefaultCents)}`);
     rules.push(`Advances up to ${config.advanceMaxBpsOfEarned / 100}% of earned, unpaid pay`);
@@ -232,7 +276,10 @@ export async function buildStateSummary(
   } catch {
     rules.push("Pay rules: not available");
   }
-  sections.push({ title: "Carrier", lines: header, maxChars: 300 });
+  const next = paidNextLine(paidNext);
+  if (next !== null) header.push(next);
+  // 300 held the four lines; the week paid next line (about 170) rides under the same cap.
+  sections.push({ title: "Carrier", lines: header, maxChars: 480 });
   sections.push({ title: "Pay rules", lines: rules, maxChars: 600 });
   // One line on the dispatch feed while the mirror is on: the system, its last full pass, today's
   // events and flagged loads, or "not connected". Counts and codes only, never dispatch text, and

@@ -1,6 +1,7 @@
 import { flags } from "../../../../config/flags";
 import { askFor, asksForSession, readShowingAsks, type AskView } from "../../../asks/store";
 import type { Session } from "../../../auth/claims";
+import { readDueWeek } from "../../../data/read";
 import { DbError, getDb, type Queryable, type TenantDb } from "../../../db";
 import type { TurnTrace } from "../../../trace/types";
 import { relevantNotes, type NoteRow } from "../../../memory/notes";
@@ -22,6 +23,7 @@ import {
 } from "./audit";
 import { engineCheck, engineCheckDraft } from "./engine-check";
 import { findProposalConflict, flagTurnProposals, persistProposal } from "./proposals";
+import type { PaidNextRead } from "./summary";
 import { finishStep, finishTurn, openTurn, setChecklist, startStep, type OpenTurnInput } from "./turns";
 import type { OpenTurnRefusal, OpenedTurn, TurnStore } from "./types";
 import { readModelWeek, readTurnTrace, readTurnTraceInRun } from "./trace";
@@ -92,9 +94,10 @@ export function dbTurnStore(session: Session, deps: StoreDeps = {}): TurnStore {
 
 // What a caller of openAgentTurn passes: the turn, and readNotes for one of the operator's own
 // questions (the chat, the advance desk, a voice note's hand-off), whose model reads the summary.
-// Only those read the carrier notes; a sweep or fan-out check turn leaves it out and gets no notes
-// section and no extra transaction.
-export type AgentTurnInput = Omit<OpenTurnInput, "notes"> & { readNotes?: boolean };
+// Only those read the carrier notes (while carrierMemoryEnabled is on) and the week paid next
+// (always), each in its own transaction; a sweep or fan-out check turn leaves it out and gets no
+// notes section, no week paid next line and no extra transaction.
+export type AgentTurnInput = Omit<OpenTurnInput, "notes" | "paidNext"> & { readNotes?: boolean };
 
 // The carrier notes for a turn, in their own short read-only transaction before the turn opens:
 // a failed read inside the turn's transaction would end it, and a notes problem must never stop a
@@ -116,6 +119,25 @@ async function readTurnNotes(
   }
 }
 
+// The week paid next for a turn's summary (readDueWeek, the week the pay check and the sweep read),
+// in its own short read-only transaction, for every turn with readNotes, whether or not the notes
+// switch is on. With the notes read too, the two run at the same time, so it adds no wait past the
+// longer of the two; with the switch off it is the one extra transaction. A failed read says so in
+// the summary (unavailable) with one log line holding the turn id only, and never stops the question.
+async function readTurnDueWeek(
+  db: TenantDb,
+  session: Session,
+  input: Omit<OpenTurnInput, "notes">,
+): Promise<PaidNextRead> {
+  try {
+    const due = await withAgentTenant(db, session, (q) => readDueWeek(q));
+    return due ? { id: due.id, start: due.period_start, end: due.period_end } : null;
+  } catch {
+    console.error(`summary: week paid next unreadable for turn ${input.turnId}`);
+    return "unavailable";
+  }
+}
+
 export async function openAgentTurn(
   session: Session,
   input: AgentTurnInput,
@@ -123,9 +145,12 @@ export async function openAgentTurn(
 ): Promise<OpenedTurn | { refused: OpenTurnRefusal }> {
   const db = deps.db ?? getDb();
   const { readNotes, ...turn } = input;
-  const notes = readNotes === true ? await readTurnNotes(db, session, turn) : undefined;
+  const [notes, paidNext] =
+    readNotes === true
+      ? await Promise.all([readTurnNotes(db, session, turn), readTurnDueWeek(db, session, turn)])
+      : [undefined, undefined];
   try {
-    return await withAgentTenant(db, session, (q) => openTurn(q, session, { ...turn, notes }));
+    return await withAgentTenant(db, session, (q) => openTurn(q, session, { ...turn, notes, paidNext }));
   } catch (err) {
     // Two submits raced for the same turn id or the same next seq.
     if (err instanceof DbError && err.sqlState === UNIQUE_VIOLATION) return { refused: "busy" };
@@ -142,7 +167,7 @@ export async function openAgentTurn(
 export async function openAgentTurnIn(
   q: Queryable,
   session: Session,
-  input: Omit<OpenTurnInput, "notes">,
+  input: Omit<OpenTurnInput, "notes" | "paidNext">,
 ): Promise<OpenedTurn | { refused: OpenTurnRefusal }> {
   await assertMembership(q, session);
   return openTurn(q, session, input);

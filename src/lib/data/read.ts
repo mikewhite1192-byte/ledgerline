@@ -44,6 +44,7 @@ import {
   dueWeekOf,
   loadsOf,
   payConfigOf,
+  payDaysOf,
   receivablesInputOf,
   settlementInputOf,
   advanceOf,
@@ -232,11 +233,11 @@ export async function readCheckInput(q: Queryable, weekStart?: LocalDate): Promi
   );
 }
 
-// The week paid next (dueWeekOf, D-093): the week a sweep runs when none is named and the one the
-// sweep home shows, from the rows Cash Friday reads it from, so the two name one week. Null when
-// no week is open.
-export async function readDueWeek(q: Queryable): Promise<{ id: string; period_start: LocalDate; period_end: LocalDate } | null> {
-  const due = dueWeekOf({
+export type DueWeek = { id: string; period_start: LocalDate; period_end: LocalDate };
+
+// The eight tables the week paid next is chosen from (dueWeekOf), one statement each.
+async function readDueRows(q: Queryable): Promise<Parameters<typeof dueWeekOf>[0]> {
+  return {
     settlement_periods: await readTable(q, "settlement_periods"),
     settlements: await readTable(q, "settlements"),
     loads: await readTable(q, "loads"),
@@ -245,8 +246,34 @@ export async function readDueWeek(q: Queryable): Promise<{ id: string; period_st
     pay_configs: await readTable(q, "pay_configs"),
     drivers: await readTable(q, "drivers"),
     deduction_schedules: await readTable(q, "deduction_schedules"),
-  });
+  };
+}
+
+function dueWeekFrom(rows: Parameters<typeof dueWeekOf>[0]): DueWeek | null {
+  const due = dueWeekOf(rows);
   return due ? { id: due.id, period_start: due.period_start, period_end: due.period_end } : null;
+}
+
+// The week paid next (dueWeekOf, D-093): the week a sweep runs when none is named and the one the
+// sweep home shows, from the rows Cash Friday reads it from, so the two name one week. Null when
+// no week is open.
+export async function readDueWeek(q: Queryable): Promise<DueWeek | null> {
+  return dueWeekFrom(await readDueRows(q));
+}
+
+// The week paid next, and whether a given week holds pay (a paystub, or a day that carries pay,
+// as dueWeek counts them), from the same one read of the eight tables. get_settlements uses it to
+// tell an open week with pay to run from one with none yet.
+export async function readDueWeekAndPay(
+  q: Queryable,
+): Promise<{ due: DueWeek | null; holdsPay: (p: { id: string; start: LocalDate; end: LocalDate }) => boolean }> {
+  const rows = await readDueRows(q);
+  const held = new Set(rows.settlements.map((s) => s.period_id));
+  const days = payDaysOf(rows);
+  return {
+    due: dueWeekFrom(rows),
+    holdsPay: (p) => held.has(p.id) || days.some((d) => d >= p.start && d <= p.end),
+  };
 }
 
 type DriverRows = Pick<
