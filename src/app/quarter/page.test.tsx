@@ -169,6 +169,15 @@ describe("/quarter", () => {
     expect(document.body.textContent).not.toMatch(/proposal|tenant|rules engine|verdict|\blane|\u2014/i);
   });
 
+  it("names the margin's base as priced load revenue, and keeps its cards and tables inside a phone's width", async () => {
+    await show();
+    expect(screen.queryByText(/% of revenue$/)).toBeNull();
+    expect(screen.getByText(/^(-?[\d.]+% of priced load revenue|No priced loads yet)$/)).toBeTruthy();
+    // One column that may shrink below its widest table, so a phone never scrolls the page sideways.
+    const column = screen.getByRole("table", { name: "Pay runs" }).closest("div.max-w-\\[960px\\]");
+    expect(column?.className).toContain("grid-cols-1");
+  });
+
   it("links a written review's numbers to the tables that show them while its figures are unchanged", async () => {
     const figures = await livePack();
     writtenReview(figures, bodyFrom(figures));

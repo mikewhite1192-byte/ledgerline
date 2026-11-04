@@ -775,3 +775,18 @@ describe("ProposalCard in plain words", () => {
     expect(screen.queryByText("Details", { selector: "summary" })).toBeNull();
   });
 });
+
+describe("ProposalCard when the pay rules line already names the second check", () => {
+  const unknown = { state: "unverified" as const, line: "Pay rules matched. Second check could not run", held: false };
+
+  it("prints the second check's state once and keeps its reason", () => {
+    render(<ProposalCard {...card} audit={{ state: "unknown", text: "There was not enough evidence to check it." }} verification={unknown} />);
+    expect(screen.getAllByText(/Second check could not run/)).toHaveLength(1);
+    expect(screen.getByText("There was not enough evidence to check it.")).toBeTruthy();
+  });
+
+  it("keeps the badge when the line above does not say it", () => {
+    render(<ProposalCard {...card} audit={{ state: "unknown" }} />);
+    expect(screen.getByText("Second check could not run")).toBeTruthy();
+  });
+});

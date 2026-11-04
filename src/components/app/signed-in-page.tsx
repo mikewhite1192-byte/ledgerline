@@ -50,7 +50,7 @@ export function SignedInPage({
       signOut={<SignOutForm />}
       focus={focus}
     >
-      <div className="mx-auto grid w-full max-w-[960px] min-w-0 gap-6">{children}</div>
+      <div className="mx-auto grid w-full max-w-[960px] min-w-0 grid-cols-1 gap-6">{children}</div>
     </AppShell>
   );
 }

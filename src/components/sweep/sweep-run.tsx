@@ -20,7 +20,7 @@ import { codeToWords, recordNamer } from "@/lib/format/labels";
 import { formatCents } from "@/lib/format/money";
 import { hrefOrNull, recordHref } from "@/lib/records/href";
 import type { SweepItemView, SweepPage } from "@/lib/sweep/view";
-import { plainWhy, sweepOutcome } from "@/lib/sweep/words";
+import { namedDriver, plainWhy, sweepOutcome } from "@/lib/sweep/words";
 import { batchFor, type HeldBatch } from "./batch-id";
 import { useCarryOn } from "./carry-on";
 import { WeekChecks } from "./week-checks";
@@ -480,7 +480,9 @@ export function SweepRun({
             {people.map((i) => (
               <li key={i.id}>
                 <Card className="flex flex-wrap items-baseline justify-between gap-x-4 gap-y-1 px-4 py-3 sm:px-5">
-                  <span className="text-body text-foreground">{i.note ?? "Needs a look."}</span>
+                  <span className="text-body text-foreground">
+                    {i.note ? namedDriver(i.note, { code: i.driverCode, name: i.driverName }) : "Needs a look."}
+                  </span>
                   <RecordLinks item={i} />
                 </Card>
               </li>

@@ -150,12 +150,30 @@ function batchItems(scope: string | null, n: number | null): string {
   return plural(count, "item", "items");
 }
 
-function proposalWords(r: FeedRow, actor: string): { words: string; tag: string | null } | null {
+// A pay correction's money reads the way its card does ("Would add to the driver's pay"); every
+// other kind keeps out and in.
+const CORRECTION_DIRECTION: Readonly<Record<string, string>> = { out: "added to pay", in: "taken back from pay" };
+
+function directionWords(kind: string | null, direction: string): string {
+  return kind === "pay_correction" && Object.hasOwn(CORRECTION_DIRECTION, direction) ? CORRECTION_DIRECTION[direction] : direction;
+}
+
+// The proposal's title, with its driver's name when the title does not already carry it:
+// "Pay correction for Marcus Calloway".
+function titleWords(r: FeedRow): string {
   const title = r.title ?? "a proposal";
+  return r.driver !== null && !title.includes(r.driver) ? `${title} for ${r.driver}` : title;
+}
+
+function proposalWords(r: FeedRow, actor: string): { words: string; tag: string | null } | null {
+  const title = titleWords(r);
   const moving = r.direction === "out" || r.direction === "in";
   switch (r.event) {
     case "proposal_proposed": {
-      const sum = moving && r.cents !== null && r.cents > 0 ? `, ${formatCents(r.cents)} ${r.direction}` : "";
+      const sum =
+        moving && r.direction !== null && r.cents !== null && r.cents > 0
+          ? `, ${formatCents(r.cents)} ${directionWords(r.kind, r.direction)}`
+          : "";
       const tag =
         r.code === "ask"
           ? `Autopilot: asks a person${reasonWords(r.reason) ? ` (${reasonWords(r.reason)})` : ""}`
@@ -378,13 +396,13 @@ const PAID_WORDS: Readonly<Record<string, string>> = {
 function doneWords(r: FeedRow): string | null {
   const moving = r.direction === "out" || r.direction === "in";
   const sum = (cents: number | null) => (cents !== null && cents > 0 ? `, ${formatCents(cents)}` : "");
-  const title = r.title ?? "a card";
+  const title = r.title === null ? "a card" : titleWords(r);
   switch (r.event) {
     case "proposal_proposed":
       // A card's title starts with its own verb ("Approve weekly pay"), so the line does not add one.
       return r.title === null
         ? `Drafted a card for you to approve${moving ? sum(r.cents) : ""}.`
-        : `Drafted a card for you: ${r.title}${moving ? sum(r.cents) : ""}.`;
+        : `Drafted a card for you: ${title}${moving ? sum(r.cents) : ""}.`;
     case "proposal_decided":
       return r.actor === "autopilot" && r.code !== "rejected"
         ? `Approved within your limit: ${title}${moving ? sum(r.cents) : ""}.`

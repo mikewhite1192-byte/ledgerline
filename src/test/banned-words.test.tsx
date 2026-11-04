@@ -246,6 +246,8 @@ const fakeQ = {
     if (/FROM tms_connections/.test(sql)) return [{ system: "synthetic", faults: "{}" }];
     // The sample board's load page, with the driver's phone on: our own load's status.
     if (/^SELECT status FROM loads WHERE/.test(sql)) return [{ status: "in_transit" }];
+    // The live feed's newest pay check: none unless a variant sets one.
+    if (/FROM sweep_runs ORDER BY started_at DESC, id LIMIT 1/.test(sql)) return (state.fx.payCheck as unknown[]) ?? [];
     throw new Error(`unexpected read: ${sql.slice(0, 80)}`);
   },
 } as unknown as Queryable;
@@ -717,6 +719,7 @@ const feedRow = (minute: number, over: Partial<FeedRow>): FeedRow => ({
   cents: null,
   direction: null,
   title: null,
+  driver: null,
   kind: null,
   code: null,
   reason: null,
@@ -831,6 +834,8 @@ afterAll(() => {
 beforeEach(() => {
   state.fx = defaults();
   state.session = null;
+  // A visit's copy only in the variants that say so.
+  delete (SESSION as { visitTicketId?: string }).visitTicketId;
   // The pages are checked in the full shape; the simple variants turn its switch on.
   flags.simpleShape = { enabled: false };
   // The sign-in page is checked as it renders with a shared demo carrier.
@@ -1122,6 +1127,16 @@ const PAGES: PageCase[] = [
         shows: ["Nothing has happened with money yet.", "Has not checked the books yet."],
       },
       {
+        name: "a pay check running",
+        setup: () => {
+          state.fx.feed = { rows: [], next: null };
+          state.fx.feedHeader = { deskCheckedAt: null, paused: false };
+          state.fx.payCheck = [{ status: "running", finished_at: null }];
+        },
+        load: () => feedPage(),
+        shows: ["Checking every driver's pay now.", "Each fix it drafts shows here as it happens."],
+      },
+      {
         name: "an older page",
         setup: () => {
           state.fx.feed = { rows: FEED_ROWS.slice(10), next: null };
@@ -1197,6 +1212,7 @@ const PAGES: PageCase[] = [
           state.fx.invoices = [];
           state.fx.invoiceProposals = [];
           state.fx.settlementsView = { ...fx.SETTLEMENTS_VIEW, rows: [] };
+          state.fx.sweepHome = { ...fx.SWEEP_HOME, runs: fx.SWEEP_HOME.runs.map((r) => ({ ...r, counts: { ...r.counts, needs_person: 0 } })) };
         },
         load: async () => (await import("@/app/page")).default(sp()),
         shows: ["Nothing needs you right now.", "No paystubs built for"],
@@ -2129,7 +2145,7 @@ const PAGES: PageCase[] = [
   {
     file: "settlements/page.tsx",
     variants: [
-      { name: "week", load: async () => (await import("@/app/settlements/page")).default(sp()) },
+      { name: "week", load: async () => (await import("@/app/settlements/page")).default(sp()), shows: "Pay" },
       {
         name: "week, the simple shape",
         setup: simpleOn,
@@ -2197,6 +2213,18 @@ const PAGES: PageCase[] = [
     variants: [
       { name: "connected", load: async () => (await import("@/app/settings/accounting/page")).default(sp()) },
       { name: "not connected", setup: () => (state.fx.qbo = null), load: async () => (await import("@/app/settings/accounting/page")).default(sp()) },
+      {
+        name: "a visit's private copy",
+        setup: () => {
+          state.fx.qbo = null;
+          (SESSION as { visitTicketId?: string }).visitTicketId = "00000000-0000-4000-8000-0000000000aa";
+        },
+        load: async () => (await import("@/app/settings/accounting/page")).default(sp()),
+        shows: [
+          "Your private copy does not post to QuickBooks.",
+          "The demo carrier itself posts each money movement to a QuickBooks sandbox.",
+        ],
+      },
       ...["connected", "disconnected", "forbidden", "not_configured", "expired", "not_allowed", "declined", "disabled"].map((qbo) => ({
         name: `note ${qbo}`,
         load: async () => (await import("@/app/settings/accounting/page")).default(sp({ qbo })),
@@ -2389,6 +2417,15 @@ const PAGES: PageCase[] = [
     variants: [
       { name: "home", load: async () => (await import("@/app/sweep/page")).default(), shows: ["Pay check", "Past checks"] },
       { name: "simple, plain words", setup: plainOn, load: async () => (await import("@/app/sweep/page")).default(), shows: "Past checks (" },
+      {
+        name: "simple, no check yet",
+        setup: () => {
+          plainOn();
+          state.fx.sweepHome = { ...fx.SWEEP_HOME, runs: [] };
+        },
+        load: async () => (await import("@/app/sweep/page")).default(),
+        shows: "Fuel checksFill-ups that do not fit the truck, the route or the day.",
+      },
     ],
   },
   {
@@ -2503,7 +2540,12 @@ const PAGES: PageCase[] = [
     file: "voice-notes/page.tsx",
     variants: [
       { name: "list", load: async () => (await import("@/app/voice-notes/page")).default() },
-      { name: "empty", setup: () => (state.fx.voiceList = []), load: async () => (await import("@/app/voice-notes/page")).default() },
+      {
+        name: "empty",
+        setup: () => (state.fx.voiceList = []),
+        load: async () => (await import("@/app/voice-notes/page")).default(),
+        shows: "Add one above, or save a sample note and pick it above: ",
+      },
     ],
   },
   {

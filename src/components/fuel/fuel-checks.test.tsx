@@ -250,6 +250,6 @@ describe("FuelChecks", () => {
     cleanup();
     show(page([], null));
     expect(screen.getAllByText("No fuel check yet").length).toBeGreaterThan(0);
-    expect(screen.getByText("Click Check this week's fuel to look over this week's fill-ups.")).toBeTruthy();
+    expect(screen.getByText("Press Check this week's fuel to look over this week's fill-ups.")).toBeTruthy();
   });
 });

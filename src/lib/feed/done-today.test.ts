@@ -25,6 +25,7 @@ function row(key: string, at: string, over: Partial<FeedRow> = {}): FeedRow {
     cents: null,
     direction: null,
     title: null,
+    driver: null,
     kind: "document",
     code: null,
     reason: null,

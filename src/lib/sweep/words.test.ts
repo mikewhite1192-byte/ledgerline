@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { plainWhy, sweepOutcome } from "./words";
+import { namedDriver, plainWhy, sweepOutcome } from "./words";
 
 // The pay check's outcome line from fixed runs. Nothing reads the clock or a database.
 
@@ -87,5 +87,16 @@ describe("plainWhy", () => {
       "Marcus Calloway (BR-D17) was paid twice.",
     );
     expect(plainWhy("From 2026-12-28 to 2027-01-03.", { code: null, name: null })).toBe("From Dec 28, 2026 to Jan 3, 2027.");
+  });
+});
+
+describe("namedDriver", () => {
+  it("names the driver in a set-aside item's note, and leaves it when no name is on file", () => {
+    const note = "Advances for BR-D16 are $150.00 over the driver's limit.";
+    expect(namedDriver(note, { code: "BR-D16", name: "Andre Gutierrez" })).toBe(
+      "Advances for Andre Gutierrez are $150.00 over the driver's limit.",
+    );
+    expect(namedDriver(note, { code: "BR-D16", name: null })).toBe(note);
+    expect(namedDriver(note, { code: "BR-D1", name: "Dana Reyes" })).toBe(note);
   });
 });

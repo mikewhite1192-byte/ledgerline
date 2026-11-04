@@ -287,7 +287,7 @@ export function NotesBoard({
   ];
 
   return (
-    <div className="grid gap-6">
+    <div className="grid min-w-0 grid-cols-1 gap-6">
       <div className="flex flex-wrap items-center justify-between gap-3">
         <p className="max-w-[60ch] text-small text-foreground-2">
           On each question the agent reads the notes about the customers and drivers in that chat, plus

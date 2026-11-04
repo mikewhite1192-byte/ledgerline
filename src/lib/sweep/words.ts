@@ -57,12 +57,17 @@ export function sweepOutcome(run: Run, where: "home" | "page"): string {
 // the name already in the text, leaves the code as written.
 const SAME_YEAR_RANGE = /\b([A-Z][a-z]{2} \d{1,2}), (\d{4}) to ([A-Z][a-z]{2} \d{1,2}), \2\b/g;
 
-export function plainWhy(text: string, driver: { code: string | null; name: string | null }): string {
-  let out = plainAnswer(text).replace(SAME_YEAR_RANGE, "$1 to $3, $2");
-  const { code, name } = driver;
-  if (code && name && !out.includes(name)) {
-    // Each run of letters, digits and dashes is one token, compared whole against the code.
-    out = out.replace(/[\w-]+/g, (token) => (token === code ? name : token));
-  }
-  return out;
+type Driver = { code: string | null; name: string | null };
+
+export function plainWhy(text: string, driver: Driver): string {
+  return namedDriver(plainAnswer(text).replace(SAME_YEAR_RANGE, "$1 to $3, $2"), driver);
+}
+
+// The item's driver code, as a whole token, replaced by the name already on the item ("Advances for
+// Marcus Calloway are $150.00 over the driver's limit."). No name, or the name already there,
+// leaves the text as written.
+export function namedDriver(text: string, { code, name }: Driver): string {
+  if (!code || !name || text.includes(name)) return text;
+  // Each run of letters, digits and dashes is one token, compared whole against the code.
+  return text.replace(/[\w-]+/g, (token) => (token === code ? name : token));
 }

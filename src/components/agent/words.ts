@@ -23,6 +23,9 @@ export const ASK_WORDS = {
   digestReady: "Morning digest ready",
   digestRead: "Read the morning digest",
   digestClose: "Close the morning digest",
+  // On a phone a question waits folded the same way, so its bubble never covers the page's text.
+  askReady: "A question is waiting",
+  askRead: "Read the agent's question",
 } as const;
 
 // "2 more waiting", under the bubble while others show too.

@@ -16,6 +16,7 @@ import {
   escalatedRow,
   invoiceCardsRow,
   pastDueRow,
+  payCheckRow,
   paystubsRow,
   readNeedsYou,
   type BooksStuckRow,
@@ -315,5 +316,33 @@ describe("Home's books row (D-104)", () => {
     expect(asked[0].sql).toContain("channel = 'accounting'");
     expect(asked[0].sql).toContain("kind = ANY(CAST($4 AS text[]))");
     expect(asked[0].sql).toContain("DISTINCT ON (kind, subject_id)");
+  });
+});
+
+describe("payCheckRow", () => {
+  const run = (status: "running" | "done" | "failed", needs: number | undefined) => ({
+    id: "0f0e0d0c-0b0a-4908-8706-050403020100",
+    status,
+    counts: needs === undefined ? {} : { needs_person: needs },
+  });
+
+  it("lists the last finished pay check's items that need the owner, linked to the check", () => {
+    expect(payCheckRow(run("done", 3) as never)).toEqual({
+      key: "pay_check",
+      count: 3,
+      atLeast: false,
+      what: "pay check items need you",
+      amounts: [],
+      href: "/sweep/0f0e0d0c-0b0a-4908-8706-050403020100",
+      linkLabel: "Open the pay check",
+    });
+    expect(payCheckRow(run("done", 1) as never)?.what).toBe("pay check item needs you");
+  });
+
+  it("adds nothing for no check, a running one, or one with nothing for the owner", () => {
+    expect(payCheckRow(null)).toBeNull();
+    expect(payCheckRow(run("running", 3) as never)).toBeNull();
+    expect(payCheckRow(run("done", 0) as never)).toBeNull();
+    expect(payCheckRow(run("done", undefined) as never)).toBeNull();
   });
 });

@@ -48,6 +48,9 @@ export type FeedRow = {
   cents: number | null;
   direction: string | null;
   title: string | null;
+  // The driver a proposal is about (a pay correction names the driver as its subject), first and
+  // last name; null for anything else.
+  driver: string | null;
   // The proposal's, money action's, rule's or desk source's kind, or the batch's scope.
   kind: string | null;
   // The event's code word: a desk category, an autopilot mode, an audit verdict, approved or
@@ -88,6 +91,7 @@ const COLUMNS = [
   "cents",
   "direction",
   "title",
+  "driver",
   "kind",
   "code",
   "reason",
@@ -128,6 +132,10 @@ function arm(from: string, where: string, set: Partial<Record<Column, string>>):
 
 const text = (expr: string) => `CAST(${expr} AS text)`;
 
+// The proposal's driver by name, only when the proposal's subject is a driver row of this carrier.
+const DRIVER_OF_PROPOSAL = `(SELECT dr.first_name || ' ' || dr.last_name FROM drivers dr
+    WHERE p.subject_table = 'drivers' AND dr.tenant_id = current_tenant_id() AND dr.id = p.subject_id)`;
+
 const ARMS = [
   // The desk: what it picked up, finished, could not finish or skipped, and a wake that finished
   // something. wake, seen and carried lines are left out, and so is a wake that found nothing.
@@ -157,6 +165,7 @@ const ARMS = [
     cents: text("p.amount_cents"),
     direction: "p.direction",
     title: "p.title",
+    driver: DRIVER_OF_PROPOSAL,
     kind: "p.kind",
     code: "CASE WHEN p.autopilot_decision->>'mode' IN ('ask', 'off') THEN p.autopilot_decision->>'mode' END",
     reason: "CASE WHEN p.autopilot_decision->>'mode' IN ('ask', 'off') THEN p.autopilot_decision->>'reason' END",
@@ -170,6 +179,7 @@ const ARMS = [
     event: "'proposal_audited'",
     actor: "'agent'",
     title: "p.title",
+    driver: DRIVER_OF_PROPOSAL,
     kind: "p.kind",
     code: "p.auditor_verdict",
     record_table: "p.subject_table",
@@ -188,6 +198,7 @@ const ARMS = [
       cents: text("p.amount_cents"),
       direction: "p.direction",
       title: "p.title",
+      driver: DRIVER_OF_PROPOSAL,
       kind: "p.kind",
       code: "CASE WHEN p.status = 'rejected' THEN 'rejected' ELSE 'approved' END",
       limit_cents: "CASE WHEN p.autopilot_decision->>'mode' = 'auto' THEN p.autopilot_decision->>'maxCents' END",
@@ -279,6 +290,12 @@ const FEED_SQL = `SELECT ${ts("f.at")} AS at, ${COLUMNS.filter((c) => c !== "at"
 type Raw = Record<Column, unknown>;
 
 const textOrNull = (v: unknown): string | null => (typeof v === "string" ? v : null);
+// A driver's name as stored, trimmed, at most 80 characters; anything else reads as no name.
+function nameOrNull(v: unknown): string | null {
+  if (typeof v !== "string") return null;
+  const name = v.trim();
+  return name.length > 0 && name.length <= 80 ? name : null;
+}
 const codeOrNull = (v: unknown): string | null => (typeof v === "string" && CODE.test(v) ? v : null);
 
 // Whole, safe, not negative, or null when the row has none. Anything else is a row that does not
@@ -311,6 +328,7 @@ export function feedRowOf(r: Partial<Raw>): FeedRow {
     cents: wholeOrNull(r.cents),
     direction: codeOrNull(r.direction),
     title: textOrNull(r.title),
+    driver: nameOrNull(r.driver),
     kind: codeOrNull(r.kind),
     code: codeOrNull(r.code),
     reason: codeOrNull(r.reason),

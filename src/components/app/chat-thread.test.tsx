@@ -229,3 +229,27 @@ describe("collapseSteps", () => {
     ).toEqual([{ id: "1", label: "Thinking it through", state: "failed" }]);
   });
 });
+
+describe("ChatThread scrolling in the agent card", () => {
+  it("scrolls to the top of the newest answer when it lands", () => {
+    const asked: ChatMessage[] = [
+      { id: "q9", role: "user", parts: [{ kind: "text", text: "Who is owed the most?" }] },
+      { id: "a9", role: "agent", parts: [{ kind: "steps", steps: [{ id: "1", label: "Read 3 paystubs", state: "running" }] }] },
+    ];
+    const { rerender } = render(<ChatThread compact messages={asked} composer={{}} />);
+    const box = document.querySelector('[aria-label="Messages"]') as HTMLElement;
+    let top = 40;
+    Object.defineProperty(box, "scrollTop", { configurable: true, get: () => top, set: (v: number) => (top = v) });
+    box.getBoundingClientRect = () => ({ top: 100 }) as DOMRect;
+    // The answer's row keeps its place in the list as its text arrives.
+    const newest = screen.getByRole("list", { name: "Conversation" }).lastElementChild as HTMLElement;
+    newest.getBoundingClientRect = () => ({ top: 500 }) as DOMRect;
+    const answered: ChatMessage[] = [
+      asked[0],
+      { ...asked[1], parts: [...asked[1].parts, { kind: "text", text: "Dana Reyes is owed $1,200.00." }] },
+    ];
+    rerender(<ChatThread compact messages={answered} composer={{}} />);
+    // 40 already scrolled, plus the 400 the answer sits below the box's top, less 16 of padding.
+    expect(top).toBe(424);
+  });
+});

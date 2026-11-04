@@ -7,7 +7,7 @@ import { EmptyState, FeatureOff } from "@/components/app/states";
 import { FeedList } from "@/components/feed/feed-list";
 import { LiveRefresh } from "@/components/feed/live-refresh";
 import { Card } from "@/components/ui/card";
-import { DbError } from "@/lib/db";
+import { DbError, type Queryable } from "@/lib/db";
 import { formatInstant } from "@/lib/format/dates";
 import { cursorParam, parseCursor, readFeed, readFeedHeader, type FeedCursor, type FeedHeader } from "@/lib/feed/read";
 import { feedLines, type FeedLine } from "@/lib/feed/words";
@@ -16,10 +16,32 @@ import { readShell, type ShellTenant } from "@/lib/tenant/shell";
 
 export const dynamic = "force-dynamic";
 
-type Feed = { lines: FeedLine[]; next: FeedCursor | null; header: FeedHeader };
+// The newest pay check: running, or when it finished. null when none has run or the sweep is off.
+type PayCheck = { running: boolean; finishedAt: string | null };
+type Feed = { lines: FeedLine[]; next: FeedCursor | null; header: FeedHeader; payCheck: PayCheck | null };
 type View = { shell: ShellTenant; feed: Feed | null };
 
 const LINK = "text-small text-link underline-offset-4 hover:underline";
+
+async function readPayCheck(q: Queryable): Promise<PayCheck | null> {
+  if (!flags.sweepEnabled) return null;
+  const rows = await q.query<{ status: string; finished_at: string | null }>(
+    `SELECT status, to_char(finished_at AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"') AS finished_at
+       FROM sweep_runs ORDER BY started_at DESC, id LIMIT 1`,
+  );
+  const run = rows[0];
+  if (!run) return null;
+  return { running: run.status === "running", finishedAt: run.status === "done" ? run.finished_at : null };
+}
+
+// The line over the feed: when the desk last checked the books, else what the pay check is doing
+// or when it finished, so a page open during a pay check never says nothing has been checked.
+function checkedLine(feed: Feed, timeZone: string): string {
+  if (feed.header.deskCheckedAt) return `Last checked the books at ${formatInstant(feed.header.deskCheckedAt, timeZone)}.`;
+  if (feed.payCheck?.running) return "Checking every driver's pay now.";
+  if (feed.payCheck?.finishedAt) return `Checked every driver's pay at ${formatInstant(feed.payCheck.finishedAt, timeZone)}.`;
+  return "Has not checked the books yet.";
+}
 
 // The live feed: every step the agent, the desk, the autopilot and people took with money, newest
 // first, read from the records those steps already leave. Read only: nothing here writes. The
@@ -39,7 +61,8 @@ export default async function ActivityPage({
       if (!flags.activityFeed.enabled) return { shell, feed: null };
       const page = await readFeed(q, { limit: flags.activityFeed.pageSize, before });
       const header = await readFeedHeader(q, Date.now());
-      return { shell, feed: { lines: feedLines(page.rows, shell.timezone), next: page.next, header } };
+      const payCheck = await readPayCheck(q);
+      return { shell, feed: { lines: feedLines(page.rows, shell.timezone), next: page.next, header, payCheck } };
     });
   } catch (err) {
     if (err instanceof ForbiddenError) problem = "forbidden";
@@ -65,17 +88,27 @@ export default async function ActivityPage({
       ) : (
         <>
           <p className="text-small text-foreground-2">
-            {feed.header.deskCheckedAt
-              ? `Last checked the books at ${formatInstant(feed.header.deskCheckedAt, view.shell.timezone)}.`
-              : "Has not checked the books yet."}
+            {checkedLine(feed, view.shell.timezone)}
             {feed.header.paused ? " The autopilot is paused." : ""}
           </p>
           <Card className="px-4 sm:px-5">
             {feed.lines.length === 0 ? (
               <EmptyState
                 icon={<Activity aria-hidden />}
-                title={first ? "Nothing has happened with money yet." : "No older lines."}
-                body={first ? "A step the agent, the desk, the autopilot or a person takes shows here as it happens." : undefined}
+                title={
+                  !first
+                    ? "No older lines."
+                    : feed.payCheck?.running
+                      ? "Checking every driver's pay now."
+                      : "Nothing has happened with money yet."
+                }
+                body={
+                  !first
+                    ? undefined
+                    : feed.payCheck?.running
+                      ? "Each fix it drafts shows here as it happens."
+                      : "A step the agent, the desk, the autopilot or a person takes shows here as it happens."
+                }
               />
             ) : (
               <FeedList lines={feed.lines} markNew={first} />

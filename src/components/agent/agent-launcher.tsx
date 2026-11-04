@@ -144,6 +144,10 @@ export function AgentLauncher({
   // The morning digest the person unfolded; any other digest shows folded beside the button.
   const [readDigest, setReadDigest] = useState<string | null>(null);
   const folded = current !== null && current.kind === "digest" && readDigest !== current.id;
+  // On a phone (below sm) any other question also waits as a pill until opened, so the bubble never
+  // covers the page's text there; from sm up it shows open as before.
+  const [readAsk, setReadAsk] = useState<string | null>(null);
+  const phoneFolded = current !== null && !folded && readAsk !== current.id;
   // The unfolded digest takes the cursor when the pill's read button opened it, because that
   // button leaves with the pill and the cursor would fall back to the page.
   const digestBubble = useRef<HTMLElement>(null);
@@ -152,7 +156,7 @@ export function AgentLauncher({
     if (folded || !focusDigest.current || !digestBubble.current) return;
     focusDigest.current = false;
     digestBubble.current.focus();
-  }, [folded, readDigest]);
+  }, [folded, readDigest, readAsk]);
 
   // "New question from the agent", once per question, as it first shows in the bubble.
   const [announce, setAnnounce] = useState("");
@@ -222,21 +226,41 @@ export function AgentLauncher({
             </button>
           </section>
         ) : current ? (
-          <section
-            ref={digestBubble}
-            tabIndex={current.kind === "digest" ? -1 : undefined}
-            aria-label={ASK_WORDS.region}
-            className="fixed right-4 bottom-[4.75rem] left-4 z-30 motion-safe:animate-rise sm:right-6 sm:bottom-[5.25rem] sm:left-auto sm:w-[360px] print:hidden"
-          >
-            <AskCard
-              ask={current}
-              state={asks.control.states[current.id]}
-              control={asks.control}
-              more={moreWaiting(asks.more)}
-              onClose={() => asks.dismiss(current.id)}
-              className="shadow-float"
-            />
-          </section>
+          <>
+            {phoneFolded ? (
+              <div className="fixed right-[4.5rem] bottom-[1.375rem] z-30 flex max-w-[calc(100vw-5.5rem)] items-center rounded-full border border-border bg-card px-3 py-1 shadow-float motion-safe:animate-rise sm:hidden print:hidden">
+                <button
+                  type="button"
+                  aria-label={ASK_WORDS.askRead}
+                  onClick={() => {
+                    focusDigest.current = true;
+                    setReadAsk(current.id);
+                  }}
+                  className="min-h-7 min-w-0 cursor-pointer truncate text-small font-medium text-foreground underline-offset-4 hover:underline"
+                >
+                  {ASK_WORDS.askReady}
+                </button>
+              </div>
+            ) : null}
+            <section
+              ref={digestBubble}
+              tabIndex={current.kind === "digest" || readAsk === current.id ? -1 : undefined}
+              aria-label={ASK_WORDS.region}
+              className={cn(
+                "fixed right-4 bottom-[4.75rem] left-4 z-30 motion-safe:animate-rise sm:right-6 sm:bottom-[5.25rem] sm:left-auto sm:w-[360px] print:hidden",
+                phoneFolded && "max-sm:hidden",
+              )}
+            >
+              <AskCard
+                ask={current}
+                state={asks.control.states[current.id]}
+                control={asks.control}
+                more={moreWaiting(asks.more)}
+                onClose={() => asks.dismiss(current.id)}
+                className="shadow-float"
+              />
+            </section>
+          </>
         ) : null}
         <button
           ref={button}

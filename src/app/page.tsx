@@ -46,7 +46,7 @@ import { formatInstant } from "@/lib/format/dates";
 import { owedOf, paydayOf, type Owed, type Payday } from "@/lib/home/cards";
 import { loaded, type Loaded } from "@/lib/home/loaded";
 import { readMoneyFlow, type FlowWeek } from "@/lib/home/money-flow";
-import { cardsRow, readNeedsYou, type NeedsYouRow, type NeedsYouView } from "@/lib/home/needs-you";
+import { cardsRow, payCheckRow, readNeedsYou, type NeedsYouRow, type NeedsYouView } from "@/lib/home/needs-you";
 import { readTodayIntake, type TodayIntake } from "@/lib/home/today";
 import { readInvoiceList } from "@/lib/invoices/views";
 import { readFeed } from "@/lib/feed/read";
@@ -218,8 +218,10 @@ export default async function Home({
   // "Needs you" never reads as "nothing is waiting" when its rows or the agent's turns were not read.
   const rows = needsRows ?? [];
   const cardsAsk = flags.agentEnabled ? cardsRow(agentTurns) : null;
+  // The last pay check's items set aside for a person, from the run already read for the Today card.
+  const payCheck = lastSweep?.ok === true ? payCheckRow(lastSweep.value) : null;
   const needsYou: NeedsYouView = {
-    rows: cardsAsk ? [cardsAsk, ...rows] : rows,
+    rows: [...(cardsAsk ? [cardsAsk] : []), ...rows, ...(payCheck ? [payCheck] : [])],
     unread: turns.unread || needsRows === null,
   };
 
@@ -435,6 +437,10 @@ type Cards = {
 // The live feed card's newest lines.
 const FEED_CARD_LINES = 3;
 
+// The simple Home's "What I did today" lines: enough that a pay check's drafted cards all show
+// under its own "drafted fixes for N" line (the demo week drafts 5), with "See everything" for more.
+const DONE_TODAY_LINES = 8;
+
 // null is a card whose page is switched off, so it is not shown at all. The simple Home reads only
 // what came in and the feed.
 async function readCards(today: LocalDate, timezone: string, simple: boolean): Promise<Cards> {
@@ -457,7 +463,7 @@ async function readCards(today: LocalDate, timezone: string, simple: boolean): P
       : null,
     flags.activityFeed.enabled && simple
       ? loaded("done today", () =>
-          withRequestTenant((q) => readDoneToday(q, timezone, today)),
+          withRequestTenant((q) => readDoneToday(q, timezone, today, DONE_TODAY_LINES)),
         )
       : null,
   ]);

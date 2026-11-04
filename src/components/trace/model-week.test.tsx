@@ -44,7 +44,7 @@ describe("ModelWeekView", () => {
     expect(screen.queryByText("No model calls this week")).toBeNull();
     const spark = screen.getByRole("heading", { name: "Muse Spark" }).closest("div.min-w-0") as HTMLElement;
     expect(within(spark).getByText("13")).toBeTruthy();
-    expect(within(spark).getByText("8.4 cents")).toBeTruthy();
+    expect(within(spark).getByText("$0.09")).toBeTruthy();
     expect(within(spark).getByText("1.8 s")).toBeTruthy();
     expect(within(spark).getByText("Held for 1 call not settled")).toBeTruthy();
     expect(within(spark).getByText("Muse Spark 1.3")).toBeTruthy();
@@ -83,11 +83,11 @@ describe("ModelWeekView", () => {
     render(<ModelWeekView week={week} />);
     const spark = screen.getByRole("heading", { name: "Muse Spark" }).closest("div.min-w-0") as HTMLElement;
     expect(within(spark).getByText("From the prompt cache")).toBeTruthy();
-    expect(within(spark).getByText("71% of input tokens, saved 0.7 cents at list price")).toBeTruthy();
+    expect(within(spark).getByText("71% of input tokens, saved under $0.01 at list price")).toBeTruthy();
     const wonder = screen.getByRole("heading", { name: "Muse Wonder" }).closest("div.min-w-0") as HTMLElement;
     expect(within(wonder).getByText("none")).toBeTruthy();
-    // 7,150 of 10,900 is 65.6%, shown as 65%; 0.7865 cents saved, shown as 0.7 cents.
-    expect(screen.getByText("Prompt cache: 65% of input tokens were cached this week, saving 0.7 cents at list price.")).toBeTruthy();
+    // 7,150 of 10,900 is 65.6%, shown as 65%; 0.7865 cents saved, under a cent, rounded down.
+    expect(screen.getByText("Prompt cache: 65% of input tokens were cached this week, saving under $0.01 at list price.")).toBeTruthy();
   });
 
   it("leaves out the cache lines when no call this week was metered in tokens", () => {

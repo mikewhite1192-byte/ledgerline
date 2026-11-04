@@ -48,6 +48,7 @@ afterEach(() => {
   flags.invoicesEnabled = savedInvoices;
   flags.invoiceReviewEnabled = savedReview;
   mocks.readReviewQueue.mockReset();
+  delete SESSION.visitTicketId;
   cleanup();
 });
 
@@ -93,5 +94,17 @@ describe("/invoices tabs", () => {
     cleanup();
     await show({ tab: "nonsense" });
     expect(tabs()[0]).toEqual(["Invoices", "page"]);
+  });
+
+  it("says an invoice not posted is not posted in a visit's private copy, which never posts", async () => {
+    flags.invoicesEnabled = true;
+    const unposted = INVOICES.filter((r) => !r.posted).length;
+    await show();
+    expect(screen.getAllByText("Not posted")).toHaveLength(unposted);
+    cleanup();
+    SESSION.visitTicketId = "00000000-0000-4000-8000-0000000000aa";
+    await show();
+    expect(screen.queryAllByText("Not posted")).toHaveLength(0);
+    expect(screen.getAllByText("Not posted in your copy")).toHaveLength(unposted);
   });
 });

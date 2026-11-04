@@ -7,6 +7,7 @@ import {
   formatCachedShare,
   formatCallCost,
   formatSaved,
+  formatSavedDollars,
   formatLatency,
   formatSpend,
   modelName,
@@ -517,3 +518,14 @@ describe("traceModels", () => {
   });
 });
 
+
+describe("formatSavedDollars", () => {
+  it("shows a saving in dollars, rounded down to the cent", () => {
+    expect(formatSavedDollars(null)).toBe("not known");
+    expect(formatSavedDollars(0)).toBe("nothing");
+    expect(formatSavedDollars(786_500_000)).toBe("under $0.01");
+    expect(formatSavedDollars(3_900_000_000)).toBe("$0.03");
+    expect(formatSavedDollars(84_300_000_000)).toBe("$0.84");
+    expect(formatSavedDollars(124_000_000_000)).toBe("$1.24");
+  });
+});

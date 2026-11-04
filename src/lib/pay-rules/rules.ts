@@ -142,7 +142,7 @@ export const RULES: Readonly<Record<RuleKey, RuleSpec>> = {
     label: "Share of pay an advance may take",
     ...BPS,
     affects: "advances",
-    help: "An advance may be at most this share of what the driver has earned and not yet been paid. Shown as a percentage (basis points: 100 is 1%).",
+    help: "An advance may be at most this share of what the driver has earned and not yet been paid.",
   }),
   advance_min_cents: spec({
     key: "advance_min_cents",
@@ -158,7 +158,7 @@ export const RULES: Readonly<Record<RuleKey, RuleSpec>> = {
     label: "Empty miles paid",
     ...BPS,
     affects: "settlement",
-    help: "The share of empty miles (driving with no load) paid to per-mile drivers. Shown as a percentage (basis points: 100 is 1%).",
+    help: "The share of empty miles (driving with no load) paid to per-mile drivers.",
   }),
   accessorial_driver_share_bps: spec({
     key: "accessorial_driver_share_bps",
@@ -166,7 +166,7 @@ export const RULES: Readonly<Record<RuleKey, RuleSpec>> = {
     label: "Drivers' share of extra charges",
     ...BPS,
     affects: "settlement",
-    help: "Extra charges are charges on a load beyond the haul itself, like detention, layover or an extra stop. This is the share paid to the driver, as a percentage (basis points: 100 is 1%).",
+    help: "Extra charges are charges on a load beyond the haul itself, like detention, layover or an extra stop. This is the share paid to the driver.",
   }),
   percent_base: spec({
     key: "percent_base",

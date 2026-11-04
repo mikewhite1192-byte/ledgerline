@@ -185,6 +185,18 @@ export function ChatThread({
     const el = scroller.current;
     if (el && messages.length > 0) el.scrollTop = el.scrollHeight;
   }, [messages.length]);
+  // When the newest answer lands (its message gains a part, the count unchanged), the card scrolls
+  // to that answer's top, so it reads from its first line.
+  const last = messages.at(-1);
+  const answerKey = last?.role === "agent" ? `${last.id}:${last.parts.map((p) => p.kind).join(",")}` : null;
+  useEffect(() => {
+    const el = scroller.current;
+    if (!el || answerKey === null) return;
+    const newest = el.querySelector('ol[aria-label="Conversation"]')?.lastElementChild;
+    if (!(newest instanceof HTMLElement)) return;
+    const below = newest.getBoundingClientRect().top - el.getBoundingClientRect().top;
+    el.scrollTop = Math.max(0, el.scrollTop + below - 16);
+  }, [answerKey]);
   // The card has its own h2 ("Agent"), so there the title sits one level under it.
   const Title = compact ? "h3" : "h2";
   const thread =
