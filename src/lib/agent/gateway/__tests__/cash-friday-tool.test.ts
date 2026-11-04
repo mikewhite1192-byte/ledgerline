@@ -6,7 +6,8 @@ import { TEST_SHORT_CENTS } from "../../../seed/test-short-friday.test-util";
 import { CASH_PROMPT, CHECKLIST_RULE, OPERATOR_PROMPT, operatorPrompt } from "../../policy";
 import { callTool, MAX_RESULT_CHARS } from "../index";
 import { toolsFor } from "../registry";
-import { CASH_LINES_MAX } from "../tools/read/get-cash-friday";
+import { centsIn, maskFigures } from "../../operator/figures";
+import { CASH_LINES_MAX, getCashFriday } from "../tools/read/get-cash-friday";
 import type { GatewayContext } from "../types";
 import { context, fixedClock, type Handler } from "./fake-db";
 import { PLAN_ANCHOR, planDb, shortFridayPlan } from "./plan-db";
@@ -32,6 +33,9 @@ const stored: Handler = (sql) => {
 };
 
 const call = { id: "call-1", name: "get_cash_friday", argumentsJson: "{}" };
+
+const dollars = (cents: number) =>
+  `$${Math.trunc(Math.abs(cents) / 100).toLocaleString("en-US")}.${String(Math.abs(cents) % 100).padStart(2, "0")}`;
 
 const shipped = structuredClone(flags);
 
@@ -64,6 +68,13 @@ describe("get_cash_friday", () => {
     expect(r.cashByPayDayCents).toBe(want.cashOnHandCents + want.expectedReceiptsCents);
     expect(r.dueByPayDayCents).toBe(r.figures.payRunCents + r.figures.fuelLoadsCents + want.vendorBillsDueCents);
     expect((r.cashByPayDayCents as number) - (r.dueByPayDayCents as number)).toBe(want.gapCents);
+    // What is due besides the pay run, so "the pay run plus X" quotes X: an answer quoting it and
+    // each side stays verified, and the difference the model would work out alone is withheld.
+    expect(r.fuelAndBillsDueCents).toBe(r.figures.fuelLoadsCents + want.vendorBillsDueCents);
+    const allowed = centsIn(out.result);
+    const answer = `Against a ${dollars(want.payRunCents)} pay run plus ${dollars(r.fuelAndBillsDueCents as number)} in fuel loads and bills due.`;
+    expect(maskFigures(answer, allowed)).toEqual({ text: answer, masked: 0 });
+    expect(getCashFriday.description).toContain("never add, subtract or round figures yourself");
     const options = r.options as { kind: string; billRef?: string }[];
     expect(options.map((o) => o.kind).sort()).toEqual([
       "bill_defer",
@@ -72,6 +83,11 @@ describe("get_cash_friday", () => {
       "factoring_request",
     ]);
     expect(options.find((o) => o.kind === "bill_defer")?.billRef).toBe(want.deferBillRef);
+    // Each option's own engine figures, under Cents names the answer's check reads.
+    for (const o of options as Record<string, unknown>[]) {
+      if (o.kind === "factoring_request") expect(o).toEqual(expect.objectContaining({ balanceCents: expect.any(Number), advanceCents: expect.any(Number) }));
+      if (o.kind === "collections_chase") expect(typeof o.newCashCents).toBe("number");
+    }
     expect(r.latestCheckId).toBe(CHECK);
     expect(r.openCards).toEqual([{ proposalId: CARD, kind: "bill_defer", status: "proposed" }]);
     expect(r.rows.length).toBeLessThanOrEqual(CASH_LINES_MAX);

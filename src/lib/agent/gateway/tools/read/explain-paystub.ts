@@ -1,7 +1,7 @@
 import { z } from "zod";
 import { flags } from "../../../../../config/flags";
 import { readRowsWhereId, readSettlementInput } from "../../../../data/read";
-import { settleDriver } from "../../../../rules-engine";
+import { LINE_KINDS, settleDriver, sum, type LineKind } from "../../../../rules-engine";
 import { findContradictions, readSourceFacts } from "../../../../settlements/contradiction";
 import { readStoredLines } from "../../../../settlements/stored";
 import { nameOf } from "../../../../settlements/list";
@@ -10,6 +10,32 @@ import { localDateOf } from "../../../../time/local-date";
 import { defineTool } from "../../types";
 import { idField } from "../../validate";
 import { OPERATOR } from "../shared";
+
+// Each kind's lines added up here in integer cents, signed as the lines are, with the number of
+// loads, so an answer quotes "three loads for $X" instead of adding the lines itself. A kind with
+// no lines has no key.
+const SUBTOTAL_KEYS: Record<LineKind, string> = {
+  load_pay: "loadPayCents",
+  accessorial_pay: "accessorialPayCents",
+  reimbursement: "reimbursementsCents",
+  fuel: "fuelCents",
+  other_deduction: "otherDeductionsCents",
+  carried_shortfall: "carriedShortfallCents",
+  lease: "leaseCents",
+  insurance: "insuranceCents",
+  escrow: "escrowCents",
+  advance_recovery: "advanceRecoveryCents",
+  deficit_recovery: "deficitRecoveryCents",
+};
+
+export function lineSubtotals(rows: readonly { kind: string; amountCents: number }[]): Record<string, number> {
+  const out: Record<string, number> = { loadCount: rows.filter((r) => r.kind === "load_pay").length };
+  for (const kind of LINE_KINDS) {
+    const lines = rows.filter((r) => r.kind === kind);
+    if (lines.length > 0) out[SUBTOTAL_KEYS[kind]] = sum(lines.map((r) => r.amountCents));
+  }
+  return out;
+}
 
 export const explainPaystub = defineTool({
   name: "explain_paystub",
@@ -20,8 +46,11 @@ export const explainPaystub = defineTool({
     "paystub). Earnings are " +
     "positive and deductions negative, in integer cents, each with the records it came from. A " +
     "note insurance_exempt means the driver carries their own insurance, so no daily insurance " +
-    "line applies; parkedReason says why a stored paystub no longer matches its records. A stored " +
-    "line with namedByPerson true was typed by staff and cites one record in sourceRef; " +
+    "line applies. subtotals adds up every line of each kind, shown or not (loadPayCents over loadCount loads, " +
+    "reimbursementsCents, accessorialPayCents and each deduction kind, deductions negative): quote " +
+    "those for a kind's total and never add lines yourself. parkedReason says why a stored " +
+    "paystub no longer matches its records. A stored line with namedByPerson true was typed by " +
+    "staff and cites one record in sourceRef; " +
     "contradictions lists each line that does not match the record it cites, as the approval check " +
     "would find it now; null means it was not checked, never that there are none. When present, " +
     "stub on a paid stub carries a one-line summary written from the stored totals, to read to " +
@@ -88,6 +117,18 @@ export const explainPaystub = defineTool({
           sent: sent ? { at: sent.at, byRole: sent.byRole } : null,
         };
       }
+      const rows = [...lines]
+        .sort((x, y) => x.seq - y.seq)
+        .map((l) => ({
+          seq: l.seq,
+          kind: l.kind,
+          label: l.label,
+          amountCents: l.amount_cents,
+          sources: l.sources,
+          // Who typed it stays out: only that a person did, and the record it cites.
+          sourceRef: l.source_ref,
+          namedByPerson: l.entered_by !== null,
+        }));
       return {
         result: {
           driverId: a.driverId,
@@ -103,22 +144,19 @@ export const explainPaystub = defineTool({
           notes: exemptNotes,
           contradictions,
           ...(stubOn ? { stub } : {}),
-          rows: [...lines]
-            .sort((x, y) => x.seq - y.seq)
-            .map((l) => ({
-              seq: l.seq,
-              kind: l.kind,
-              label: l.label,
-              amountCents: l.amount_cents,
-              sources: l.sources,
-              // Who typed it stays out: only that a person did, and the record it cites.
-              sourceRef: l.source_ref,
-              namedByPerson: l.entered_by !== null,
-            })),
+          subtotals: lineSubtotals(rows),
+          rows,
         },
       };
     }
     const result = settleDriver(await readSettlementInput(q, a.driverId, a.periodId));
+    const rows = result.lines.map((l) => ({
+      seq: l.seq,
+      kind: l.kind,
+      label: l.label,
+      amountCents: l.amountCents,
+      sources: l.sources,
+    }));
     return {
       result: {
         driverId: a.driverId,
@@ -142,13 +180,8 @@ export const explainPaystub = defineTool({
           })),
           ...exemptNotes,
         ],
-        rows: result.lines.map((l) => ({
-          seq: l.seq,
-          kind: l.kind,
-          label: l.label,
-          amountCents: l.amountCents,
-          sources: l.sources,
-        })),
+        subtotals: lineSubtotals(rows),
+        rows,
       },
     };
   },

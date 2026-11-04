@@ -804,6 +804,43 @@ describe("runTurn with a checklist", () => {
     expect(h.finished()?.text).toBe(out.text);
   });
 
+  it("counts the cards a stopped answer drafted, once each, and never says nothing was done beside them", async () => {
+    const draft = (amountCents: number) =>
+      ({ ...ADVANCE_DRAFT, amountCents, args: { driverId: DRIVER, amountCents } }) as unknown as Draft;
+    const propose = (id: string, amountCents: number) => call(id, "propose_advance", { amountCents });
+    const gw = (c: Call): Outcome => {
+      if (c.name === "set_checklist") return listOutcome(c);
+      if (c.name !== "propose_advance") return allowed(c.name, {});
+      const { amountCents } = JSON.parse(c.argumentsJson) as { amountCents: number };
+      return allowed("propose_advance", { amountCents }, { tier: "propose", draft: draft(amountCents), refs: [{ table: "drivers", id: TYPED }] });
+    };
+    const h = harness(
+      [
+        result({
+          toolCalls: [
+            list("l1", [{ text: "Propose the first advance", state: "doing" }, { text: "Propose the rest" }]),
+            propose("p1", 10_000),
+            propose("p2", 11_000),
+            propose("p3", 12_000),
+          ],
+        }),
+        // The first card again is the same card, so it is not counted twice.
+        result({ toolCalls: [propose("p4", 10_000), call("c1", "get_pay_items")] }),
+        result({ toolCalls: [call("c2", "get_pay_items")] }),
+        result({ toolCalls: [call("c3", "get_pay_items")] }),
+      ],
+      gw,
+    );
+    const out = await h.run();
+    expect(out.status).toBe("partial");
+    expect(h.proposals.size).toBe(3);
+    expect(out.text).toBe(
+      "I stopped after 6 steps. Drafted 3 cards so far, for a person to approve. Not done: Propose the first advance; Propose the rest. Nothing was paid or sent.",
+    );
+    expect(out.text).not.toContain("Done: nothing yet");
+    expect(out.text).not.toMatch(/\$/);
+  });
+
   it("leaves the item in hand not finished when a call after the last list was refused or made no card", async () => {
     const propose = (id: string) => call(id, "propose_advance", { amountCents: 20_000 });
     const card = () => allowed("propose_advance", { amountCents: 20_000 }, { tier: "propose", draft: ADVANCE_DRAFT, refs: [{ table: "drivers", id: TYPED }] });
