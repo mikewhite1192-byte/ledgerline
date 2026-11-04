@@ -208,18 +208,18 @@ export function takeBackSentence(code: string): string {
 
 // The driver's money panel (arming, ids, cards): its own closed list.
 const PANEL_SENTENCES: Readonly<Record<string, string>> = {
-  role: "Only an admin can arm a driver or change their cards.",
+  role: "Only an admin can clear a driver to pay or change their cards.",
   card_not_drivers: "That card is not one of this driver's active cards.",
-  driver_inactive: "This driver is deactivated. Reactivate them before arming.",
+  driver_inactive: "This driver is deactivated. Reactivate them before clearing them to pay.",
   identity_taken: "That id already belongs to another driver.",
   not_found: "No such driver or card.",
   bad_request: "Check what was entered and try again.",
   disabled: "Advances are switched off.",
   // The activation checklist (./activation.ts): an arm refused for a missing step, and a step refused.
-  identity_confirm: "Confirm this driver's identity against the card on file before arming.",
-  activate_without_zero_test: "Send the zero-dollar test to the card and record it before arming.",
+  identity_confirm: "Confirm this driver's identity against the card on file before clearing them to pay.",
+  activate_without_zero_test: "Send the zero-dollar test to the card and record it before clearing them to pay.",
   activate_after_hand_load:
-    "Acknowledge the card's loads before arming; a load with no record behind it needs a ruling first.",
+    "Acknowledge the card's loads before clearing them to pay; a load with no record behind it needs a ruling first.",
   identity_mismatch: "The card statement names someone else. Fix the card on file before confirming.",
   hand_load_open: "A load on this driver's card still waits for a ruling.",
   card_changed: "The driver's card changed since this page loaded. Reload and check the new card.",

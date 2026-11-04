@@ -308,7 +308,7 @@ export function DriverMoneyPanel({
               <div className="grid gap-3 rounded-lg border border-border p-3">
                 <p className="text-body text-foreground">
                   {identity.activeTo === null
-                    ? `Deactivate ${identity.name}? They are disarmed now, so no new advance or money code can go to them. A payout already sent is not touched, and their pay is still settled.`
+                    ? `Deactivate ${identity.name}? They are no longer cleared to pay now, so no new advance or money code can go to them. A payout already sent is not touched, and their pay is still settled.`
                     : `Reactivate ${identity.name}? They stay not cleared to pay until an admin clears them again.`}
                 </p>
                 <div className="grid gap-3 sm:grid-cols-2">

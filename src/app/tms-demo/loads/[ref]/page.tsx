@@ -134,7 +134,7 @@ export default async function MockLoadPage({ params }: { params: Promise<{ ref: 
               <dd>{formatInstant(load.updatedAt, zone)}</dd>
             </div>
             <div className="sm:col-span-2">
-              <dt className="text-small text-foreground-2">Last update sent to LedgerLine</dt>
+              <dt className="text-small text-foreground-2">Last notification status</dt>
               <dd>
                 {load.lastHookAt === null || load.lastHookResult === null
                   ? "None yet"

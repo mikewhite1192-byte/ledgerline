@@ -259,6 +259,8 @@ describe("the agent's questions on the launcher", () => {
     fireEvent.click(within(folded).getByRole("button", { name: "Read the morning digest" }));
     const b = await findBubble();
     expect(within(b).getByText(DIGEST.text)).toBeTruthy();
+    // The pill's button left with the pill, so the cursor moves to the opened digest.
+    await waitFor(() => expect(document.activeElement).toBe(b));
     expect(within(b).queryByRole("button", { name: "Yes" })).toBeNull();
     expect(within(b).queryByRole("button", { name: "Not now" })).toBeNull();
     await waitFor(() => expect(screen.getByTestId("ask-announcer").textContent).toBe("New note from the agent"));
