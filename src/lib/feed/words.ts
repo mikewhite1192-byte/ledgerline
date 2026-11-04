@@ -122,10 +122,10 @@ const MONEY_WORDS: Readonly<Record<string, string>> = {
   invoice: "Invoice",
   customer_payment: "Customer payment",
   factoring_advance: "Factoring advance",
-  money_code_issue: "Money code",
+  money_code_issue: "Driver code",
   escrow_release: "Escrow release",
   card_pullback: "Card pull-back",
-  money_code_expense: "Money code expense",
+  money_code_expense: "Driver code expense",
   escrow_release_expense: "Escrow release expense",
 };
 
@@ -388,7 +388,7 @@ const NO_DESK_LINE = new Set(["sweep", "autopilot"]);
 const PAID_WORDS: Readonly<Record<string, string>> = {
   advance_payout: "Paid an advance",
   settlement_payout: "Paid a paystub",
-  money_code_issue: "Issued a money code",
+  money_code_issue: "Issued a driver code",
   card_pullback: "Pulled back a card load",
   escrow_release: "Released escrow",
 };

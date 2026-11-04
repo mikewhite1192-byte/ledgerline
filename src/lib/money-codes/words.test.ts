@@ -42,7 +42,7 @@ afterEach(() => {
   flags.payoutsEnabled = savedPayouts;
 });
 
-describe("money code words", () => {
+describe("driver code words", () => {
   it("words every refusal and every issue gate outcome, and nothing else past the fallback", () => {
     for (const r of MONEY_CODE_REFUSALS) expect(moneyCodeSentence(r), r).toBe(REFUSAL_SENTENCES[r]);
     for (const c of ["codes_off", "codes_payouts_off", "codes_not_armed", "codes_before_start"]) {
@@ -87,7 +87,7 @@ describe("money code words", () => {
   });
 });
 
-describe("money code switches", () => {
+describe("driver code switches", () => {
   const on = () => {
     flags.moneyCodes = { enabled: true, armed: true, capCents: 50_000, perDriverPerDay: 2, startDate: "2026-10-28" };
     flags.payoutsEnabled = true;
@@ -119,7 +119,7 @@ describe("money code switches", () => {
 });
 
 describe("the page's words", () => {
-  it("gives the page's cards every money code sentence, the shared ones included", () => {
+  it("gives the page's cards every driver code sentence, the shared ones included", () => {
     for (const r of MONEY_CODE_REFUSALS) expect(MONEY_CODE_PAGE_NOTICE[r], r).toBe(REFUSAL_SENTENCES[r]);
     for (const k of Object.keys(MONEY_CODE_APPROVE_NOTICE)) expect(MONEY_CODE_PAGE_NOTICE[k], k).toBe(MONEY_CODE_APPROVE_NOTICE[k]);
   });
@@ -129,7 +129,7 @@ describe("the page's words", () => {
     expect(PURPOSE_CHOICES.map((p) => p.label)).toEqual(["Lumper", "Repair", "Other"]);
   });
 
-  it("words each button refusal, and falls back to the money code sentences", () => {
+  it("words each button refusal, and falls back to the driver code sentences", () => {
     expect(actionSentence("code_expired")).toBe("This code expired. Request a new one if the driver still needs it.");
     expect(actionSentence("not_issued")).toBe("The code is not issued yet, so there is nothing to show.");
     expect(actionSentence("code_unavailable")).toBe(moneyCodeSentence("code_unavailable"));

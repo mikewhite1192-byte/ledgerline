@@ -164,7 +164,7 @@ function SettlementTable({ rows, isOpen, label }: { rows: SettlementListRow[]; i
           wrap: true,
           cell: (r) => (
             <RecordLink table="settlements" id={r.id}>
-              {r.driverName} <span className="text-foreground-2">{r.driverCode}</span>
+              {r.driverName} <span className="whitespace-nowrap text-foreground-2">{r.driverCode}</span>
             </RecordLink>
           ),
         },

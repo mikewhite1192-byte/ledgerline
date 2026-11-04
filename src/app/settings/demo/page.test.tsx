@@ -26,6 +26,7 @@ const mocks = vi.hoisted(() => ({
   }),
   withRequestTenant: vi.fn(),
   demoCarrierOf: vi.fn(),
+  demoTemplateOf: vi.fn(),
   previewDemoReset: vi.fn(),
   readFaultSettings: vi.fn(),
 }));
@@ -38,6 +39,7 @@ vi.mock("@/lib/tenant/context", async (importOriginal) => ({
 vi.mock("@/lib/seed/reset", async (importOriginal) => ({
   ...(await importOriginal<typeof import("@/lib/seed/reset")>()),
   demoCarrierOf: mocks.demoCarrierOf,
+  demoTemplateOf: mocks.demoTemplateOf,
   previewDemoReset: mocks.previewDemoReset,
 }));
 vi.mock("@/lib/tms/demo-faults", () => ({ readFaultSettings: mocks.readFaultSettings }));
@@ -201,8 +203,21 @@ describe("/settings/demo", () => {
   it("offers nothing on a carrier that is not a demo carrier", async () => {
     signedIn("admin");
     mocks.demoCarrierOf.mockResolvedValue(null);
+    mocks.demoTemplateOf.mockResolvedValue(null);
     render(await DemoSettings());
     expect(screen.getByText(/This carrier is not a demo carrier/)).toBeTruthy();
+    expect(screen.queryByRole("button")).toBeNull();
+    expect(mocks.previewDemoReset).not.toHaveBeenCalled();
+  });
+
+  it("tells a visit's own copy to start a new visit, and offers nothing", async () => {
+    signedIn("admin");
+    mocks.demoCarrierOf.mockResolvedValue(null);
+    mocks.demoTemplateOf.mockResolvedValue(BR);
+    render(await DemoSettings());
+    expect(screen.getByText(/your own copy of a demo carrier/i)).toBeTruthy();
+    expect(screen.getByText(/Start a new visit/)).toBeTruthy();
+    expect(screen.queryByText(/not a demo carrier/)).toBeNull();
     expect(screen.queryByRole("button")).toBeNull();
     expect(mocks.previewDemoReset).not.toHaveBeenCalled();
   });

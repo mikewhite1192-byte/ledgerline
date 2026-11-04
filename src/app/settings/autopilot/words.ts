@@ -8,14 +8,14 @@ export const RULE_KIND_LABELS: Readonly<Record<string, string>> = {
   load_rate_fill: "Missing rates",
   invoice_post: "Sending invoices",
   payment_reapply: "Payment moves",
-  settlement_approve: "Weekly settlements",
+  settlement_approve: "Weekly pay runs",
   detention_charge: "Detention charges",
   factoring_request: "Factoring requests",
   bill_defer: "Bill delays",
   collections_chase: "Payment reminders",
   pay_rule_change: "Pay rule changes",
   card_match: "Card matches",
-  money_code: "Money codes",
+  money_code: "Driver codes",
   pay_policy_setup: "Pay rules setup",
   load_create: "New loads",
   escrow_release: "Escrow releases",
@@ -26,7 +26,7 @@ export const ruleKindLabel = (kind: string): string => RULE_KIND_LABELS[kind] ??
 export const MODE_LABELS: Readonly<Record<string, string>> = { off: "Off", ask: "Ask me", auto: "Auto" };
 
 export const RULES_LINK_LEAD = "What the autopilot may approve by itself is set on ";
-export const RULES_LINK_LABEL = "Autopilot rules";
+export const RULES_LINK_LABEL = "Autopilot";
 
 export const ADMIN_ONLY = "Only an admin sets the autopilot rules.";
 export const NEVER_ALONE_NOTE = "A person always approves this, so Auto is not offered.";

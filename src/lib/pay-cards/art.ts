@@ -11,6 +11,10 @@ export function isPayCardArt(value: unknown): value is PayCardArt {
   return typeof value === "string" && (PAY_CARD_ART as readonly string[]).includes(value);
 }
 
+// Off until the three files are in public/pay-cards, so the page never asks for a file that is not
+// there. The day they ship, this turns on in the same change (art.test.ts holds the two together).
+export const PAY_CARD_ART_SHIPS = false;
+
 // Where the page loads a picture from.
 export function artPath(art: PayCardArt): string {
   return `/pay-cards/${art}.webp`;

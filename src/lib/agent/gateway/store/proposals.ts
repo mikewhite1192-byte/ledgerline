@@ -22,7 +22,7 @@ export const PROPOSAL_TITLES: Readonly<Record<ProposalKind, string>> = {
   bill_defer: "Delay a vendor bill",
   collections_chase: "Chase a late payer (Test mode)",
   pay_rule_change: "Change a pay rule",
-  money_code: "Issue a money code",
+  money_code: "Issue a driver code",
   pay_policy_setup: "Pay rules from your policy",
   load_create: "Create load from rate confirmation",
   escrow_release: "Release driver escrow",

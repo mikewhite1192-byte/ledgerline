@@ -54,7 +54,7 @@ describe("Paystub", () => {
       const link = screen.getByRole("link", { name: line.label });
       expect(link.getAttribute("href")).toBe(hrefFor(line.sources[0]));
     }
-    expect(screen.getByText("and 1 more record")).toBeTruthy();
+    expect(screen.getByText("1 other record behind this line")).toBeTruthy();
   });
 
   it("groups earnings and deductions and orders each by seq", () => {

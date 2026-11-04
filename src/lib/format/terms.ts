@@ -42,7 +42,7 @@ export const TERMS = {
   "test-payout": "A simulated payment; no real money moves in this demo.",
   "money-code":
     "A one-time code the driver gives a lumper or a repair shop to pay at the dock; it is charged to the driver's week and paid back from the receipt.",
-  "card-provider": "The company that issues the fuel cards and money codes; in this demo it is simulated, so no real money moves.",
+  "card-provider": "The company that issues the fuel cards and driver codes; in this demo it is simulated, so no real money moves.",
   "take-home-pay": "What the driver is paid for the week after everything taken out, the same as net pay.",
   "pay-card":
     "A picture of one driver's week for their phone, kept only after a second read matched every number to the paystub.",

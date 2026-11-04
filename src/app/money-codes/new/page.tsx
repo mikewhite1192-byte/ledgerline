@@ -36,11 +36,11 @@ export default async function NewMoneyCodePage() {
     <CodesFrame shell={page.shell} title="Request a code">
       <PageHeader
         title={<CodesTitle>Request a code</CodesTitle>}
-        description="Your pay rules check the request now. It then waits on the Money codes page until someone approves it; nothing is issued before that."
+        description="Your pay rules check the request now. It then waits on the Driver codes page until someone approves it; nothing is issued before that."
       />
       <p>
         <Link href="/money-codes" className="text-small text-link underline-offset-4 hover:underline">
-          All money codes
+          All driver codes
         </Link>
       </p>
       <Card className="max-w-[560px]">
