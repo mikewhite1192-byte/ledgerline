@@ -74,7 +74,7 @@ export type FanoutCtx = {
 // gets at least 20 s. Started with 10 s left, ordering calls ran out of time at about 17 s with
 // their outcome unknown (production, 2026-11-03). A slice with less left (often the one that ran
 // find) leaves the call to the next slice, which has its whole time.
-const MODEL_OVERRUN_MS = 5_000;
+export const MODEL_OVERRUN_MS = 5_000;
 export const MIN_WONDER_MS = 15_000;
 const WONDER_TIMEOUT_MS = 25_000;
 // A check row's lease: longer than any child can run (childTimeoutMs plus the overrun), so a row
