@@ -1,6 +1,7 @@
 import { flags } from "../../../../config/flags";
 import type { Session } from "../../../auth/claims";
-import { readPayConfigFor, readTenant } from "../../../data/read";
+import { configForDay } from "../../../data/config-version";
+import { readPayConfigVersions, readTenant } from "../../../data/read";
 import { payConfigOf } from "../../../data/records";
 import type { Queryable } from "../../../db";
 import { notesSection, type NoteRow } from "../../../memory/notes";
@@ -255,7 +256,9 @@ export async function buildStateSummary(
 
   const rules: string[] = [];
   try {
-    const config = payConfigOf(await readPayConfigFor(q, today));
+    // The version of the week holding today: readPayConfigFor takes a period start, so today read
+    // through it failed on every day but the week's first.
+    const config = payConfigOf(configForDay(await readPayConfigVersions(q), today));
     const dow = config.weekStartDow;
     const week = periodContaining(today, dow);
     header.push(payWeekLine(dow, week, paidNext));

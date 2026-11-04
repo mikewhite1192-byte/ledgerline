@@ -63,17 +63,14 @@ describe("the pay week and week paid next lines", () => {
 });
 
 describe("the summary's week paid next", () => {
-  // The plan's pay rules read only on the week's first day (readPayConfigFor takes a period
-  // start), so on a Tuesday the Carrier section ends at Today; the week paid next rides after it
-  // all the same.
-  it("rides whole at the end of the Carrier section, and Today stays as is", async () => {
+  it("rides whole at the end of the Carrier section, after the pay week, and Today stays as is", async () => {
     const db = planDb(plan, turnStatements);
     const out = await db.withTenant(TENANT, (q) =>
       buildStateSummary(q, SESSION, CONVERSATION, NOW, CAP, "", [], null, PAID_NEXT),
     );
     const carrier = out.text.split("\n\n").find((s) => s.startsWith("Carrier:"))!;
     expect(carrier).toContain("\nToday: 2026-11-03\n");
-    expect(carrier.endsWith(`\n${LINE}`)).toBe(true);
+    expect(carrier.endsWith(`\nPay week: Monday to Sunday, today's week 2026-11-02 to 2026-11-08\n${LINE}`)).toBe(true);
   });
 
   it("follows the pay week line on the week's first day", async () => {
