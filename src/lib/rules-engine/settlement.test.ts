@@ -898,6 +898,15 @@ describe("settleDriver: weeks that cross the clock change", () => {
   });
 });
 
+describe("settleDriver: a load's state split", () => {
+  it("pays a load with no state split recorded yet, as a new load has, the same as one with a split", () => {
+    const split = settleDriver(input({ loads: [load({ id: "a" })] }));
+    const none = settleDriver(input({ loads: [load({ id: "a", stateMiles: [] })] }));
+    expect(none.netCents).toBe(split.netCents);
+    expect(none.lines).toEqual(split.lines);
+  });
+});
+
 describe("settleDriver: fails closed", () => {
   it.each([
     ["a missing config", input({ config: undefined as unknown as PayConfig }), ConfigError],

@@ -82,8 +82,12 @@ export function checkLoad(load: LoadRecord, driverId?: string): LoadRecord {
   return load;
 }
 
-// The IFTA invariant: the per-state miles of a load add up to its loaded plus empty miles.
+// The IFTA invariant: the per-state miles of a load add up to its loaded plus empty miles. A load
+// with no split recorded yet (a new load or a rate confirmation's load: neither writes one) passes:
+// pay does not read the split, and the IFTA quarter names it no_state_split. A split that is
+// recorded and does not add up still throws.
 export function assertStateMiles(load: LoadRecord): void {
+  if (load.stateMiles.length === 0) return;
   const total = sum(load.stateMiles.map((s) => s.miles));
   if (total !== sum([load.loadedMiles, load.emptyMiles])) {
     throw new InputError(`load ${load.id} state miles do not add up to its miles`);
