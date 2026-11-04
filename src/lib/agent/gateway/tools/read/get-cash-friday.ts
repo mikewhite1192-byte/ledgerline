@@ -2,12 +2,32 @@ import { z } from "zod";
 import { flags } from "../../../../../config/flags";
 import { readCashFridayInput } from "../../../../data/read";
 import { computeCashFriday, sum } from "../../../../rules-engine";
+import { dollars } from "../../../../money/format";
+import { formatLocalDate } from "../../../../format/dates";
 import { localDateOf } from "../../../../time/local-date";
 import { defineTool, type GatewayRef } from "../../types";
 import { OPERATOR } from "../shared";
 
 // The receipt lines sent back: the counted ones come first, so the cut drops the least likely.
 export const CASH_LINES_MAX = 20;
+
+// One sentence written here from the figures, so an answer reads covered or short and both sides
+// as given instead of adding or subtracting a figure itself.
+export function cashFridaySummary(f: {
+  payDay: string;
+  gapCents: number;
+  cashByPayDayCents: number;
+  dueByPayDayCents: number;
+  payRunCents: number;
+  fuelAndBillsDueCents: number;
+}): string {
+  const head = f.gapCents < 0 ? `Short by ${dollars(-f.gapCents)}` : `Covered by ${dollars(f.gapCents)}`;
+  return (
+    `${head} for pay day ${formatLocalDate(f.payDay)}. What comes in by pay day is ${dollars(f.cashByPayDayCents)} ` +
+    `and what goes out is ${dollars(f.dueByPayDayCents)}: the pay run of ${dollars(f.payRunCents)} plus ` +
+    `${dollars(f.fuelAndBillsDueCents)} in fuel loads and bills due.`
+  );
+}
 
 export const getCashFriday = defineTool({
   name: "get_cash_friday",
@@ -18,7 +38,8 @@ export const getCashFriday = defineTool({
     "is cash on hand plus the payments expected and dueByPayDayCents is the pay run plus fuel loads and " +
     "bills due: quote those for what comes in and what goes out, and gapCents for covered or short " +
     "by how much. fuelAndBillsDueCents is the fuel loads and bills due together, what is due " +
-    "besides the pay run. Quote each figure as given, to the cent; never add, subtract or round " +
+    "besides the pay run. summary is one sentence written from those figures: read it as it is for " +
+    "covered or short and both sides, then add only what the question needs. Quote each figure as given, to the cent; never add, subtract or round " +
     "figures yourself. When short, " +
     "options are the moves the engine found (factor invoices, move a flexible bill, chase a late " +
     "payer), each with its figures (a chase's newCashCents is the part the position does not " +
@@ -48,6 +69,9 @@ export const getCashFriday = defineTool({
           AND status IN ('proposed', 'approved', 'executing')
         ORDER BY created_at, id`,
     );
+    const cashByPayDayCents = sum([r.figures.cashOnHandCents, r.figures.expectedReceiptsCents]);
+    const dueByPayDayCents = sum([r.figures.payRunCents, r.figures.fuelLoadsCents, r.figures.vendorBillsDueCents]);
+    const fuelAndBillsDueCents = sum([r.figures.fuelLoadsCents, r.figures.vendorBillsDueCents]);
     return {
       result: {
         asOf: r.asOf,
@@ -57,10 +81,18 @@ export const getCashFriday = defineTool({
         figures: r.figures,
         // The two sides the gap compares, summed here in integer cents so an answer quotes them
         // instead of adding figures itself: cashByPayDayCents minus dueByPayDayCents is gapCents.
-        cashByPayDayCents: sum([r.figures.cashOnHandCents, r.figures.expectedReceiptsCents]),
-        dueByPayDayCents: sum([r.figures.payRunCents, r.figures.fuelLoadsCents, r.figures.vendorBillsDueCents]),
+        cashByPayDayCents,
+        dueByPayDayCents,
         // What is due besides the pay run, so "the pay run plus X" quotes X instead of a difference.
-        fuelAndBillsDueCents: sum([r.figures.fuelLoadsCents, r.figures.vendorBillsDueCents]),
+        fuelAndBillsDueCents,
+        summary: cashFridaySummary({
+          payDay: r.payDay,
+          gapCents: r.figures.gapCents,
+          cashByPayDayCents,
+          dueByPayDayCents,
+          payRunCents: r.figures.payRunCents,
+          fuelAndBillsDueCents,
+        }),
         linesTotal: r.lines.length,
         // rows are the receipt lines, counted ones first; the gateway cuts a long list from the end.
         rows: r.lines.slice(0, CASH_LINES_MAX).map((l) => ({
