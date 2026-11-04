@@ -1370,8 +1370,8 @@ export const flags: Flags = {
   morningDigest: { enabled: true, startDate: "2026-11-02", maxCostCents: 4, maxOutputTokens: 1600 },
   // On by the owner's call (D-071, D-097, 2026-11-03). Read only; it moves no money.
   activityFeed: { enabled: true, pollSeconds: 15, pageSize: 50 },
-  // Off until the owner turns it on in its own PR. Read only; it moves no money.
-  journey: { enabled: false, pollSeconds: 5, boardPollSeconds: 10 },
+  // On by the owner's call (D-110, 2026-11-04). Read only; it moves no money.
+  journey: { enabled: true, pollSeconds: 5, boardPollSeconds: 10 },
   // Off until the owner turns it on in its own PR. Read only.
   signInTour: { enabled: false },
   // Released by the owner (D-098, D-103, 2026-11-03). One model read per tap; moves no money.

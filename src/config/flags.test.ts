@@ -151,6 +151,9 @@ const RELEASED_ON = [
   // Released by the owner (D-071, D-097, 2026-11-03): the live feed of every money step. It reads
   // only and moves no money.
   "activityFeed.enabled",
+  // Released by the owner (D-110, 2026-11-04): the load journey page and the On the road board. They
+  // read only and move no money.
+  "journey.enabled",
   // Released by the owner (D-103, 2026-11-03): the simple Home and the five-word menu. Presentation
   // only; it changes no number and moves no money.
   "simpleShape.enabled",
@@ -187,8 +190,6 @@ const KEPT_OFF = [
   // Read only, but it changes where sign-in lands and adds a panel on Home: the owner turns it on in
   // its own PR.
   "signInTour.enabled",
-  // Read only, but it adds two pages and a menu item: the owner turns it on in its own PR.
-  "journey.enabled",
 ] as const;
 
 // The on/off switches in flags.ts, by path: every top-level boolean and every boolean inside a
@@ -438,8 +439,8 @@ describe("flags", () => {
     expect(LOCAL_OFF_ONLY as readonly string[]).toContain("activityFeed.enabled");
   });
 
-  it("ships the load journey off, the page refreshing every 5 seconds and the board every 10, off for the local demo run", () => {
-    expect(flags.journey).toEqual({ enabled: false, pollSeconds: 5, boardPollSeconds: 10 });
+  it("ships the load journey on, the page refreshing every 5 seconds and the board every 10, off for the local demo run", () => {
+    expect(flags.journey).toEqual({ enabled: true, pollSeconds: 5, boardPollSeconds: 10 });
     // Listed ahead of its release, so the demo-path run keeps it off once it ships on.
     expect(LOCAL_OFF_ONLY as readonly string[]).toContain("journey.enabled");
   });
