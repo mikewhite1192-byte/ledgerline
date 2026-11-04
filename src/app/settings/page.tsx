@@ -3,9 +3,11 @@ import Link from "next/link";
 import { PageHeader } from "@/components/app/page-header";
 import { HOW_PAY_WORKS, NoCarrierPage, SignedInPage } from "@/components/app/signed-in-page";
 import { Card } from "@/components/ui/card";
+import { flags } from "@/config/flags";
 import { DbError } from "@/lib/db";
 import { ForbiddenError, withRequestTenant } from "@/lib/tenant/context";
 import { readShell, type ShellTenant } from "@/lib/tenant/shell";
+import { isVisitor } from "@/lib/visit-copy/visitor";
 import { settingsRows, type SettingsRow } from "./rows";
 
 export const dynamic = "force-dynamic";
@@ -46,7 +48,8 @@ export default async function SettingsPage() {
     else throw err;
   }
   if (!shell) return <NoCarrierPage problem={problem ?? "unreadable"} />;
-  const { rows, models } = settingsRows();
+  // A judge or a visit's own copy cannot reset the demo, so Demo is not listed for them.
+  const { rows, models } = settingsRows(shell.role === "judge" || (flags.visitCopies.enabled === true && isVisitor(shell)));
 
   return (
     <SignedInPage tenant={shell} current="/settings" title="Settings">

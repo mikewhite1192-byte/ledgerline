@@ -187,7 +187,7 @@ describe("the person-only plans", () => {
     const ar = receivablesInputOf(plan.rows, ANCHOR);
     const [f] = findPaymentOnWrongInvoice(ar);
     expect(brief(receivablesPlanFor(f, ar))).toEqual([
-      [1, "person", "Payment BR-PAY-WRONG was applied to invoice BR-INV-10008; it matches invoice BR-INV-10014."],
+      [1, "person", "Payment BR-CHK-48213 was applied to invoice BR-INV-10008; it matches invoice BR-INV-10014."],
     ]);
   });
 

@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import type { Queryable } from "../db";
 import type { PeriodOption } from "./list";
-import { pickPeriod, readSettlementsView } from "./views";
+import { openWeekFor, pickPeriod, readSettlementsView } from "./views";
 
 // Which pay week the Settlements page opens on. With no week asked it opens on the newest week that
 // has paystubs, so a new week with none yet does not hide last week's; with none anywhere, the
@@ -32,6 +32,18 @@ describe("pickPeriod", () => {
   it("opens the week asked for when it is listed, with or without paystubs", () => {
     expect(pickPeriod(PERIODS, NEW_WEEK, new Set([PAID_WEEK]))?.id).toBe(NEW_WEEK);
     expect(pickPeriod(PERIODS, "11111111-1111-4111-8111-000000000099", new Set([PAID_WEEK]))?.id).toBe(PAID_WEEK);
+  });
+});
+
+describe("openWeekFor", () => {
+  it("points a paid week to the oldest open week after it", () => {
+    expect(openWeekFor(PERIODS, PERIODS[2])?.id).toBe(THIS_WEEK);
+  });
+
+  it("points nowhere from the newest open week or when no week is open", () => {
+    expect(openWeekFor(PERIODS, PERIODS[0])).toBeNull();
+    const paidOnly = [{ ...PERIODS[2] }, { id: NEW_WEEK, start: "2026-11-02", end: "2026-11-08", status: "approved" }];
+    expect(openWeekFor(paidOnly, paidOnly[0])).toBeNull();
   });
 });
 

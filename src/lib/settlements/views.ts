@@ -47,6 +47,13 @@ export function pickPeriod(
   return stubbed ?? periods.find((p) => p.status === "open") ?? periods[0] ?? null;
 }
 
+// The open week a paid view points to: the oldest open week that starts after the shown one
+// (periods come newest first, dates are YYYY-MM-DD), so a judge lands on the week ready to run. Pure.
+export function openWeekFor(periods: readonly PeriodOption[], shown: PeriodOption): PeriodOption | null {
+  const later = periods.filter((p) => p.status === "open" && p.start > shown.start);
+  return later.length > 0 ? later[later.length - 1] : null;
+}
+
 // Which of the listed pay weeks have at least one paystub, by id in lower case. Only the listed ids
 // are read, so the work stays bounded by the list, not the carrier's whole history.
 async function readPeriodsWithStubs(q: Queryable, ids: readonly string[]): Promise<Set<string>> {

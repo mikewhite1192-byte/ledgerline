@@ -355,6 +355,19 @@ describe("SweepRun approve all", () => {
     fireEvent.click(within(screen.getByRole("group", { name: "Confirm approve all" })).getByRole("button", { name: "Confirm" }));
   };
 
+  it("names no dollar total on the approve all button, and still sends the total the server checks", async () => {
+    const sent = serve(cleanPage, { approve: [], reject: [], clean: [{ status: 200, body: { ok: true, done: 2, refused: [] } }] });
+    render(<SweepRun initial={cleanPage} auditorOn />);
+    expect(screen.getByRole("button", { name: /^Approve 2 clean fixes/ }).textContent).not.toContain("$");
+    fireEvent.click(screen.getByRole("button", { name: /^Approve 2 clean fixes/ }));
+    const group = screen.getByRole("group", { name: "Confirm approve all" });
+    expect(group.textContent).toContain("Approve 2 fixes? Each one is checked again before it goes through.");
+    expect(group.textContent).not.toContain("$");
+    fireEvent.click(within(group).getByRole("button", { name: "Confirm" }));
+    await waitFor(() => expect(sent).toHaveLength(1));
+    expect((sent[0].body as { totalCents: number }).totalCents).toBe(2_001);
+  });
+
   it("puts each refused fix's reason on its own card", async () => {
     serve(cleanPage, {
       approve: [],

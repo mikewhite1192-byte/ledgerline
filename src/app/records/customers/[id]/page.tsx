@@ -65,7 +65,7 @@ export default async function CustomerRecord({ params }: { params: Promise<{ id:
             <Facts
               items={[
                 { label: "Requires delivery document", value: c.podRequired ? "Yes" : "No" },
-                { label: "Billing address", value: c.billingDomain ? `At ${c.billingDomain}` : "None on file" },
+                { label: "Invoice email", value: c.billingDomain ? "On file" : "Not on file" },
               ]}
             />
           </CardBody>

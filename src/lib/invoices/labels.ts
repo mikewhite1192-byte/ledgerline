@@ -189,7 +189,9 @@ export function accountingLine(v: {
   sentOn: string | null;
   sentBy: string | null;
 }): string {
-  if (v.sentOn !== null) return v.sentBy ? `Sent ${v.sentOn} by ${v.sentBy}` : `Sent ${v.sentOn}`;
+  if (v.sentOn !== null) {
+    return v.sentBy ? `Sent to the customer ${v.sentOn} by ${v.sentBy}` : `Sent to the customer ${v.sentOn}`;
+  }
   if (!v.posted) return v.madeByQueue ? "Not posted to accounting yet" : "From earlier records, not posted from here";
   if (v.emailStatus === "need_to_send") return "Posted, unsent (in the accounting system's send queue)";
   if (v.emailStatus === "email_sent") return "Posted; the accounting system shows it emailed";

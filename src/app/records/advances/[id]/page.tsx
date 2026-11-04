@@ -122,7 +122,7 @@ export default async function AdvanceRecordPage({ params }: { params: Promise<{ 
   const title = `Advance for ${driver.name}, ${formatLocalDate(advance.requestedOn)}`;
   const decidedLabel = advance.status === "rejected" ? "Rejected" : "Approved";
   const decided = advance.decidedAt ? when(advance.decidedAt) : beforeApp ? "Recorded by the office before this app" : "Not yet";
-  const paid = advance.paidAt ? when(advance.paidAt) : advance.status === "paid" && beforeApp ? "Before this app" : "Not yet";
+  const paid = advance.paidAt ? when(advance.paidAt) : advance.status === "paid" && beforeApp ? "Before LedgerLine" : "Not yet";
   const rules = (Object.keys(RULE_LINES) as AdvanceRefusal[]).filter((code) => code !== "over_load_cap" || headroom !== null);
   return (
     <AdvanceFrame shell={shell} title={title} focus={{ table: "advances", id: advance.id, label: title }}>

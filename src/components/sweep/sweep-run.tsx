@@ -379,7 +379,6 @@ export function SweepRun({
     );
   };
 
-  const total = formatCents(page.clean.totalCents);
   const n = page.clean.proposalIds.length;
 
   return (
@@ -435,7 +434,7 @@ export function SweepRun({
             {confirmAll ? (
               <div role="group" aria-label="Confirm approve all" className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
                 <p className="text-body font-semibold text-foreground">
-                  Approve {n} {n === 1 ? "fix" : "fixes"} for {total} in all?
+                  Approve {n} {n === 1 ? "fix" : "fixes"}? Each one is checked again before it goes through.
                 </p>
                 <div className="flex flex-col gap-2 sm:flex-row">
                   <Button variant="outline" disabled={busy === "all"} onClick={() => setConfirmAll(false)}>
@@ -448,7 +447,7 @@ export function SweepRun({
               </div>
             ) : (
               <Button className="w-full sm:w-auto" disabled={busy !== null} onClick={() => setConfirmAll(true)}>
-                Approve {n} clean {n === 1 ? "fix" : "fixes"}, {total} total
+                Approve {n} clean {n === 1 ? "fix" : "fixes"}
               </Button>
             )}
           </div>

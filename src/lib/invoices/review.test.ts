@@ -160,7 +160,7 @@ describe("review labels", () => {
     expect(accountingLine(base)).toBe("Not posted to accounting yet");
     // An invoice from earlier records is never posted from here, so it never reads as waiting on one.
     expect(accountingLine({ ...base, madeByQueue: false })).toBe("From earlier records, not posted from here");
-    expect(accountingLine({ ...base, madeByQueue: false, sentOn: "2026-10-21" })).toBe("Sent 2026-10-21");
+    expect(accountingLine({ ...base, madeByQueue: false, sentOn: "2026-10-21" })).toBe("Sent to the customer 2026-10-21");
     expect(accountingLine({ ...base, posted: true })).toBe("Posted, unsent");
     expect(accountingLine({ ...base, posted: true, emailStatus: "not_set" })).toBe("Posted, unsent");
     expect(accountingLine({ ...base, posted: true, emailStatus: "need_to_send" })).toBe(
@@ -169,9 +169,9 @@ describe("review labels", () => {
     expect(accountingLine({ ...base, posted: true, emailStatus: "email_sent" })).toBe(
       "Posted; the accounting system shows it emailed",
     );
-    expect(accountingLine({ ...base, posted: true, sentOn: "2026-10-21" })).toBe("Sent 2026-10-21");
+    expect(accountingLine({ ...base, posted: true, sentOn: "2026-10-21" })).toBe("Sent to the customer 2026-10-21");
     expect(accountingLine({ ...base, posted: true, sentOn: "2026-10-21", sentBy: "staff" })).toBe(
-      "Sent 2026-10-21 by staff",
+      "Sent to the customer 2026-10-21 by staff",
     );
   });
 

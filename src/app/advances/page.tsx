@@ -149,7 +149,7 @@ export default async function AdvancesPage({
                 {r.payoutState ? (
                   <StatusBadge status={r.payoutState} />
                 ) : (
-                  <span className="block text-small text-muted-foreground">{r.fromFlow ? "Not sent yet" : "Before this app"}</span>
+                  <span className="block text-small text-muted-foreground">{r.fromFlow ? "Not sent yet" : "Before LedgerLine"}</span>
                 )}
               </span>
             ),

@@ -96,7 +96,7 @@ describe("NotesBoard", () => {
     expect(rows).toHaveLength(3);
     expect(within(table).getByRole("link", { name: "Harbor Foods" }).getAttribute("href")).toBe(`/records/customers/${CUSTOMER}`);
     expect(within(table).getByText("Whole carrier")).toBeTruthy();
-    expect(within(table).getByText("Sample")).toBeTruthy();
+    expect(within(table).getByText("Set up with the demo")).toBeTruthy();
     expect(within(table).getByText("desk@example.test")).toBeTruthy();
     expect(within(table).getAllByText("Oct 20, 2026, 12:00 PM CDT")).toHaveLength(2);
     expect(document.getElementById(`note-${ACTIVE.id}`)).toBeTruthy();

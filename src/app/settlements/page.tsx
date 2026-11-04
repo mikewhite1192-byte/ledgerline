@@ -14,7 +14,13 @@ import { Badge } from "@/components/ui/badge";
 import { cn } from "@/lib/cn";
 import { DbError } from "@/lib/db";
 import { formatPeriod } from "@/lib/format/dates";
-import { readSettlementsView, type SettlementListRow, type SettlementsView } from "@/lib/settlements/views";
+import {
+  openWeekFor,
+  readSettlementsView,
+  type PeriodOption,
+  type SettlementListRow,
+  type SettlementsView,
+} from "@/lib/settlements/views";
 import { ForbiddenError, withRequestTenant } from "@/lib/tenant/context";
 import { readShell, type ShellTenant } from "@/lib/tenant/shell";
 
@@ -133,22 +139,23 @@ export default async function SettlementsPage({
               </p>
             ) : null
           ) : null}
-          <SettlementTable rows={open.rows} isOpen={isOpen} />
+          {period.status === "paid" ? <OpenWeekNote periods={open.periods} shown={period} /> : null}
+          <SettlementTable rows={open.rows} isOpen={isOpen} label={formatPeriod(period.start, period.end)} />
         </>
       )}
     </SignedInPage>
   );
 }
 
-function SettlementTable({ rows, isOpen }: { rows: SettlementListRow[]; isOpen: boolean }) {
+function SettlementTable({ rows, isOpen, label }: { rows: SettlementListRow[]; isOpen: boolean; label: string }) {
   return (
     <DataTable
-      caption="Paystubs this week, by driver"
+      caption={`Paystubs for ${label}, by driver`}
       rows={rows}
       rowKey={(r) => r.id}
       empty={{
         title: "No paystubs yet",
-        body: isOpen ? "Run the week to draft one for every driver with activity." : "Nothing was paid this week.",
+        body: isOpen ? "Run the week to draft one for every driver with activity." : "Nothing was paid that week.",
       }}
       columns={[
         {
@@ -185,5 +192,20 @@ function SettlementTable({ rows, isOpen }: { rows: SettlementListRow[]; isOpen: 
         },
       ]}
     />
+  );
+}
+
+// A paid week opens first when it has the newest paystubs; this line points to the week to run.
+function OpenWeekNote({ periods, shown }: { periods: readonly PeriodOption[]; shown: PeriodOption }) {
+  const next = openWeekFor(periods, shown);
+  if (!next) return null;
+  return (
+    <p className="text-small text-foreground-2">
+      This week is already paid. To draft the next paystubs, open{" "}
+      <Link href={`/settlements?period=${encodeURIComponent(next.id)}`} className="text-link underline-offset-4 hover:underline">
+        {formatPeriod(next.start, next.end)}
+      </Link>{" "}
+      and run it.
+    </p>
   );
 }
