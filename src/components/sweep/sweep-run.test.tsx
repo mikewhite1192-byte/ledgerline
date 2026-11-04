@@ -174,6 +174,19 @@ describe("SweepRun", () => {
     expect(within(card).getByText("Would add to the driver's pay")).toBeTruthy();
     expect(card.textContent).not.toContain("\u2212$");
   });
+
+  it("reads a fix's Why with plain dates and the driver's name, never the ISO dates or the code", () => {
+    const why = "The engine found a duplicate advance for driver D-proposed for the week 2026-10-26 to 2026-11-01.";
+    const named = {
+      ...page,
+      items: page.items.map((i) => (i.proposalId === "p-proposed" ? { ...i, driverName: "Marcus Calloway", explanation: why } : i)),
+    };
+    render(<SweepRun initial={named} auditorOn />);
+    expect(
+      screen.getByText("The engine found a duplicate advance for driver Marcus Calloway for the week Oct 26 to Nov 1, 2026."),
+    ).toBeTruthy();
+    expect(screen.queryByText(/2026-10-26/)).toBeNull();
+  });
 });
 
 // The page's requests, answered from a table; a refresh reads the page back unchanged. An answer

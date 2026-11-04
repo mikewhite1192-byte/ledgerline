@@ -3,7 +3,7 @@ import os from "node:os";
 import path from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import { evalCardData, latestResults } from "./latest";
-import { README_END, README_START, renderResults, replaceReadmeSection, summarize, writeResults } from "./report";
+import { agreementLine, README_END, README_START, renderResults, replaceReadmeSection, summarize, writeResults } from "./report";
 import { sampleEvalResults } from "./test-fixtures";
 
 const dirs: string[] = [];
@@ -64,6 +64,15 @@ describe("eval report", () => {
     // 4 cases ran at 5 cents each; the cached one is left out of the total, not the per-case figure.
     expect(spark?.spentNanocents).toBe(15_000_000_000);
     expect(spark?.nanocentsPerCase).toBe(5_000_000_000);
+  });
+
+  it("says the two checks have not disagreed instead of counting 0 of 0", () => {
+    expect(agreementLine({ agreed: 31, agreedRight: 30, disagreed: 0, disagreedCheckRight: 0 })).toBe(
+      "When the operator and the second check agreed they were right 30 of 31 times. They have not disagreed yet.",
+    );
+    expect(agreementLine({ agreed: 5, agreedRight: 4, disagreed: 2, disagreedCheckRight: 1 })).toBe(
+      "When the operator and the second check agreed they were right 4 of 5 times; when they disagreed the second check was right 1 of 2 times.",
+    );
   });
 
   it("the README section is replaced only between its markers", () => {

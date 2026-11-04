@@ -20,7 +20,7 @@ import { codeToWords, recordNamer } from "@/lib/format/labels";
 import { formatCents } from "@/lib/format/money";
 import { hrefOrNull, recordHref } from "@/lib/records/href";
 import type { SweepItemView, SweepPage } from "@/lib/sweep/view";
-import { sweepOutcome } from "@/lib/sweep/words";
+import { plainWhy, sweepOutcome } from "@/lib/sweep/words";
 import { batchFor, type HeldBatch } from "./batch-id";
 import { useCarryOn } from "./carry-on";
 import { WeekChecks } from "./week-checks";
@@ -364,7 +364,8 @@ export function SweepRun({
         />
         {item.explanation ? (
           <p className="px-1 text-small text-foreground-2">
-            <span className="font-semibold">Why:</span> {item.explanation}
+            <span className="font-semibold">Why:</span>{" "}
+            {plainWhy(item.explanation, { code: item.driverCode, name: item.driverName })}
           </p>
         ) : null}
         {item.status !== "drafted" && p.status === "proposed" ? (

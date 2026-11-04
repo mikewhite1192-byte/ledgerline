@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { sweepOutcome } from "./words";
+import { plainWhy, sweepOutcome } from "./words";
 
 // The pay check's outcome line from fixed runs. Nothing reads the clock or a database.
 
@@ -56,5 +56,36 @@ describe("sweepOutcome on the pay check page", () => {
       "Checked every driver's pay for the week of Oct 26 to Nov 1. No mistakes.",
     );
     expect(sweepOutcome({ ...RUN, status: "failed" }, "page")).toBe("The last check stopped early. Run it again.");
+  });
+});
+
+describe("plainWhy", () => {
+  const why = "The engine found a duplicate advance for driver BR-D17 for the week 2026-10-26 to 2026-11-01.";
+
+  it("says the week in plain dates and names the driver whose code is on the item", () => {
+    expect(plainWhy(why, { code: "BR-D17", name: "Marcus Calloway" })).toBe(
+      "The engine found a duplicate advance for driver Marcus Calloway for the week Oct 26 to Nov 1, 2026.",
+    );
+  });
+
+  it("keeps the code when no name is on file, and changes only the dates", () => {
+    expect(plainWhy(why, { code: "BR-D17", name: null })).toBe(
+      "The engine found a duplicate advance for driver BR-D17 for the week Oct 26 to Nov 1, 2026.",
+    );
+  });
+
+  it("replaces only the whole code, never a longer code that starts with it or another driver's", () => {
+    const text = "Compare BR-D17 with BR-D170 and BR-D17-X and xBR-D17.";
+    expect(plainWhy(text, { code: "BR-D17", name: "Marcus Calloway" })).toBe(
+      "Compare Marcus Calloway with BR-D170 and BR-D17-X and xBR-D17.",
+    );
+    expect(plainWhy(why, { code: "BR-D07", name: "Dana Reyes" })).toContain("driver BR-D17 for");
+  });
+
+  it("leaves the code when the name is already in the text, and keeps the year when a range crosses one", () => {
+    expect(plainWhy("Marcus Calloway (BR-D17) was paid twice.", { code: "BR-D17", name: "Marcus Calloway" })).toBe(
+      "Marcus Calloway (BR-D17) was paid twice.",
+    );
+    expect(plainWhy("From 2026-12-28 to 2027-01-03.", { code: null, name: null })).toBe("From Dec 28, 2026 to Jan 3, 2027.");
   });
 });

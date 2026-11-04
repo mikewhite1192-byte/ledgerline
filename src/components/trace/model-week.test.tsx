@@ -53,6 +53,23 @@ describe("ModelWeekView", () => {
     expect(screen.queryByText(/Demo budget used/)).toBeNull();
     expect(screen.getByText("Safety check")).toBeTruthy();
     expect(screen.getByText("Screening")).toBeTruthy();
+    expect(screen.getByText("1 card Muse Spark could not form")).toBeTruthy();
+  });
+
+  it("counts the cards handed to Muse Wonder in the hint, and names calls not read back plainly", () => {
+    const week = summarizeModelWeek({
+      ...empty,
+      groups: [
+        { target: "spark", model: "muse-spark-1.3", status: "ok", calls: 3, costNanocents: 1_000_000_000, heldNanocents: 0, unsettled: 0, inputTokens: 0, cachedTokens: 0, savedNanocents: 0 },
+        { target: "spark", model: "muse-spark-1.3", status: "reserved", calls: 2, costNanocents: 0, heldNanocents: 0, unsettled: 0, inputTokens: 0, cachedTokens: 0, savedNanocents: 0 },
+      ],
+      escalations: 0,
+    });
+    render(<ModelWeekView week={week} />);
+    expect(screen.getByText("0 cards Muse Spark could not form")).toBeTruthy();
+    const spark = screen.getByRole("heading", { name: "Muse Spark" }).closest("div.min-w-0") as HTMLElement;
+    expect(within(spark).getByText("Still running or not read back yet")).toBeTruthy();
+    expect(screen.queryByText(/outcome not known/)).toBeNull();
   });
 
   it("shows each model's share of input tokens from the cache and the week's saving, rounded down", () => {

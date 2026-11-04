@@ -60,7 +60,7 @@ function ModelCard({ m }: { m: ModelTotals }) {
             <Row label="Finished" value={count(m.ok)} />
             {m.incomplete > 0 ? <Row label="Cut short" value={count(m.incomplete)} /> : null}
             {m.failed > 0 ? <Row label="Failed" value={count(m.failed)} /> : null}
-            {m.pending > 0 ? <Row label="Running or outcome not known" value={count(m.pending)} /> : null}
+            {m.pending > 0 ? <Row label="Still running or not read back yet" value={count(m.pending)} /> : null}
             <Row label="Spent" value={formatSpend(m.costNanocents)} />
             {m.unsettled > 0 ? (
               <Row
@@ -125,7 +125,7 @@ export function ModelWeekView({ week }: { week: ModelWeek }) {
           <StatCard
             label="Handed to Muse Wonder"
             value={count(week.escalations)}
-            hint="Cards Muse Spark could not form"
+            hint={`${countWords(week.escalations, "card", "cards")} Muse Spark could not form`}
           />
         </div>
       )}
