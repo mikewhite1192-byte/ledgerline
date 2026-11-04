@@ -10,7 +10,7 @@ export const REFUSAL_SENTENCES: Readonly<Record<MoneyCodeRefusal, string>> = {
   load_not_active: "The load is not on the road and was not delivered in the last three days.",
   load_invoiced: "The load is already invoiced, so a lumper code cannot add its billable line to the invoice.",
   amount_invalid: "The amount must be a dollar amount above $0.00.",
-  over_code_cap: "The amount is over the most one driver code can be.",
+  over_code_cap: "The amount is over the maximum allowed for one driver code.",
   evidence_missing: "The receipt or voice note it names was not found.",
   receipt_unreadable: "The receipt could not be read clearly. Ask the driver for a clearer photo.",
   receipt_kind: "The receipt is not the kind this code is for.",
@@ -22,7 +22,7 @@ export const REFUSAL_SENTENCES: Readonly<Record<MoneyCodeRefusal, string>> = {
   driver_not_armed: "This driver is not cleared to be paid yet. An admin can clear them on the driver page.",
   duplicate_code: "A code for this load, purpose and amount was already asked for in the last 24 hours.",
   evidence_reused: "This receipt or voice note already backs another code.",
-  daily_limit: "This driver already has the most driver codes allowed for today.",
+  daily_limit: "This driver has reached today's limit of driver codes.",
 };
 
 // The issue gate's words and the executor's own outcomes.
