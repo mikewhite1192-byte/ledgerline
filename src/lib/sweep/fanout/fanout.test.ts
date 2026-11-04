@@ -287,12 +287,12 @@ describe("runChildCheck", () => {
   });
 
   it("stops at the check's own clock and never asks for longer than is left", async () => {
-    const h = harness([() => result({ toolCalls: [toolCall("get_loads")] })], { stepMs: 8_000 });
+    const h = harness([() => result({ toolCalls: [toolCall("get_loads")] })], { stepMs: 10_000 });
     const out = await runChildCheck(input(), h.deps);
     expect(out.status).toBe("timed_out");
     expect(h.complete).toHaveBeenCalledTimes(2);
     expect(h.requests[0].timeoutMs).toBeLessThanOrEqual(LIMITS.childTimeoutMs);
-    expect(h.requests[1].timeoutMs).toBeLessThanOrEqual(LIMITS.childTimeoutMs - 8_000);
+    expect(h.requests[1].timeoutMs).toBeLessThanOrEqual(LIMITS.childTimeoutMs - 10_000);
   });
 
   it("refuses a write tool and another driver's records without asking the gateway", async () => {

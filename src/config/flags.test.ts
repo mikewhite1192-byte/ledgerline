@@ -997,7 +997,7 @@ describe("flags", () => {
       driverCents: 9,
       planCents: 30,
       reconcileCents: 40,
-      childTimeoutMs: 19_000,
+      childTimeoutMs: 23_000,
       tenantDayCents: 1_500,
       runsPerTenantDay: 3,
       runCapCents: 500,
@@ -1006,8 +1006,10 @@ describe("flags", () => {
     // calls together never pass driverCents), and the sweep's own spend still fits inside the run's.
     expect(l.callCents).toBeLessThanOrEqual(l.driverCents);
     expect(l.runCapCents).toBeGreaterThan(flags.sweepLimits.maxRunCents);
-    // A whole check ends well inside one slice.
-    expect(l.childTimeoutMs).toBeLessThan(flags.sweepLimits.sliceMs);
+    // A whole check ends by its slice's deadline plus the 5 s model overrun at most, and with that
+    // overrun still inside the 30 s check lease and the 30 s route.
+    expect(l.childTimeoutMs).toBeLessThanOrEqual(flags.sweepLimits.sliceMs + 5_000);
+    expect(l.childTimeoutMs + 5_000).toBeLessThan(30_000);
   });
 
   it("releases invoicing, invoice review and customer payments, with small caps and a start date", () => {
