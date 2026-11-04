@@ -46,7 +46,7 @@ export const explainPaystub = defineTool({
     "paystub). Earnings are " +
     "positive and deductions negative, in integer cents, each with the records it came from. A " +
     "note insurance_exempt means the driver carries their own insurance, so no daily insurance " +
-    "line applies. subtotals adds up each kind's lines (loadPayCents over loadCount loads, " +
+    "line applies. subtotals adds up every line of each kind, shown or not (loadPayCents over loadCount loads, " +
     "reimbursementsCents, accessorialPayCents and each deduction kind, deductions negative): quote " +
     "those for a kind's total and never add lines yourself. parkedReason says why a stored " +
     "paystub no longer matches its records. A stored line with namedByPerson true was typed by " +

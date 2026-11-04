@@ -835,7 +835,7 @@ describe("runTurn with a checklist", () => {
     expect(out.status).toBe("partial");
     expect(h.proposals.size).toBe(3);
     expect(out.text).toBe(
-      "I stopped after 6 steps. Drafted 3 cards for a person to approve. Not done: Propose the first advance; Propose the rest. Nothing was paid or sent.",
+      "I stopped after 6 steps. Drafted 3 cards so far, for a person to approve. Not done: Propose the first advance; Propose the rest. Nothing was paid or sent.",
     );
     expect(out.text).not.toContain("Done: nothing yet");
     expect(out.text).not.toMatch(/\$/);

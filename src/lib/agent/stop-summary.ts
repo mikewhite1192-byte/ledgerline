@@ -20,7 +20,7 @@ export function stopSummary(list: Checklist, counts: { steps: number; cards?: nu
   const parts = [`I stopped after ${steps} ${steps === 1 ? "step" : "steps"}.`];
   if (done.length > 0) parts.push(`Done: ${listed(done)}.`);
   else if (cards === 0) parts.push("Done: nothing yet.");
-  if (cards > 0) parts.push(`Drafted ${cards} ${cards === 1 ? "card" : "cards"} for a person to approve.`);
+  if (cards > 0) parts.push(`Drafted ${cards} ${cards === 1 ? "card" : "cards"} so far, for a person to approve.`);
   if (left.length > 0) parts.push(`Not done: ${listed(left)}.`);
   parts.push(NOTHING_MOVED);
   return parts.join(" ");

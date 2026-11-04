@@ -487,7 +487,8 @@ export async function runTurn(input: TurnInput, deps: TurnDeps): Promise<TurnOut
         ...(checked?.engine ? { engine: checked.engine } : {}),
       });
       const carded = saved.kind === "created" || saved.kind === "duplicate";
-      if (carded) cardsMade.add(saved.proposalId);
+      // A duplicate can be a card from an earlier turn, so only new cards are counted here.
+      if (saved.kind === "created") cardsMade.add(saved.proposalId);
       await finish(step, carded ? "done" : "failed", {
         proposalId: carded ? saved.proposalId : null,
         detail: {

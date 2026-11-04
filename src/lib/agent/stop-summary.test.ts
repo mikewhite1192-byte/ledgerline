@@ -26,10 +26,10 @@ describe("stopSummary", () => {
 
   it("counts the cards the run drafted, and never says nothing was done beside them", () => {
     expect(stopSummary(list(["not_done", "todo", "doing"]), { steps: 4, cards: 3 })).toBe(
-      "I stopped after 4 steps. Drafted 3 cards for a person to approve. Not done: Read Rosa's week; Check her pay; Draft a fix. Nothing was paid or sent.",
+      "I stopped after 4 steps. Drafted 3 cards so far, for a person to approve. Not done: Read Rosa's week; Check her pay; Draft a fix. Nothing was paid or sent.",
     );
     expect(stopSummary(list(["done", "doing", "todo"]), { steps: 2, cards: 1 })).toBe(
-      "I stopped after 2 steps. Done: Read Rosa's week. Drafted 1 card for a person to approve. Not done: Check her pay; Draft a fix. Nothing was paid or sent.",
+      "I stopped after 2 steps. Done: Read Rosa's week. Drafted 1 card so far, for a person to approve. Not done: Check her pay; Draft a fix. Nothing was paid or sent.",
     );
     // No cards is the text without them.
     expect(stopSummary(list(["not_done", "todo", "doing"]), { steps: 1, cards: 0 })).toBe(
