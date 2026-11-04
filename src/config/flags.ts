@@ -1377,10 +1377,10 @@ export const flags: Flags = {
     startSweep: true,
     sweepDayCents: 3000,
   },
-  // Off until the owner turns it on in its own PR (D-104). Sandbox posts only, each through the
+  // Turned on by the owner in its own PR (D-104, D-103). Sandbox posts only, each through the
   // ledger; the kinds stay off until their own PRs.
   books: {
-    enabled: false,
+    enabled: true,
     startDate: "2026-11-04",
     perWake: 3,
     wakeBudgetMs: 9_000,

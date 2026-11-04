@@ -162,6 +162,9 @@ const RELEASED_ON = [
   // Released by the owner (D-100, D-103, 2026-11-03): a visit's copy starts one real pay check as it
   // opens. It spends model cents (30 dollars a day across copies) and only drafts fixes, never money.
   "visitCopies.startSweep",
+  // Released by the owner (D-104, D-103, 2026-11-03): each armed desk wake posts what is still
+  // missing in the QuickBooks sandbox, from the start date on, through the ledger. The kinds stay off.
+  "books.enabled",
 ] as const;
 
 // What stays off, each waiting on a missing piece or an outside send the owner has not released.
@@ -180,8 +183,6 @@ const KEPT_OFF = [
   // Read only, but it changes where sign-in lands and adds a panel on Home: the owner turns it on in
   // its own PR.
   "signInTour.enabled",
-  // Sandbox posts with no button (D-104): the owner turns it on in its own PR.
-  "books.enabled",
 ] as const;
 
 // The on/off switches in flags.ts, by path: every top-level boolean and every boolean inside a
@@ -485,9 +486,9 @@ describe("flags", () => {
     expect(LOCAL_OFF_ONLY as readonly string[]).toContain("plainTrace.enabled");
   });
 
-  it("ships the books step off, with its start date, budget and kinds, off for the local demo run", () => {
+  it("ships the books step on, with its start date, budget and kinds off, off for the local demo run", () => {
     expect(flags.books).toEqual({
-      enabled: false,
+      enabled: true,
       startDate: "2026-11-04",
       perWake: 3,
       wakeBudgetMs: 9_000,
