@@ -264,7 +264,7 @@ function CheckedTwice() {
   return (
     <div className="mx-4 mb-3 flex flex-wrap items-center gap-2 sm:mx-5">
       <Badge tone="success">Checked twice</Badge>
-      <span className="text-small text-foreground-2">Your pay rules and a second check agree.</span>
+      <span className="text-small text-foreground-2">Your pay rules and a second check of this card agree.</span>
     </div>
   );
 }

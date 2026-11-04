@@ -6,12 +6,16 @@ import { callTool, reportRefOf, toolNamed, toolsFor, TOOL_REGISTRY, withTimeout 
 import { dbTurnStore, engineCompares, type OpenedTurn, type StepFinish, type TurnStore } from "../gateway/store";
 import type { CompleteFn, GatewayContext, GatewayOutcome, ToolCall } from "../gateway/types";
 import {
+  ANSWER_NOW_MS,
+  ANSWER_NOW_NOTE,
   CALL_MARGIN_MS,
+  CHECKLIST_ALONE_NOTE,
   CHECKLIST_TOOL,
   ESCALATE_AFTER_INVALID,
   ESCALATION_CALL,
   escalatedText,
   LOOP_TEXT,
+  MIN_MODEL_CALL_MS,
   OPERATOR_CALL,
   operatorPrompt,
   TURN_SUMMARY_CHARS,
@@ -26,6 +30,7 @@ import type { StepView } from "../view";
 import { TurnBudget, type CapReason, type TurnLimits } from "./budget";
 import { idsIn, validateRefs } from "./citations";
 import { centsIn, maskFigures, typedCentsIn } from "./figures";
+import { plainAnswer } from "./plain";
 import type { TurnEmitter } from "./stream";
 
 // The operator loop (design 2.2): short Muse Spark turns over a compact state summary, every
@@ -204,6 +209,9 @@ export async function runTurn(input: TurnInput, deps: TurnDeps): Promise<TurnOut
   let response = 0;
   let listResponse = 0;
   let refusedResponse = 0;
+  // The answer call's own checklist write was dropped: the list on hand is older than the answer,
+  // so nothing still in hand on it is shown as done.
+  let listDropped = false;
 
   const emitStep = (s: StepView) => deps.emit?.({ event: "step", data: s });
   const start = async (kind: StepView["kind"], label: string) => {
@@ -232,9 +240,11 @@ export async function runTurn(input: TurnInput, deps: TurnDeps): Promise<TurnOut
   });
 
   // One model call, with the turn's caps applied to its cost and time.
+  // answerNow: the call is asked for the answer itself (ANSWER_NOW_NOTE), after the messages.
   const modelCall = async (
     target: "spark" | "wonder",
     tools: AiTool[],
+    answerNow = false,
   ): Promise<{ result: AiResult } | { error: string; reducedCap: boolean }> => {
     const policy = target === "spark" ? OPERATOR_CALL : ESCALATION_CALL;
     const cap = Math.min(policy.maxCostCents, budget.centsLeft());
@@ -246,7 +256,17 @@ export async function runTurn(input: TurnInput, deps: TurnDeps): Promise<TurnOut
         target,
         {
           purpose: policy.purpose,
-          messages: target === "spark" ? messages : messages.map(plainMessage),
+          messages:
+            target !== "spark"
+              ? messages.map(plainMessage)
+              : answerNow
+                ? [
+                    ...messages,
+                    request.cache
+                      ? { role: "system", content: ANSWER_NOW_NOTE, placement: "input" }
+                      : { role: "system", content: ANSWER_NOW_NOTE },
+                  ]
+                : messages,
           tools,
           reasoningEffort: policy.reasoningEffort,
           maxOutputTokens: policy.maxOutputTokens,
@@ -491,10 +511,13 @@ export async function runTurn(input: TurnInput, deps: TurnDeps): Promise<TurnOut
     }
   };
 
-  const toolMessage = (call: ToolCall, outcome: GatewayOutcome): AiMessage => {
+  // alone: a checklist write in a response that called nothing else, told to read next.
+  const toolMessage = (call: ToolCall, outcome: GatewayOutcome, alone = false): AiMessage => {
     const body: Record<string, unknown> = { ...outcome.result };
     if (outcome.decision === "invalid_args") {
       body.note = invalidArgsNote(outcome.fieldErrors ?? []);
+    } else if (alone && outcome.decision === "allowed") {
+      body.note = CHECKLIST_ALONE_NOTE;
     }
     return { role: "tool", toolCallId: call.id, content: JSON.stringify(body) };
   };
@@ -578,8 +601,19 @@ export async function runTurn(input: TurnInput, deps: TurnDeps): Promise<TurnOut
     for (;;) {
       const cap = budget.beforeModelCall();
       if (cap) return stopped(cap);
+      // The time this call would get. Too little to answer at all: stop with what was found, never
+      // a call sent only to time out (its reservation is kept). Too little for another tool round
+      // and then an answer: this call is the answer, and its tool calls are not run. Read again
+      // once the step is written, since that write spends the same clock.
+      if (budget.remainingMs() - CALL_MARGIN_MS < MIN_MODEL_CALL_MS) return stopped("clock");
       const step = await start("model", MODEL_LABEL);
-      const called = await modelCall("spark", deps.tools);
+      const callMs = budget.remainingMs() - CALL_MARGIN_MS;
+      if (callMs < MIN_MODEL_CALL_MS) {
+        await finish(step, "failed", { detail: { category: "clock" } });
+        return stopped("clock");
+      }
+      const answerNow = callMs < ANSWER_NOW_MS;
+      const called = await modelCall("spark", deps.tools, answerNow);
       if ("error" in called) {
         await finish(step, "failed", { detail: { category: called.error } });
         return modelFailed(called.error, called.reducedCap);
@@ -587,9 +621,12 @@ export async function runTurn(input: TurnInput, deps: TurnDeps): Promise<TurnOut
       const { result } = called;
       response += 1;
       // Figures the tools did not return, and the person did not type, are withheld before the
-      // text is kept anywhere.
-      const shown = maskFigures(result.text.trim(), allowedCents);
-      const note = result.reasoningSummary ? maskFigures(result.reasoningSummary.trim(), allowedCents).text : "";
+      // text is kept anywhere; then dashes and dates are written the way a person reads them.
+      const masked = maskFigures(result.text.trim(), allowedCents);
+      const shown = { ...masked, text: plainAnswer(masked.text) };
+      const note = result.reasoningSummary
+        ? plainAnswer(maskFigures(result.reasoningSummary.trim(), allowedCents).text)
+        : "";
       await finish(step, "done", {
         modelCallId: result.callId,
         ...(note ? { reasoningNote: note } : {}),
@@ -599,8 +636,21 @@ export async function runTurn(input: TurnInput, deps: TurnDeps): Promise<TurnOut
           toolSearches: result.toolSearches,
           textChars: result.text.length,
           maskedFigures: shown.masked,
+          ...(answerNow ? { answerNow: true } : {}),
         },
       });
+      // The answer call's tool calls are never run: there is no time left to answer after them. A
+      // whole answer (not cut off) sent with only a checklist write is still the answer; the write
+      // is dropped, so the list keeps nothing in hand as done. Any other stop shows the text from
+      // before these calls, never words written beside calls that did not run.
+      if (answerNow && result.toolCalls.length > 0) {
+        const checklistOnly = result.toolCalls.every((c) => c.name === CHECKLIST_TOOL);
+        if (shown.text && checklistOnly && result.status === "ok") {
+          listDropped = true;
+          return { status: "done", endedReason: null, text: shown.text };
+        }
+        return stopped("clock");
+      }
       if (shown.text) lastText = shown.text;
       if (result.toolCalls.length === 0) {
         if (!shown.text) {
@@ -622,6 +672,7 @@ export async function runTurn(input: TurnInput, deps: TurnDeps): Promise<TurnOut
       // Parallel calls run one by one, in the order returned, so the step cap is exact. The
       // first checklist write in a response is not a counted step; it still waits on the clock.
       let checklistWritten = false;
+      const checklistAlone = result.toolCalls.every((c) => c.name === CHECKLIST_TOOL);
       for (let i = 0; i < result.toolCalls.length; i += 1) {
         const call = result.toolCalls[i];
         const free = call.name === CHECKLIST_TOOL && !checklistWritten;
@@ -629,7 +680,7 @@ export async function runTurn(input: TurnInput, deps: TurnDeps): Promise<TurnOut
         const stepCap = free ? (budget.remainingMs() <= 0 ? "clock" : null) : budget.beforeToolStep();
         if (stepCap) return stopped(stepCap);
         const outcome = await dispatch({ ...call, modelCallId: result.callId }, "spark", !free);
-        messages.push(toolMessage(call, outcome));
+        messages.push(toolMessage(call, outcome, checklistAlone));
         // The rest of this response's calls are not run: the request goes to a person.
         if (toPerson) return await personEnd(toPerson);
         if (outcome.decision !== "invalid_args") continue;
@@ -664,10 +715,11 @@ export async function runTurn(input: TurnInput, deps: TurnDeps): Promise<TurnOut
   // The checklist as the answer ended: the item in hand is done when it finished and not done
   // when it stopped; one never started is not done. A call refused, or a proposal that made no
   // card, after the list was last sent leaves the item in hand not done even on a finished answer:
-  // never a check beside a card that does not exist. A stop then says what was done and what is
-  // left in place of the plain stop line, still followed by what was found. Its count is the
-  // tool steps the step cap counted, not the model calls.
-  const unsettled = refusedResponse > 0 && refusedResponse >= listResponse;
+  // never a check beside a card that does not exist; so does a list the answer call tried to
+  // change and could not. A stop then says what was done and what is left in place of the plain
+  // stop line, still followed by what was found. Its count is the tool steps the step cap
+  // counted, not the model calls.
+  const unsettled = listDropped || (refusedResponse > 0 && refusedResponse >= listResponse);
   const finalList = checklist ? finalChecklist(checklist, ended.status === "done" && unsettled ? "partial" : ended.status) : null;
   // An escalation to a person keeps its own line, followed by the same summary.
   const ending: Ending =

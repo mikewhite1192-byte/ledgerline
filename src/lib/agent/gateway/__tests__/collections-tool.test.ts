@@ -1,6 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { flags } from "../../../../config/flags";
 import type { Session } from "../../../auth/claims";
+import { capResult } from "../index";
 import { COLLECTIONS_TOOL_MAX, getCollections } from "../tools/read/get-collections";
 import { blueRidgePlan, PLAN_ANCHOR, planDb } from "./plan-db";
 import { TENANT } from "./fake-db";
@@ -74,6 +75,8 @@ describe("get_collections", () => {
     const out = await run({});
     expect(out.rows.length).toBe(Math.min(out.total, COLLECTIONS_TOOL_MAX));
     expect(out.omitted).toBe(out.total - out.rows.length);
+    // The listed rows fit the gateway's result cap whole, so no second count is added beside total.
+    expect(capResult(out as unknown as Record<string, unknown>).truncated).toBe(false);
     for (let i = 1; i < out.rows.length; i++) {
       expect(out.rows[i - 1].daysLate).toBeGreaterThanOrEqual(out.rows[i].daysLate);
     }

@@ -10,6 +10,8 @@ import { feedLine, readFeedState } from "../../../tms/read";
 import { isAuditConcern } from "../../auditor/words";
 import { STATE_HEADER } from "../../policy";
 import { focusLine, type FocusSubject } from "../focus";
+import { TOOL_REGISTRY } from "../registry";
+import { TIERS, type Tier } from "../types";
 
 // The compact state summary (design 2.3, tip 5): Muse Spark never sees the chat history, only
 // this one system message rebuilt from the database on every turn. Sections in a fixed order,
@@ -64,7 +66,35 @@ function wholeLinesOfLast(sections: readonly SummarySection[], cap: number): str
 
 const DOW = ["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"];
 
-type PriorRow = { seq: number; summary: string };
+type PriorRow = { seq: number; summary: string; tools?: string | null };
+
+// The tools an earlier answer ran, by their registry names (codes only), at most four, each
+// under its own registry tier: a read, a proposal or a note. A proposal or note is named as tried,
+// since the call alone does not say it was stored. More than four says the list is cut. A name the
+// registry does not hold is dropped; the checklist is not counted.
+const TOOL_CODE = /^[a-z_]{2,40}$/;
+const TOOLS_SHOWN = 4;
+const TIER_WORD: Readonly<Record<Tier, string>> = { read: "read", propose: "tried to propose", record: "tried to note" };
+function toolsByTier(raw: string | null | undefined): string[] {
+  if (!raw) return [];
+  const all = raw.split(" ").filter((t) => TOOL_CODE.test(t) && Object.hasOwn(TOOL_REGISTRY, t));
+  const known = all.slice(0, TOOLS_SHOWN);
+  const groups = TIERS.flatMap((tier) => {
+    const names = known.filter((t) => TOOL_REGISTRY[t].tier === tier);
+    return names.length > 0 ? [`${TIER_WORD[tier]} ${names.join(", ")}`] : [];
+  });
+  return all.length > known.length ? [...groups, "more steps not listed"] : groups;
+}
+
+// One earlier answer's line: what it read, tried to propose or tried to note (so "what did you do" has the steps
+// to say), then its own first words.
+export function priorLine(t: PriorRow): string {
+  const groups = toolsByTier(t.tools);
+  const said = cut(t.summary, 120);
+  if (groups.length === 0) return `- ${said}`;
+  const did = groups.join("; ");
+  return `- ${did.charAt(0).toUpperCase()}${did.slice(1)}; answered: ${said}`;
+}
 type ProposalRow = {
   id: string;
   kind: string;
@@ -241,15 +271,20 @@ export async function buildStateSummary(
   }
 
   const prior = await q.query<PriorRow>(
-    `SELECT seq, summary FROM turns
-      WHERE conversation_id = CAST($1 AS uuid) AND status <> 'running' AND summary <> ''
-      ORDER BY seq DESC LIMIT 5`,
+    `SELECT t.seq, t.summary,
+            (SELECT string_agg(DISTINCT s.detail->>'tool', ' ')
+               FROM turn_steps s
+              WHERE s.turn_id = t.id AND s.kind = 'tool' AND s.state = 'done'
+                AND s.detail->>'tool' <> 'set_checklist') AS tools
+       FROM turns t
+      WHERE t.conversation_id = CAST($1 AS uuid) AND t.status <> 'running' AND t.summary <> ''
+      ORDER BY t.seq DESC LIMIT 5`,
     [conversationId],
   );
   sections.push({
     title: "Earlier in this conversation",
-    lines: prior.reverse().map((t) => `- ${cut(t.summary, 120)}`),
-    maxChars: 5 * 124 + 40,
+    lines: prior.reverse().map(priorLine),
+    maxChars: 5 * 300 + 40,
   });
 
   const proposals = await q.query<ProposalRow>(

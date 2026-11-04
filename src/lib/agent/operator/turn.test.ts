@@ -9,10 +9,15 @@ import { toolsFor } from "../gateway/registry";
 import { planDb, blueRidgePlan } from "../gateway/__tests__/plan-db";
 import { sampleArgs } from "../gateway/__tests__/sample-args";
 import {
+  ANSWER_NOW_MS,
+  ANSWER_NOW_NOTE,
+  CALL_MARGIN_MS,
+  CHECKLIST_ALONE_NOTE,
   CHECKLIST_RULE,
   COLLECTIONS_RULE,
   LOOP_TEXT,
   MEMORY_PROMPT,
+  MIN_MODEL_CALL_MS,
   IFTA_PROMPT,
   MONEY_CODE_PROMPT,
   OPERATOR_PROMPT,
@@ -306,7 +311,8 @@ describe("runTurn", () => {
         result({ toolCalls: [call("s3", "propose_advance")] }),
       ],
       (c) => {
-        if (c.id === "s2") now.t = 15_000; // 7 seconds left: under the escalation's minimum
+        // 11.6 seconds left: under the escalation's minimum, still room for a tool round.
+        if (c.id === "s2") now.t = 10_400;
         return invalid("propose_advance");
       },
       { now },
@@ -1669,5 +1675,172 @@ describe("runTurn with verification on", () => {
     many.deps.verification = { enabled: true, maxAttempts: 9 };
     expect(await many.run()).toMatchObject({ endedReason: "escalated", modelCallCount: 3 });
     expect(sentFor(many, "p1")?.note).toContain("(attempt 1 of 3)");
+  });
+});
+
+// The turn's clock in production: four Muse Spark calls of 3 to 9 seconds and a step's database
+// writes did not fit the 22 seconds, and the last call was sent with a second left, timed out with
+// its reservation kept, and the answer read "I stopped after 0 steps".
+describe("runTurn near the end of its clock", () => {
+  const listOutcome = (c: Call): Outcome =>
+    allowed("set_checklist", { set: true }, { checklist: { items: [{ text: "Read the week", state: "doing" }] } });
+  const gateway = (c: Call) => (c.name === "set_checklist" ? listOutcome(c) : allowed(c.name, { totalCents: 150_000 }));
+  const answerNote = (r: Request) => r.messages.some((m) => m.role === "system" && m.content === ANSWER_NOW_NOTE);
+
+  it("sends no call that could not answer, and stops with what it found", async () => {
+    const now = { t: 1_000_000 };
+    const h = harness(
+      [
+        result({ text: "Reading.", toolCalls: [call("c1", "get_pay_items")] }),
+        result({ text: "never sent" }),
+      ],
+      (c) => {
+        now.t += LIMITS.wallClockMs - CALL_MARGIN_MS - MIN_MODEL_CALL_MS + 1;
+        return gateway(c);
+      },
+      { now },
+    );
+    const out = await h.run();
+    expect(h.requests).toHaveLength(1);
+    expect(out).toMatchObject({ status: "partial", endedReason: "clock", modelCallCount: 1 });
+    expect(out.text).toBe(`${LOOP_TEXT.stopped}\n\nReading.`);
+  });
+
+  it("asks for the answer itself when there is no room for another tool round", async () => {
+    const now = { t: 1_000_000 };
+    const h = harness(
+      [result({ toolCalls: [call("c1", "get_pay_items")] }), result({ text: "Pay is $1,500.00 this week." })],
+      (c) => {
+        now.t += LIMITS.wallClockMs - CALL_MARGIN_MS - ANSWER_NOW_MS + 1;
+        return gateway(c);
+      },
+      { now },
+    );
+    const out = await h.run();
+    expect(out).toMatchObject({ status: "done", text: "Pay is $1,500.00 this week.", modelCallCount: 2 });
+    expect(answerNote(h.requests[0].request)).toBe(false);
+    expect(answerNote(h.requests[1].request)).toBe(true);
+    expect(h.steps.filter((s) => s.kind === "model").map((s) => s.detail.answerNow ?? false)).toEqual([false, true]);
+  });
+
+  it("never runs a tool call the answer call makes anyway", async () => {
+    const now = { t: 1_000_000 };
+    const h = harness(
+      [
+        result({ text: "Reading.", toolCalls: [call("c1", "get_pay_items")] }),
+        result({ text: "One more read.", toolCalls: [call("c2", "get_pay_items")] }),
+      ],
+      (c) => {
+        now.t += LIMITS.wallClockMs - CALL_MARGIN_MS - ANSWER_NOW_MS + 1;
+        return gateway(c);
+      },
+      { now },
+    );
+    const out = await h.run();
+    expect(h.calls.map((c) => c.id)).toEqual(["c1"]);
+    expect(out).toMatchObject({ status: "partial", endedReason: "clock" });
+  });
+
+  it("keeps a whole answer sent with only a checklist write, and drops the write", async () => {
+    const now = { t: 1_000_000 };
+    const h = harness(
+      [
+        result({ toolCalls: [call("c1", "get_pay_items")] }),
+        result({
+          text: "Pay is $1,500.00 this week.",
+          toolCalls: [call("l1", "set_checklist", { items: [{ text: "Read the week", state: "done" }] })],
+        }),
+      ],
+      (c) => {
+        now.t += LIMITS.wallClockMs - CALL_MARGIN_MS - ANSWER_NOW_MS + 1;
+        return gateway(c);
+      },
+      { now },
+    );
+    const out = await h.run();
+    expect(h.calls.map((c) => c.id)).toEqual(["c1"]);
+    expect(out).toMatchObject({ status: "done", endedReason: null, text: "Pay is $1,500.00 this week." });
+  });
+
+  it("keeps nothing in hand as done when the answer call's checklist write is dropped", async () => {
+    const now = { t: 1_000_000 };
+    const h = harness(
+      [
+        result({ toolCalls: [call("l1", "set_checklist", { items: [{ text: "Read the week", state: "doing" }] })] }),
+        result({
+          text: "Here is the week.",
+          toolCalls: [call("l2", "set_checklist", { items: [{ text: "Read the week", state: "done" }] })],
+        }),
+      ],
+      (c) => {
+        now.t += LIMITS.wallClockMs - CALL_MARGIN_MS - ANSWER_NOW_MS + 1;
+        return gateway(c);
+      },
+      { now },
+    );
+    const out = await h.run();
+    expect(h.calls.map((c) => c.id)).toEqual(["l1"]);
+    expect(out).toMatchObject({ status: "done", endedReason: null, text: "Here is the week." });
+    expect(h.finished()?.checklist?.items.map((i) => i.state)).toEqual(["not_done"]);
+  });
+
+  it("shows the text from before the answer call's dropped calls, never words written beside them", async () => {
+    const now = { t: 1_000_000 };
+    const h = harness(
+      [
+        result({ text: "Reading.", toolCalls: [call("c1", "get_pay_items")] }),
+        result({ text: "A card is ready.", toolCalls: [call("p1", "propose_advance", { driverId: DRIVER })] }),
+      ],
+      (c) => {
+        now.t += LIMITS.wallClockMs - CALL_MARGIN_MS - ANSWER_NOW_MS + 1;
+        return gateway(c);
+      },
+      { now },
+    );
+    const out = await h.run();
+    expect(h.calls.map((c) => c.id)).toEqual(["c1"]);
+    expect(out).toMatchObject({ status: "partial", endedReason: "clock" });
+    expect(out.text).toBe(`${LOOP_TEXT.stopped}\n\nReading.`);
+    expect(out.text).not.toContain("A card is ready.");
+  });
+
+  it("reads the call window again after the step is written, and sends no call that could not answer", async () => {
+    const now = { t: 1_000_000 };
+    const h = harness([result({ text: "never sent" })], gateway, { now });
+    const startStep = h.deps.store.startStep.bind(h.deps.store);
+    h.deps.store.startStep = async (turnId, s) => {
+      if (s.kind === "model") now.t += LIMITS.wallClockMs - CALL_MARGIN_MS - MIN_MODEL_CALL_MS + 1;
+      return startStep(turnId, s);
+    };
+    const out = await h.run();
+    expect(h.requests).toHaveLength(0);
+    expect(out).toMatchObject({ status: "partial", endedReason: "clock", modelCallCount: 0 });
+    expect(out.text).toBe(LOOP_TEXT.stopped);
+    const model = h.steps.filter((s) => s.kind === "model");
+    expect(model).toHaveLength(1);
+    expect(model[0]).toMatchObject({ state: "failed", detail: { category: "clock" } });
+  });
+
+  it("tells the model to read next after a checklist sent alone, and only then", async () => {
+    const h = harness(
+      [
+        result({ toolCalls: [call("l1", "set_checklist", { items: [{ text: "Read the week", state: "doing" }] })] }),
+        result({
+          toolCalls: [call("l2", "set_checklist", { items: [{ text: "Read the week", state: "doing" }] }), call("c1", "get_pay_items")],
+        }),
+        result({ text: "Pay is $1,500.00 this week." }),
+      ],
+      gateway,
+    );
+    await h.run();
+    const sent = (i: number, id: string) =>
+      JSON.parse(h.requests[i].request.messages.find((m) => m.role === "tool" && m.toolCallId === id)!.content as string);
+    expect(sent(1, "l1").note).toBe(CHECKLIST_ALONE_NOTE);
+    expect(sent(2, "l2").note).toBeUndefined();
+  });
+
+  it("writes the answer without dashes and with plain dates", async () => {
+    const h = harness([result({ text: "Overdue as of 2026-11-03 \u2014 four invoices." })], gateway);
+    expect((await h.run()).text).toBe("Overdue as of Nov 3, 2026, four invoices.");
   });
 });
