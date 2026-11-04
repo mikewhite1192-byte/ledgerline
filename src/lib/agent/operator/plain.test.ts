@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
-import { plainAnswer } from "./plain";
+import { houseDollars } from "./figures";
+import { onProse, plainAnswer } from "./plain";
 
 // The dashes are written as escapes so this file holds none itself.
 const EM = "\u2014";
@@ -34,6 +35,33 @@ describe("plainAnswer", () => {
     );
     expect(plainAnswer("load LD-2026-11-03 and 12026-11-03x")).toBe("load LD-2026-11-03 and 12026-11-03x");
     expect(plainAnswer("2026-13-40")).toBe("2026-13-40");
+  });
+
+  it("puts back the apostrophe in \"this week's\" and leaves a real plural alone", () => {
+    expect(plainAnswer("This weeks pay run has 4 paystubs; this weeks loads are in.")).toBe(
+      "This week's pay run has 4 paystubs; this week's loads are in.",
+    );
+    expect(plainAnswer("This week's pay and the last two weeks are paid.")).toBe("This week's pay and the last two weeks are paid.");
+    expect(plainAnswer("Rosa's weeks ran long.")).toBe("Rosa's weeks ran long.");
+  });
+
+  it("says a table is below the answer, where the chat shows it", () => {
+    expect(plainAnswer("The full table above lists every driver.")).toBe("The full table below lists every driver.");
+    expect(plainAnswer("See the report shown above. The table is above.")).toBe("See the report shown below. The table is below.");
+    expect(plainAnswer("The above table has 3 rows.")).toBe("The table below has 3 rows.");
+    expect(plainAnswer("Two advances are above the limit.")).toBe("Two advances are above the limit.");
+    expect(plainAnswer("Drivers in the table above $2,000 gross.")).toBe("Drivers in the table above $2,000 gross.");
+    expect(plainAnswer("Run `table above` then wait.")).toBe("Run `table above` then wait.");
+    expect(plainAnswer("Drivers in the table above the limit need review.")).toBe(
+      "Drivers in the table above the limit need review.",
+    );
+  });
+
+  it("passes only the prose to a rewrite, never a code span or a link", () => {
+    expect(onProse("Paid $1707.75, see https://x.io/receipt/$100 and `$2000` today.", houseDollars)).toBe(
+      "Paid $1,707.75, see https://x.io/receipt/$100 and `$2000` today.",
+    );
+    expect(onProse("Net $2375\n`$5` then $5", houseDollars)).toBe("Net $2,375.00\n`$5` then $5.00");
   });
 
   it("leaves text with neither unchanged", () => {

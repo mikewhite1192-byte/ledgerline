@@ -122,7 +122,7 @@ export const TRUST_PROMPT = [
 export const CASH_PROMPT = [
   "- \"Can we make Friday's pay run?\": call get_cash_friday. Say covered or short and by how much,",
   "  then the moves it found; a person presses Check Friday's cash and approves each card on the",
-  "  Cash page.",
+  "  Friday's cash page.",
 ].join("\n");
 
 // Added to the prompt only while get_collections is offered (flags.collectionsEnabled), so a turn
@@ -273,6 +273,13 @@ export const MIN_MODEL_CALL_MS = 4_000;
 // answer, so the call is asked for the answer itself (ANSWER_NOW_NOTE) and any tool call it makes
 // anyway is not run. A full answer took 4 to 7 seconds in production.
 export const ANSWER_NOW_MS = 10_000;
+
+// Before any read has run, an answer now has nothing to answer from (production turns whose first
+// response was set_checklist alone ended "I stopped after 0 steps"). So with no tool step yet, a
+// call is asked for the answer only under room for the shortest read call and then the shortest
+// answer call: twice MIN_MODEL_CALL_MS. Above it the call keeps its tools; the turn's clock and
+// caps still bound it, and a read that leaves no time to answer ends with what it found.
+export const READ_FIRST_MS = 2 * MIN_MODEL_CALL_MS;
 
 export const ANSWER_NOW_NOTE =
   "Time is nearly up. Do not call any tool. Answer the person now from the tool results above, " +

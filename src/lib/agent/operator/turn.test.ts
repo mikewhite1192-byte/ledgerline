@@ -18,6 +18,7 @@ import {
   LOOP_TEXT,
   MEMORY_PROMPT,
   MIN_MODEL_CALL_MS,
+  READ_FIRST_MS,
   IFTA_PROMPT,
   MONEY_CODE_PROMPT,
   OPERATOR_PROMPT,
@@ -564,6 +565,31 @@ describe("runTurn", () => {
     expect(lastModel.detail.maskedFigures).toBe(1);
   });
 
+  it("writes each kept dollar figure with its commas and cents, in the answer and the step's note", async () => {
+    const h = harness(
+      [
+        result({ toolCalls: [call("c1", "get_pay_items")] }),
+        result({ reasoningSummary: "Net is $2375; say it.", text: "Gross is $1707.75 and net is $2375." }),
+      ],
+      () => allowed("get_pay_items", { grossCents: 170_775, netCents: 237_500 }),
+    );
+    const out = await h.run();
+    expect(out.text).toBe("Gross is $1,707.75 and net is $2,375.00.");
+    const models = h.steps.filter((s) => s.kind === "model");
+    expect(h.notes.get(models[1].id)).toBe("Net is $2,375.00; say it.");
+  });
+
+  it("leaves a dollar figure inside a code span or a link as written", async () => {
+    const h = harness(
+      [
+        result({ toolCalls: [call("c1", "get_pay_items")] }),
+        result({ text: "Gross is $1707.75; see https://x.io/receipt/$1707.75 or `$1707.75`." }),
+      ],
+      () => allowed("get_pay_items", { grossCents: 170_775 }),
+    );
+    expect((await h.run()).text).toBe("Gross is $1,707.75; see https://x.io/receipt/$1707.75 or `$1707.75`.");
+  });
+
   it("lets a figure the person typed this turn through, and still withholds an invented one", async () => {
     const h = harness(
       [result({ text: "Sam can get $500 once a person approves it, not $612.34." })],
@@ -573,7 +599,7 @@ describe("runTurn", () => {
       { text: "Can Sam get $500?" },
     );
     const out = await h.run();
-    expect(out.text).toBe(`Sam can get $500 once a person approves it, not ${WITHHELD}.`);
+    expect(out.text).toBe(`Sam can get $500.00 once a person approves it, not ${WITHHELD}.`);
     expect(h.steps[0].detail.maskedFigures).toBe(1);
   });
 
@@ -848,6 +874,19 @@ describe("runTurn with a checklist", () => {
     expect(await h.run()).toMatchObject({ status: "done", text: "Proposed the advance." });
     expect(h.proposals.size).toBe(1);
     expect(states(h.finished()?.checklist)).toEqual(["done", "done"]);
+  });
+
+  it("leaves the item in hand not finished when the finished answer says it could not check it", async () => {
+    const h = harness(
+      [
+        result({ toolCalls: [list("l1", [{ text: "Read the week", state: "doing" }, { text: "Find pay problems and why" }]), call("c1", "get_pay_items")] }),
+        result({ toolCalls: [list("l2", [{ text: "Read the week", state: "done" }, { text: "Find pay problems and why", state: "doing" }]), call("c2", "get_pay_items")] }),
+        result({ text: "Two paystubs are short. I could not check why." }),
+      ],
+      gateway({}),
+    );
+    expect(await h.run()).toMatchObject({ status: "done", text: "Two paystubs are short. I could not check why." });
+    expect(states(h.finished()?.checklist)).toEqual(["done", "not_done"]);
   });
 
   it("keeps today's stop line and stores no list when the answer set none", async () => {
@@ -1773,7 +1812,8 @@ describe("runTurn near the end of its clock", () => {
         }),
       ],
       (c) => {
-        now.t += LIMITS.wallClockMs - CALL_MARGIN_MS - ANSWER_NOW_MS + 1;
+        // No read yet: under room for a read and an answer, so the next call is the answer.
+        now.t += LIMITS.wallClockMs - CALL_MARGIN_MS - READ_FIRST_MS + 1;
         return gateway(c);
       },
       { now },
@@ -1819,6 +1859,77 @@ describe("runTurn near the end of its clock", () => {
     const model = h.steps.filter((s) => s.kind === "model");
     expect(model).toHaveLength(1);
     expect(model[0]).toMatchObject({ state: "failed", detail: { category: "clock" } });
+  });
+
+  it("still reads and answers after a first response that held only the checklist", async () => {
+    const now = { t: 1_000_000 };
+    const h = harness(
+      [
+        result({ toolCalls: [call("l1", "set_checklist", { items: [{ text: "Read the week", state: "doing" }] })] }),
+        result({ toolCalls: [call("c1", "get_pay_items")] }),
+        result({ text: "Pay is $1,500.00 this week." }),
+      ],
+      (c) => {
+        // The checklist response used the clock down to under ANSWER_NOW_MS for the next call, yet
+        // above room for one read and an answer.
+        if (c.name === "set_checklist") now.t += LIMITS.wallClockMs - CALL_MARGIN_MS - ANSWER_NOW_MS + 1;
+        return gateway(c);
+      },
+      { now },
+    );
+    h.deps.tools = [...TOOLS, { name: "set_checklist", description: "checklist", parameters: {} }];
+    const out = await h.run();
+    expect(out).toMatchObject({ status: "done", endedReason: null, text: "Pay is $1,500.00 this week.", modelCallCount: 3 });
+    expect(h.calls.map((c) => c.id)).toEqual(["l1", "c1"]);
+    // The read call keeps its tools but not set_checklist; the call after the read answers.
+    const offered = (i: number) => (h.requests[i].request.tools ?? []).map((t) => t.name);
+    expect(offered(0)).toContain("set_checklist");
+    expect(offered(1)).not.toContain("set_checklist");
+    expect(offered(1)).toContain("get_pay_items");
+    expect(offered(2)).toContain("set_checklist");
+    expect(h.requests.map((r) => answerNote(r.request))).toEqual([false, false, true]);
+    expect(h.finished()?.checklist?.items.map((i) => i.state)).toEqual(["done"]);
+  });
+
+  it("still offers set_checklist after a checklist sent alone was refused, and drops it only after one is kept", async () => {
+    const now = { t: 1_000_000 };
+    const h = harness(
+      [
+        result({ toolCalls: [call("l1", "set_checklist", { items: "not a list" })] }),
+        result({ toolCalls: [call("l2", "set_checklist", { items: [{ text: "Read the week", state: "doing" }] })] }),
+        result({ toolCalls: [call("c1", "get_pay_items")] }),
+        result({ text: "Pay is $1,500.00 this week." }),
+      ],
+      (c) => (c.id === "l1" ? invalid("set_checklist") : gateway(c)),
+      { now },
+    );
+    h.deps.tools = [...TOOLS, { name: "set_checklist", description: "checklist", parameters: {} }];
+    const out = await h.run();
+    expect(out).toMatchObject({ status: "done", text: "Pay is $1,500.00 this week." });
+    const offered = (i: number) => (h.requests[i].request.tools ?? []).map((t) => t.name);
+    expect(offered(1)).toContain("set_checklist");
+    expect(offered(2)).not.toContain("set_checklist");
+    expect(offered(2)).toContain("get_pay_items");
+    expect(offered(3)).toContain("set_checklist");
+  });
+
+  it("still stops on the clock when a checklist sent alone left no room for a read and an answer", async () => {
+    const now = { t: 1_000_000 };
+    const h = harness(
+      [
+        result({ toolCalls: [call("l1", "set_checklist", { items: [{ text: "Read the week", state: "doing" }] })] }),
+        result({ text: "One read.", toolCalls: [call("c1", "get_pay_items")] }),
+      ],
+      (c) => {
+        now.t += LIMITS.wallClockMs - CALL_MARGIN_MS - READ_FIRST_MS + 1;
+        return gateway(c);
+      },
+      { now },
+    );
+    const out = await h.run();
+    expect(answerNote(h.requests[1].request)).toBe(true);
+    expect(h.calls.map((c) => c.id)).toEqual(["l1"]);
+    expect(out).toMatchObject({ status: "partial", endedReason: "clock" });
   });
 
   it("tells the model to read next after a checklist sent alone, and only then", async () => {

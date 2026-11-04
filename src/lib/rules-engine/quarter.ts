@@ -127,6 +127,9 @@ export type Quarter = {
     grossCents: number;
     deductionsCents: number;
     netCents: number;
+    // Deductions a paystub could not take (they were more than its pay) and moved to the driver's
+    // next paystub: netCents = grossCents - deductionsCents + carriedForwardCents.
+    carriedForwardCents: number;
     exceptionCount: number;
     withProblem: number;
   };
@@ -232,6 +235,7 @@ export function quarterOf(
     grossCents: sum(closedRuns.map((r) => r.grossCents)),
     deductionsCents: sum(closedRuns.map((r) => r.deductionsCents)),
     netCents: sum(closedRuns.map((r) => r.netCents)),
+    carriedForwardCents: sum(closedStubs.map((s) => s.carryForwardCents)),
     exceptionCount: sum(closedRuns.map((r) => r.exceptionCount)),
     withProblem: sum(closedRuns.map((r) => r.withProblem)),
   };
@@ -370,6 +374,9 @@ export function quarterFigures(q: Omit<Quarter, "figures">): BriefFigure[] {
   add({ label: "Gross pay, closed pay runs", kind: "cents", value: q.pay.grossCents, source: runs });
   add({ label: "Deductions, closed pay runs", kind: "cents", value: q.pay.deductionsCents, source: runs });
   add({ label: "Net pay, closed pay runs", kind: "cents", value: q.pay.netCents, source: runs });
+  if (q.pay.carriedForwardCents > 0) {
+    add({ label: "Deductions carried to a later paystub", kind: "cents", value: q.pay.carriedForwardCents, source: runs });
+  }
 
   const report: FigureSource = {
     report: "margin_per_load",

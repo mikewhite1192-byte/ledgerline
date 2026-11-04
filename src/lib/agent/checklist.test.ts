@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
+  answerLeftWork,
   CHECKLIST_STATES,
   checklistArgs,
   checklistSchema,
@@ -127,5 +128,35 @@ describe("the list as the answer ended", () => {
     const after = finalChecklist(list, "done");
     expect(after.items.map((i) => [i.key, i.text])).toEqual(list.items.map((i) => [i.key, i.text]));
     expect(list).toEqual(before);
+  });
+});
+
+describe("an answer that says it could not check part of the work", () => {
+  it("is read from the answer's own first-person words", () => {
+    expect(answerLeftWork("Two paystubs are short. I could not check why.")).toBe(true);
+    expect(answerLeftWork("The week has no paystubs, and I never located her driver record.")).toBe(true);
+    expect(answerLeftWork("I couldn\u2019t confirm the fuel card loads.")).toBe(true);
+    expect(answerLeftWork("I haven't checked the paystub yet.")).toBe(true);
+    expect(answerLeftWork("I have not confirmed the fuel card loads.")).toBe(true);
+    expect(answerLeftWork("i was not able to verify the rate confirmation.")).toBe(true);
+  });
+
+  it("never counts a finished answer, an outside party's words or the withheld figure note", () => {
+    expect(answerLeftWork("Two paystubs are short because a load had no rate.")).toBe(false);
+    expect(answerLeftWork("The bank could not cover Friday, so factoring two invoices closes the gap.")).toBe(false);
+    expect(answerLeftWork(`Rosa is owed ${WITHHELD}.`)).toBe(false);
+    expect(answerLeftWork("I could not propose that.")).toBe(false);
+    expect(answerLeftWork("Everything checks out; I did not look further because all 4 are clean.")).toBe(false);
+    expect(answerLeftWork("The two drivers I could not reach are listed below.")).toBe(false);
+    expect(answerLeftWork("I did not read any problem in the week.")).toBe(false);
+  });
+
+  it("reads an adverb before the verb, and never a search that found nothing", () => {
+    expect(answerLeftWork("I could not fully verify the paystub.")).toBe(true);
+    expect(answerLeftWork("I was not able to independently confirm the rate.")).toBe(true);
+    expect(answerLeftWork("I could not yet check the fuel card loads.")).toBe(true);
+    expect(answerLeftWork("I could not locate any unpaid invoices.")).toBe(false);
+    expect(answerLeftWork("I could not confirm anything wrong with the week.")).toBe(false);
+    expect(answerLeftWork("I did not get to any of the paystubs.")).toBe(true);
   });
 });

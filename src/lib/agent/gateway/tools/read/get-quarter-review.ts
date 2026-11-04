@@ -1,5 +1,6 @@
 import { z } from "zod";
 import { flags } from "../../../../../config/flags";
+import { bpsText } from "../../../../briefs/figures";
 import { QUARTER_SECTIONS, readQuarterView } from "../../../../briefs/quarter-review";
 import { briefPlainText } from "../../../../briefs/render";
 import { QUARTER_CUSTOMERS } from "../../../../rules-engine";
@@ -17,8 +18,11 @@ export const getQuarterReview = defineTool({
     "margin on priced loads, invoices issued and payments received, open receivables, money " +
     "recovered (detention, pay corrections, advances), the paystub problems and the agent's fixes " +
     "by status and kind, the top customers, and the checked review's four lists when one was " +
-    "written. Money is integer cents, margin in basis points. Quote these figures exactly; never " +
-    "add or derive one. This only reads.",
+    "written. Net pay is gross minus deductions plus deductions carried forward: when a paystub's " +
+    "deductions are more than its pay, net stops at zero and the rest moves to the driver's next " +
+    "paystub (carriedForwardCents). Money is integer cents; margin is a percent such as " +
+    "\"56.26%\": write it that way, never in basis points. Quote these figures exactly; never add " +
+    "or derive one. This only reads.",
   tier: "read",
   roles: OPERATOR,
   label: "Read the quarter so far",
@@ -44,6 +48,7 @@ export const getQuarterReview = defineTool({
           grossCents: qr.pay.grossCents,
           deductionsCents: qr.pay.deductionsCents,
           netCents: qr.pay.netCents,
+          carriedForwardCents: qr.pay.carriedForwardCents,
           paystubProblems: qr.pay.exceptionCount,
           paystubsWithAProblem: qr.pay.withProblem,
         },
@@ -53,7 +58,7 @@ export const getQuarterReview = defineTool({
           revenueCents: qr.margin.revenueCents,
           driverPayCents: qr.margin.driverPayCents,
           marginCents: qr.margin.marginCents,
-          marginBps: qr.margin.marginBps,
+          marginPercent: qr.margin.marginBps === null ? null : bpsText(qr.margin.marginBps),
         },
         invoiced: { count: qr.invoiced.count, cents: qr.invoiced.cents },
         received: { count: qr.received.count, cents: qr.received.cents },

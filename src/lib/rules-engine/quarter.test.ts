@@ -185,11 +185,33 @@ describe("quarterOf", () => {
       grossCents: 470_000,
       deductionsCents: 60_000,
       netCents: 410_000,
+      carriedForwardCents: 0,
       exceptionCount: 3,
       withProblem: 2,
     });
     // The open run still lists its own paystub and problems.
     expect(q.payRuns[2]).toMatchObject({ paystubs: 1, netCents: 80_000, exceptionCount: 3, withProblem: 1 });
+    // Nothing carried forward: no figure for it.
+    expect(q.figures.map((f) => f.label)).not.toContain("Deductions carried to a later paystub");
+  });
+
+  it("sums the deductions a paystub carried to the next one, so net is gross minus deductions plus them", () => {
+    // Deductions past pay: net stops at zero and the rest carries to the driver's next paystub.
+    const short: SettlementRecord = {
+      ...stub("s5", "p2", "drv-b", 0),
+      grossCents: c(10_000),
+      deductionsCents: c(15_000),
+      netCents: c(0),
+      carryForwardCents: c(5_000),
+    };
+    const base = input();
+    const q = quarterOf({ ...base, settlements: [...base.settlements, short] }, QUARTER, AS_OF);
+    expect(q.pay.carriedForwardCents).toBe(5_000);
+    expect(q.pay.netCents).toBe(q.pay.grossCents - q.pay.deductionsCents + q.pay.carriedForwardCents);
+    const labels = q.figures.map((f) => f.label);
+    const at = labels.indexOf("Deductions carried to a later paystub");
+    expect(at).toBe(labels.indexOf("Net pay, closed pay runs") + 1);
+    expect(q.figures[at]).toMatchObject({ kind: "cents", value: 5_000 });
   });
 
   it("money recovered counts only detention rows whose proposal is done and decided in the quarter", () => {

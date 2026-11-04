@@ -1,7 +1,7 @@
 import { flags } from "../../../config/flags";
 import type { Session } from "../../auth/claims";
 import { AiError, complete, type AiMessage, type AiReplayItem, type AiResult, type AiTool } from "../../ai";
-import { finalChecklist, modelChecklist, sameChecklist, type Checklist, type ChecklistDraft } from "../checklist";
+import { answerLeftWork, finalChecklist, modelChecklist, sameChecklist, type Checklist, type ChecklistDraft } from "../checklist";
 import { callTool, reportRefOf, toolNamed, toolsFor, TOOL_REGISTRY, withTimeout } from "../gateway";
 import { dbTurnStore, engineCompares, type OpenedTurn, type StepFinish, type TurnStore } from "../gateway/store";
 import type { CompleteFn, GatewayContext, GatewayOutcome, ToolCall } from "../gateway/types";
@@ -16,6 +16,7 @@ import {
   escalatedText,
   LOOP_TEXT,
   MIN_MODEL_CALL_MS,
+  READ_FIRST_MS,
   OPERATOR_CALL,
   operatorPrompt,
   TURN_SUMMARY_CHARS,
@@ -29,8 +30,8 @@ import { gatewayVerification, persistVerification, type PersistRefusal, type Pro
 import type { StepView } from "../view";
 import { TurnBudget, type CapReason, type TurnLimits } from "./budget";
 import { idsIn, validateRefs } from "./citations";
-import { centsIn, maskFigures, typedCentsIn } from "./figures";
-import { plainAnswer } from "./plain";
+import { centsIn, houseDollars, maskFigures, typedCentsIn } from "./figures";
+import { onProse, plainAnswer } from "./plain";
 import type { TurnEmitter } from "./stream";
 
 // The operator loop (design 2.2): short Muse Spark turns over a compact state summary, every
@@ -597,6 +598,12 @@ export async function runTurn(input: TurnInput, deps: TurnDeps): Promise<TurnOut
     return outcome.decision === "invalid_args" ? "failed" : "ok";
   };
 
+  // The response before this call held only set_checklist and a checklist was accepted: it read
+  // nothing, so this call is not offered set_checklist and must read or answer
+  // (CHECKLIST_ALONE_NOTE says so too). A list the schema refused leaves the tool offered, so the
+  // model can send it again as it was told.
+  let afterListAlone = false;
+
   const loop = async (): Promise<Ending> => {
     for (;;) {
       const cap = budget.beforeModelCall();
@@ -612,8 +619,10 @@ export async function runTurn(input: TurnInput, deps: TurnDeps): Promise<TurnOut
         await finish(step, "failed", { detail: { category: "clock" } });
         return stopped("clock");
       }
-      const answerNow = callMs < ANSWER_NOW_MS;
-      const called = await modelCall("spark", deps.tools, answerNow);
+      const answerNow = callMs < (budget.toolSteps === 0 ? READ_FIRST_MS : ANSWER_NOW_MS);
+      const offered = afterListAlone ? deps.tools.filter((t) => t.name !== CHECKLIST_TOOL) : deps.tools;
+      afterListAlone = false;
+      const called = await modelCall("spark", offered, answerNow);
       if ("error" in called) {
         await finish(step, "failed", { detail: { category: called.error } });
         return modelFailed(called.error, called.reducedCap);
@@ -621,11 +630,13 @@ export async function runTurn(input: TurnInput, deps: TurnDeps): Promise<TurnOut
       const { result } = called;
       response += 1;
       // Figures the tools did not return, and the person did not type, are withheld before the
-      // text is kept anywhere; then dashes and dates are written the way a person reads them.
+      // text is kept anywhere; then each kept dollar figure in the prose (never in a code span or a
+      // link) is written with its commas and cents ("$1,707.75"), and dashes and dates the way a
+      // person reads them.
       const masked = maskFigures(result.text.trim(), allowedCents);
-      const shown = { ...masked, text: plainAnswer(masked.text) };
+      const shown = { ...masked, text: plainAnswer(onProse(masked.text, houseDollars)) };
       const note = result.reasoningSummary
-        ? plainAnswer(maskFigures(result.reasoningSummary.trim(), allowedCents).text)
+        ? plainAnswer(onProse(maskFigures(result.reasoningSummary.trim(), allowedCents).text, houseDollars))
         : "";
       await finish(step, "done", {
         modelCallId: result.callId,
@@ -681,6 +692,7 @@ export async function runTurn(input: TurnInput, deps: TurnDeps): Promise<TurnOut
         if (stepCap) return stopped(stepCap);
         const outcome = await dispatch({ ...call, modelCallId: result.callId }, "spark", !free);
         messages.push(toolMessage(call, outcome, checklistAlone));
+        if (checklistAlone && outcome.decision === "allowed") afterListAlone = true;
         // The rest of this response's calls are not run: the request goes to a person.
         if (toPerson) return await personEnd(toPerson);
         if (outcome.decision !== "invalid_args") continue;
@@ -718,8 +730,10 @@ export async function runTurn(input: TurnInput, deps: TurnDeps): Promise<TurnOut
   // never a check beside a card that does not exist; so does a list the answer call tried to
   // change and could not. A stop then says what was done and what is left in place of the plain
   // stop line, still followed by what was found. Its count is the tool steps the step cap
-  // counted, not the model calls.
-  const unsettled = listDropped || (refusedResponse > 0 && refusedResponse >= listResponse);
+  // counted, not the model calls. A finished answer that says in its own words it could not
+  // check part of the work leaves the item in hand not done too: never a check beside "I could
+  // not check why".
+  const unsettled = listDropped || (refusedResponse > 0 && refusedResponse >= listResponse) || answerLeftWork(ended.text);
   const finalList = checklist ? finalChecklist(checklist, ended.status === "done" && unsettled ? "partial" : ended.status) : null;
   // An escalation to a person keeps its own line, followed by the same summary.
   const ending: Ending =
