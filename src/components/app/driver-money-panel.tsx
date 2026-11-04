@@ -135,7 +135,7 @@ export function DriverMoneyPanel({
 
   async function arm() {
     const wanted = !identity.armed.on;
-    const ok = await run("arm", `${base}/arm`, { armed: wanted }, wanted ? "Armed. Advances can be paid to this driver." : "Disarmed. Nothing will be paid to this driver until an admin arms them again.");
+    const ok = await run("arm", `${base}/arm`, { armed: wanted }, wanted ? "Cleared to pay. Advances can be paid to this driver." : "No longer cleared to pay. Nothing will be paid to this driver until an admin clears them again.");
     if (ok) setConfirmArm(false);
   }
 
@@ -154,8 +154,8 @@ export function DriverMoneyPanel({
     const note = statusNote.trim();
     if (note !== "") body.note = note;
     const done = active
-      ? "Reactivated. They are not armed: an admin arms them again before any advance."
-      : "Deactivated. They are not armed, so no new money can go to this driver.";
+      ? "Reactivated. They are not cleared to pay: an admin clears them again before any advance."
+      : "Deactivated. They are not cleared to pay, so no new money can go to this driver.";
     if (await run("status", `${base}/status`, body, done, statusSentence)) {
       setConfirmStatus(false);
       setLastDay("");
@@ -218,11 +218,11 @@ export function DriverMoneyPanel({
       <CardBody className="grid gap-6">
         <section aria-labelledby={`${uid}-armed`} className="grid gap-3">
           <h3 id={`${uid}-armed`} className="text-small text-muted-foreground">
-            Armed to receive money
+            Cleared to receive money
           </h3>
           {activation ? (
             <div className="grid gap-1.5">
-              <p className="text-small text-muted-foreground">Before arming</p>
+              <p className="text-small text-muted-foreground">Before clearing to pay</p>
               <ul className="grid gap-1.5">
                 {ACTIVATION_ROWS.map(([step, label]) => {
                   const done = activation.steps[step] === true;
@@ -255,13 +255,13 @@ export function DriverMoneyPanel({
           ) : null}
           <div className="flex flex-wrap items-center gap-3">
             {identity.armed.on ? (
-              <Badge tone="success">{since ? `Armed since ${since}` : "Armed"}</Badge>
+              <Badge tone="success">{since ? `Cleared to pay since ${since}` : "Cleared to pay"}</Badge>
             ) : (
-              <Badge tone="warning">Not armed</Badge>
+              <Badge tone="warning">Not cleared to pay</Badge>
             )}
             {canAdmin && canArm && !confirmArm ? (
               <Button variant="outline" size="sm" disabled={busy} onClick={() => setConfirmArm(true)}>
-                {identity.armed.on ? "Disarm" : "Arm"}
+                {identity.armed.on ? "Stop paying" : "Clear to pay"}
               </Button>
             ) : null}
           </div>
@@ -269,18 +269,18 @@ export function DriverMoneyPanel({
             <div className="flex flex-wrap items-center gap-2">
               <p className="text-body text-foreground">
                 {identity.armed.on
-                  ? `Disarm ${identity.name}? No advance can be paid to them until an admin arms them again.`
-                  : `Arm ${identity.name}? Approved advances can then be paid to their default card.`}
+                  ? `Stop paying ${identity.name}? No advance can be paid to them until an admin clears them again.`
+                  : `Clear ${identity.name} to be paid? Approved advances can then be paid to their default card.`}
               </p>
               <Button
                 variant={identity.armed.on ? "destructive" : "primary"}
                 size="sm"
                 pending={pending === "arm"}
-                pendingLabel={identity.armed.on ? "Disarming" : "Arming"}
+                pendingLabel={identity.armed.on ? "Stopping" : "Clearing"}
                 disabled={busy}
                 onClick={arm}
               >
-                {identity.armed.on ? "Disarm" : "Arm"}
+                {identity.armed.on ? "Stop paying" : "Clear to pay"}
               </Button>
               <Button variant="ghost" size="sm" disabled={busy} onClick={() => setConfirmArm(false)}>
                 Never mind
@@ -288,7 +288,7 @@ export function DriverMoneyPanel({
             </div>
           ) : null}
           {canAdmin && !canArm ? <p className="text-small text-muted-foreground">{panelSentence("driver_inactive")}</p> : null}
-          {!canAdmin ? <p className="text-small text-muted-foreground">Only an admin arms or disarms a driver.</p> : null}
+          {!canAdmin ? <p className="text-small text-muted-foreground">Only an admin clears a driver to be paid or stops it.</p> : null}
         </section>
 
         {status ? (
@@ -308,8 +308,8 @@ export function DriverMoneyPanel({
               <div className="grid gap-3 rounded-lg border border-border p-3">
                 <p className="text-body text-foreground">
                   {identity.activeTo === null
-                    ? `Deactivate ${identity.name}? They are disarmed now, so no new advance or money code can go to them. A payout already sent is not touched, and their pay is still settled.`
-                    : `Reactivate ${identity.name}? They stay not armed until an admin arms them again.`}
+                    ? `Deactivate ${identity.name}? They are no longer cleared to pay now, so no new advance or money code can go to them. A payout already sent is not touched, and their pay is still settled.`
+                    : `Reactivate ${identity.name}? They stay not cleared to pay until an admin clears them again.`}
                 </p>
                 <div className="grid gap-3 sm:grid-cols-2">
                   {identity.activeTo === null ? (

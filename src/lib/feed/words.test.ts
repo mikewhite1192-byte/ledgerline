@@ -139,12 +139,17 @@ describe("feedLine", () => {
     const d = { actor: "desk", key: `desk:${ID}` } as const;
     expect(say({ ...d, event: "desk_claimed", kind: "card_transaction" })).toBe("Picked up a card transaction");
     expect(say({ ...d, event: "desk_done", kind: "inbound_message", code: "drafted" })).toBe("Finished a message: drafted");
-    expect(say({ ...d, event: "desk_failed", kind: "audit", code: "threw" })).toBe("Could not finish an audit: threw");
+    expect(say({ ...d, event: "desk_failed", kind: "audit", code: "threw" })).toBe("Could not finish an audit: it hit an error");
     expect(say({ ...d, event: "desk_skipped", kind: "sweep", code: "switched_off" })).toBe("Skipped a pay check: switched off");
     expect(say({ ...d, event: "desk_skipped", kind: "autopilot", code: "paused" })).toBe("Autopilot (your rules) held an autopilot step: paused");
-    expect(say({ ...d, event: "desk_skipped", kind: "autopilot", code: "before_start" })).toBe("Autopilot (your rules) held an autopilot step: before start");
-    expect(say({ ...d, event: "desk_skipped", kind: "autopilot", code: "no_rule" })).toBe("Autopilot (your rules) held an autopilot step: no rule");
+    expect(say({ ...d, event: "desk_skipped", kind: "autopilot", code: "before_start" })).toBe("Autopilot (your rules) held an autopilot step: before its start date");
+    expect(say({ ...d, event: "desk_skipped", kind: "autopilot", code: "no_rule" })).toBe("Autopilot (your rules) held an autopilot step: no rule set");
     expect(say({ ...d, event: "desk_done", kind: "brand_new_source" })).toBe("Finished a brand new source");
+    // A reason code is said in words, and one with no words is left off, never shown raw.
+    expect(say({ ...d, event: "desk_done", kind: "digest", code: "model_incomplete" })).toBe("Finished a morning digest: written from the facts");
+    expect(say({ ...d, event: "desk_done", kind: "load_event", code: "not_pickup" })).toBe("Finished a load update: not a pickup, nothing to do");
+    expect(say({ ...d, event: "desk_done", kind: "customer_payment", code: "after_payment" })).toBe("Finished a customer payment: reminders checked after the payment");
+    expect(say({ ...d, event: "desk_failed", kind: "audit", code: "some_new_code" })).toBe("Could not finish an audit");
     expect(say({ ...d, event: "desk_sleep", count: 3 })).toBe("Checked the books: 3 things done");
     expect(say({ ...d, event: "desk_sleep", count: 1 })).toBe("Checked the books: 1 thing done");
     expect(feedLine(row({ ...d, event: "desk_sleep", count: 0 }), ZONE)).toBeNull();

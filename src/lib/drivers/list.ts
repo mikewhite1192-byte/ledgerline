@@ -24,7 +24,7 @@ export type Filters = { status: Status; armed: Armed; days: Days; sort: Sort; q:
 export const DEFAULTS: Filters = { status: "active", armed: "all", days: "28", sort: "net", q: "" };
 
 export const STATUS_WORDS: Readonly<Record<Status, string>> = { active: "Active", departed: "Departed", all: "All" };
-export const ARMED_WORDS: Readonly<Record<Armed, string>> = { all: "Any", yes: "Armed", no: "Not armed" };
+export const ARMED_WORDS: Readonly<Record<Armed, string>> = { all: "Any", yes: "Cleared to pay", no: "Not cleared to pay" };
 export const SORT_WORDS: Readonly<Record<Sort, string>> = {
   net: "Net pay",
   gross: "Gross",

@@ -47,7 +47,7 @@ const AGENT_CHECK: Readonly<Record<string, string>> = {
 // only when the load has one.
 const RULE_LINES: Readonly<Record<AdvanceRefusal, (e: EligibilityNow) => string>> = {
   driver_inactive: () => "The driver is active",
-  driver_not_armed: () => "The driver is armed to receive money",
+  driver_not_armed: () => "The driver is cleared to be paid",
   below_minimum: (e) => `At least the carrier's smallest advance, ${formatCents(e.minCents)}`,
   no_unpaid_earnings: () => "The driver has earned pay that is not paid yet",
   exceeds_earned_share: () => "Within the share of earned, unpaid pay the carrier allows",

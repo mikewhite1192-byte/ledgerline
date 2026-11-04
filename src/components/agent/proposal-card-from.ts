@@ -337,6 +337,20 @@ export function cashLines(c: NonNullable<ProposalView["cash"]>): { text: string;
 }
 
 // What the amount line says on a Cash Friday card. A test-mode card never says money came in.
+// A pay correction in the driver's terms: owed money is added to the driver's pay, an overpayment
+// is taken back from it. The label carries the way it goes, so the amount shows unsigned.
+const CORRECTION_LABEL: Partial<Record<ProposalView["status"], { in: string; out: string }>> = {
+  proposed: { out: "Would add to the driver's pay", in: "Would take back from the driver's pay" },
+  approved: { out: "Would add to the driver's pay", in: "Would take back from the driver's pay" },
+  executing: { out: "Would add to the driver's pay", in: "Would take back from the driver's pay" },
+  done: { out: "Added to the driver's pay", in: "Taken back from the driver's pay" },
+};
+
+function correctionLabel(p: ProposalView): string | undefined {
+  if (p.kind !== "pay_correction" || (p.direction !== "in" && p.direction !== "out")) return undefined;
+  return CORRECTION_LABEL[p.status]?.[p.direction];
+}
+
 function cashImpactLabel(p: ProposalView): string | undefined {
   if (p.kind === "bill_defer") return "Bill amount; only its date moves";
   if (p.kind !== "factoring_request" && p.kind !== "collections_chase") return undefined;
@@ -464,11 +478,17 @@ export function proposalCardFrom(
       : [];
   const cash = p.cash ? cashLines(p.cash) : [];
   const cashLabel = cashImpactLabel(p);
+  const correction = correctionLabel(p);
   const parked = p.kind === "advance_payout" ? parkedCard(p, viewer) : undefined;
   const card: CardProps = {
     id: p.id,
     title: `${p.title}${subject}`,
-    impact: { cents: p.amountCents, direction: p.direction, ...(cashLabel ? { label: cashLabel } : {}) },
+    impact: {
+      cents: p.amountCents,
+      direction: p.direction,
+      ...(cashLabel ? { label: cashLabel } : {}),
+      ...(correction ? { label: correction, unsigned: true } : {}),
+    },
     reasons: [
       ...detention,
       ...cash,

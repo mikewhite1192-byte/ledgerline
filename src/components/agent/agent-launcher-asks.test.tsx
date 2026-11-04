@@ -247,15 +247,20 @@ describe("the agent's questions on the launcher", () => {
     expect(server.calls.find((c) => c.url.endsWith("/ack"))?.url).toBe(`/api/asks/${TOLD.id}/ack`);
   });
 
-  it("shows a morning digest with only Got it, and marks it seen", async () => {
+  it("folds a morning digest beside the button, shows it with only Got it when opened, and marks it seen", async () => {
     vi.stubGlobal("localStorage", memoryStorage());
     const server = stubServer({
       reads: [showing([DIGEST])],
       writes: { [`/api/asks/${DIGEST.id}/ack`]: { status: 200, body: { ok: true } } },
     });
     page();
+    const folded = await findBubble();
+    expect(within(folded).queryByText(DIGEST.text)).toBeNull();
+    fireEvent.click(within(folded).getByRole("button", { name: "Read the morning digest" }));
     const b = await findBubble();
     expect(within(b).getByText(DIGEST.text)).toBeTruthy();
+    // The pill's button left with the pill, so the cursor moves to the opened digest.
+    await waitFor(() => expect(document.activeElement).toBe(b));
     expect(within(b).queryByRole("button", { name: "Yes" })).toBeNull();
     expect(within(b).queryByRole("button", { name: "Not now" })).toBeNull();
     await waitFor(() => expect(screen.getByTestId("ask-announcer").textContent).toBe("New note from the agent"));

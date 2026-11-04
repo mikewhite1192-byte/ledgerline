@@ -54,7 +54,9 @@ export type ProposalVerification = {
 export type ProposalCardProps = {
   id: string;
   title: string;
-  impact: { cents: number; direction: "in" | "out" | "none"; label?: string };
+  // unsigned: the label already says which way the money goes (a pay correction "adds to the
+  // driver's pay"), so the amount shows without a sign or color.
+  impact: { cents: number; direction: "in" | "out" | "none"; label?: string; unsigned?: boolean };
   // label, when set, names the record's link in place of its kind and id ("Driver BR-D07's paystub").
   reasons: { text: string; source?: SourceRef; label?: string }[];
   sources?: (SourceRef & { label?: string })[];
@@ -492,6 +494,8 @@ export function ProposalCard({
           {impact.direction === "none" ? (
             // Money that changes place but not hands: the amount, unsigned and uncolored.
             <Money cents={Math.abs(impact.cents)} sign="never" tone="plain" className="text-h2 text-muted-foreground" />
+          ) : impact.unsigned === true ? (
+            <Money cents={Math.abs(impact.cents)} sign="never" tone="plain" className="text-h2" />
           ) : (
             <Money cents={shown} sign={impact.direction === "in" ? "always" : "auto"} className="text-h2" />
           )}

@@ -32,12 +32,13 @@ export const ADMIN_ONLY = "Only an admin sets the autopilot rules.";
 export const NEVER_ALONE_NOTE = "A person always approves this, so Auto is not offered.";
 export const NOT_ARMED_NOTE = "Auto is saved but waits until this kind is switched on.";
 
-// The limits' names, in the admin form and the read-only table alike.
+// The limits' names, in the admin form and the read-only table alike. Amounts show and are typed
+// in dollars; the rule keeps whole cents.
 export const LIMIT_LABELS = {
-  maxCents: "Most each time, in cents",
-  dayMaxCents: "Most each day, in cents",
-  dayMaxCount: "Most each day, count",
-  driverDayMaxCents: "Most per driver each day, in cents",
+  maxCents: "Most each time",
+  dayMaxCents: "Most each day",
+  dayMaxCount: "How many each day",
+  driverDayMaxCents: "Most per driver each day",
 } as const;
 
 // The note under a kind's rule: Auto not offered there, or Auto saved on a kind not switched on
@@ -55,7 +56,8 @@ export const RULE_SAVE_MESSAGES: Messages = {
   not_found: "The autopilot rules are off for this carrier. Nothing was changed.",
   role: ADMIN_ONLY + " Nothing was changed.",
   forbidden: ADMIN_ONLY + " Nothing was changed.",
-  bad_request: "That rule was not understood. Check each limit is a whole number. Nothing was changed.",
+  bad_request: "That rule was not understood. Check each amount is in dollars, like 300.00, and each count is a whole " +
+    "number. Nothing was changed.",
   never_alone: "A person always approves this kind, so it cannot be set to Auto. Nothing was changed.",
   over_ceiling: "A limit is above the most this kind allows. Nothing was changed.",
   changed: "Someone changed this rule a moment ago. The rule now shows as saved; check it and save again.",

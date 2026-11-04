@@ -294,6 +294,8 @@ export type BoardRow = {
   statusLabel: string;
   customerName: string | null;
   driverExternalId: string | null;
+  // The driver's name as the sample system lists it; null when no driver or no such party.
+  driverName: string | null;
   truckUnit: string | null;
   lane: string;
   updatedAt: Instant;
@@ -311,11 +313,14 @@ export async function readBoard(q: Queryable): Promise<{ zone: string; rows: Boa
     status_label: string;
     customer_name: string | null;
     driver_external_id: string | null;
+    driver_name: string | null;
     truck_unit: string | null;
     lane: string | null;
     updated_at: string;
   }>(
     `SELECT l.reference, l.status_label, l.customer_name, l.driver_external_id, l.truck_unit, ${ts("l.updated_at")} AS updated_at,
+            (SELECT p.name FROM mock_tms_parties p
+              WHERE p.tenant_id = l.tenant_id AND p.kind = 'driver' AND p.external_id = l.driver_external_id) AS driver_name,
             (SELECT string_agg(s.city || ', ' || s.state, ' to ' ORDER BY s.ordinal) FROM mock_tms_stops s
               WHERE s.tenant_id = l.tenant_id AND s.mock_load_id = l.id) AS lane
        FROM mock_tms_loads l WHERE l.tenant_id = current_tenant_id()
@@ -328,6 +333,7 @@ export async function readBoard(q: Queryable): Promise<{ zone: string; rows: Boa
       statusLabel: r.status_label,
       customerName: r.customer_name,
       driverExternalId: r.driver_external_id,
+      driverName: r.driver_name,
       truckUnit: r.truck_unit,
       lane: r.lane ?? "",
       updatedAt: r.updated_at,

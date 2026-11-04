@@ -125,7 +125,7 @@ describe("the desk's suggestion", () => {
 
   it("says so instead of suggesting for a driver not armed or allowed nothing", () => {
     expect(suggestionLine({ armed: false, suggestedCents: 30_000, load: null })).toBe(
-      "This driver is not armed to receive money yet. An admin can arm them on the driver page.",
+      "This driver is not cleared to be paid yet. An admin can clear them on the driver page.",
     );
     expect(suggestionLine({ armed: true, suggestedCents: 0, load: null })).toBe(
       "The pay rules allow no advance for this driver right now.",

@@ -64,7 +64,7 @@ describe("the advance request form's suggested amount", () => {
 
     // A driver nobody armed suggests nothing, so the last suggestion does not stay behind.
     fireEvent.change(driver, { target: { value: C } });
-    await screen.findByText(/not armed to receive money/);
+    await screen.findByText(/not cleared to be paid/);
     expect(amount.value).toBe("");
 
     fireEvent.change(amount, { target: { value: "123" } });

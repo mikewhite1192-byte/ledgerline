@@ -201,7 +201,7 @@ export const REPORT_COLUMNS: Readonly<Record<ReportName, readonly ReportColumn[]
     { key: "driver", header: "Driver", kind: "ref" },
     { key: "workerType", header: "Type", kind: "text" },
     { key: "status", header: "Status", kind: "text" },
-    { key: "armed", header: "Armed", kind: "text" },
+    { key: "armed", header: "Cleared to pay", kind: "text" },
     { key: "netCents", header: "Net pay", kind: "cents" },
     { key: "grossCents", header: "Gross", kind: "cents" },
     { key: "deductionsCents", header: "Deductions", kind: "cents" },

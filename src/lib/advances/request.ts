@@ -117,7 +117,7 @@ export type SuggestionNumbers = {
 };
 
 export function suggestionLine(s: SuggestionNumbers): string {
-  if (!s.armed) return "This driver is not armed to receive money yet. An admin can arm them on the driver page.";
+  if (!s.armed) return "This driver is not cleared to be paid yet. An admin can clear them on the driver page.";
   if (s.suggestedCents <= 0) return "The pay rules allow no advance for this driver right now.";
   const load = s.load ? ` (cap ${dollars(s.load.capCents)}, open ${dollars(s.load.openOnLoadCents)})` : "";
   return `Suggested: ${dollars(s.suggestedCents)}${load}`;

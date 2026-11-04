@@ -33,7 +33,20 @@ function clockWords(local: string): string {
   return `${formatLocalDate(day)}, ${h % 12 === 0 ? 12 : h % 12}:${String(m).padStart(2, "0")} ${h < 12 ? "AM" : "PM"}`;
 }
 const windowOf = (from: string | null, to: string | null) =>
-  from === null || to === null ? "None" : `${clockWords(from)} to ${clockWords(to)}`;
+  from === null || to === null ? "Not set" : `${clockWords(from)} to ${clockWords(to)}`;
+
+// A history row's field and change in words: the driver by name, and "Set to" when there was no
+// value before.
+const FIELD_WORDS: Record<string, string> = {
+  status: "Status",
+  driver: "Driver",
+  pickup_completed: "Pickup completed",
+  delivery_completed: "Delivery completed",
+};
+function changeWords(from: string | null, to: string | null, name: (v: string) => string): string {
+  if (to === null) return from === null ? "Cleared" : `Cleared (was ${name(from)})`;
+  return from === null ? `Set to ${name(to)}` : `${name(from)} to ${name(to)}`;
+}
 
 function decodeRef(raw: string): string | null {
   try {
@@ -79,7 +92,9 @@ export default async function MockLoadPage({ params }: { params: Promise<{ ref: 
   const pickup = view.stops.find((s) => s.kind === "pickup" && s.completedAt === null);
   const delivery = view.stops.find((s) => s.kind === "delivery" && s.completedAt === null);
   const nowLocal = localClockOf(new Date().toISOString(), zone);
-  const driverName = view.drivers.find((d) => d.externalId === load.driverExternalId)?.name ?? load.driverExternalId;
+  const { drivers } = view;
+  const nameOf = (id: string) => drivers.find((d) => d.externalId === id)?.name ?? id;
+  const driverName = load.driverExternalId === null ? null : nameOf(load.driverExternalId);
 
   return (
     <div className="grid gap-6">
@@ -104,22 +119,22 @@ export default async function MockLoadPage({ params }: { params: Promise<{ ref: 
           <dl className="grid gap-2 text-body sm:grid-cols-2">
             <div>
               <dt className="text-small text-foreground-2">Customer</dt>
-              <dd>{load.customerName ?? "None"}</dd>
+              <dd>{load.customerName ?? "Not set"}</dd>
             </div>
             <div>
               <dt className="text-small text-foreground-2">Driver</dt>
-              <dd>{driverName ?? "None"}</dd>
+              <dd>{driverName ?? "Not assigned"}</dd>
             </div>
             <div>
               <dt className="text-small text-foreground-2">Truck</dt>
-              <dd>{load.truckUnit ?? "None"}</dd>
+              <dd>{load.truckUnit ?? "Not assigned"}</dd>
             </div>
             <div>
               <dt className="text-small text-foreground-2">Last change</dt>
               <dd>{formatInstant(load.updatedAt, zone)}</dd>
             </div>
             <div className="sm:col-span-2">
-              <dt className="text-small text-foreground-2">Last webhook to LedgerLine</dt>
+              <dt className="text-small text-foreground-2">Last notification status</dt>
               <dd>
                 {load.lastHookAt === null || load.lastHookResult === null
                   ? "None yet"
@@ -234,9 +249,8 @@ export default async function MockLoadPage({ params }: { params: Promise<{ ref: 
             <THead>
               <Tr>
                 <Th>When</Th>
-                <Th>Field</Th>
-                <Th>From</Th>
-                <Th>To</Th>
+                <Th>What</Th>
+                <Th>Change</Th>
                 <Th>By</Th>
               </Tr>
             </THead>
@@ -244,9 +258,8 @@ export default async function MockLoadPage({ params }: { params: Promise<{ ref: 
               {view.history.map((h) => (
                 <Tr key={h.seq}>
                   <Td>{formatInstant(h.at, zone)}</Td>
-                  <Td>{h.field}</Td>
-                  <Td>{h.from ?? "None"}</Td>
-                  <Td>{h.to ?? "None"}</Td>
+                  <Td>{FIELD_WORDS[h.field] ?? h.field}</Td>
+                  <Td>{changeWords(h.from, h.to, h.field === "driver" ? nameOf : (v) => v)}</Td>
                   <Td>{h.by ?? "Unknown"}</Td>
                 </Tr>
               ))}

@@ -166,6 +166,14 @@ describe("SweepRun", () => {
     // Each card is listed once on the page.
     expect(screen.getAllByRole("article", { hidden: true })).toHaveLength(STATUSES.length);
   });
+
+  it("names the driver on a fix card, and says the owed amount is added to the driver's pay, unsigned", () => {
+    const named = { ...page, items: page.items.map((i) => (i.proposalId === "p-proposed" ? { ...i, driverName: "Dana Reyes" } : i)) };
+    render(<SweepRun initial={named} auditorOn />);
+    const card = screen.getByRole("article", { name: "Pay correction for Dana Reyes (D-proposed)" });
+    expect(within(card).getByText("Would add to the driver's pay")).toBeTruthy();
+    expect(card.textContent).not.toContain("\u2212$");
+  });
 });
 
 // The page's requests, answered from a table; a refresh reads the page back unchanged. An answer

@@ -9,7 +9,7 @@ export default function TmsDemoLayout({ children }: { children: ReactNode }) {
   if (flags.mockTms.enabled !== true) notFound();
   return (
     <main className="flex min-h-dvh flex-col bg-background px-4 pt-8 pb-10">
-      <div className="mx-auto grid w-full max-w-[960px] gap-6">
+      <div className="mx-auto grid w-full max-w-[960px] min-w-0 grid-cols-1 gap-6">
         <header className="grid gap-1">
           <p className="text-h3 text-foreground">Sample dispatch system</p>
           <p className="text-body text-foreground-2">

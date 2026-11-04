@@ -154,10 +154,24 @@ export type RatesPage = {
 
 const slotKey = (kind: string, state: string | null) => `${kind}:${state ?? "--"}`;
 
+// Who may read the page: any member, a demo visitor (the judge role) included, who reads what a
+// staff member reads. Only the read takes a judge; a lookup or a pin still asks memberOf.
+async function readerOf(q: Queryable, sub: string): Promise<{ id: string; role: string } | null> {
+  const rows = await q.query<{ id: unknown; role: unknown }>(
+    `SELECT CAST(id AS text) AS id, role FROM memberships
+      WHERE tenant_id = current_tenant_id() AND cognito_sub = $1`,
+    [sub],
+  );
+  if (rows.length !== 1) return null;
+  const [r] = rows;
+  if (!isUuid(r.id) || (r.role !== "admin" && r.role !== "staff" && r.role !== "judge")) return null;
+  return { id: r.id, role: r.role };
+}
+
 // The page: each live pin, and the latest lookup for each kind and state when it is newer than
 // that pin and was not pinned. Null when the person has no membership here.
 export async function readRatesPage(q: Queryable, sub: string, now: Date): Promise<RatesPage | null> {
-  const member = await memberOf(q, sub);
+  const member = await readerOf(q, sub);
   const day = await carrierToday(q, now);
   if (!member || !day) return null;
   const pins = await q.query<RateRow>(

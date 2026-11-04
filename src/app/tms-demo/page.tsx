@@ -77,9 +77,9 @@ export default async function TmsDemoBoard() {
                       </Link>
                     </Td>
                     <Td>{r.statusLabel}</Td>
-                    <Td>{r.customerName ?? "None"}</Td>
-                    <Td>{r.driverExternalId ?? "None"}</Td>
-                    <Td>{r.truckUnit ?? "None"}</Td>
+                    <Td>{r.customerName ?? "Not set"}</Td>
+                    <Td>{r.driverName ?? r.driverExternalId ?? "Not assigned"}</Td>
+                    <Td>{r.truckUnit ?? "Not assigned"}</Td>
                     <Td>{r.lane}</Td>
                     <Td>{formatInstant(r.updatedAt, view.zone)}</Td>
                   </Tr>

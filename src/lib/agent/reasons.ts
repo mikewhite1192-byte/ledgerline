@@ -40,14 +40,14 @@ const SENTENCES: Readonly<Record<string, string>> = {
   // propose_payment_reapply
   payment_on_wrong_invoice:
     "The payment matches another open invoice for the same customer exactly, and overpays the one it is on.",
-  driver_not_armed: "The driver is not armed to receive money. An admin can arm them on the driver page.",
+  driver_not_armed: "The driver is not cleared to be paid yet. An admin can clear them on the driver page.",
   over_load_cap: "The amount is over what is left under the per-load cap for this load.",
   // the rules engine's money code checks (rules-engine/money-codes.ts)
   load_in_transit: "The driver's load is on the road now.",
   load_delivered_recently: "The driver's load was delivered in the last three days.",
   receipt_total_matches: "The receipt's total, type and load number match the code asked for.",
   voice_amount: "The driver's voice note names this exact amount.",
-  driver_armed: "The driver is armed to receive money.",
+  driver_armed: "The driver is cleared to be paid.",
   // propose_rule_change
   rule_change_sized_by_engine: "Sized on last week's pay with the same math that pays drivers.",
   // a pay rule change refused: escrow per week while a driver's escrow schedule runs

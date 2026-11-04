@@ -78,6 +78,8 @@ export function lookupNotice(outcome: string): { tone: "success" | "info" | "war
       };
     case "forbidden":
       return { tone: "warning", text: "Only staff of this carrier can look up a rate." };
+    case "judge":
+      return { tone: "warning", text: "A demo visit can read the rates but not look one up. Nothing was changed." };
     case "disabled":
       return { tone: "warning", text: "Fuel and tax rates are off for this carrier. Nothing was changed." };
     case "unknown":

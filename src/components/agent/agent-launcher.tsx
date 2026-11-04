@@ -1,6 +1,6 @@
 "use client";
 
-import { MessageCircle } from "lucide-react";
+import { MessageCircle, X } from "lucide-react";
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { cn } from "@/lib/cn";
 import { ASK_ANCHOR } from "@/components/app/anchors";
@@ -49,7 +49,8 @@ const ANNOUNCE_MS = 3_000;
 // minimize button, the sheet's X on a phone) puts the cursor back on this button. While the
 // agent's questions are on (config.asksOn), the button carries how many show now, and the newest
 // one this person has not closed slides up above it in a bubble with its buttons; the bubble never
-// opens the card by itself and hides while the card is open (the card's thread shows them).
+// opens the card by itself and hides while the card is open (the card's thread shows them). A
+// morning digest waits folded into a small pill beside the button until the person opens it.
 export function AgentLauncher({
   config,
   focus,
@@ -140,6 +141,18 @@ export function AgentLauncher({
   });
   const current = open ? null : asks.current;
   const badge = badgeCount(asks.openCount);
+  // The morning digest the person unfolded; any other digest shows folded beside the button.
+  const [readDigest, setReadDigest] = useState<string | null>(null);
+  const folded = current !== null && current.kind === "digest" && readDigest !== current.id;
+  // The unfolded digest takes the cursor when the pill's read button opened it, because that
+  // button leaves with the pill and the cursor would fall back to the page.
+  const digestBubble = useRef<HTMLElement>(null);
+  const focusDigest = useRef(false);
+  useEffect(() => {
+    if (folded || !focusDigest.current || !digestBubble.current) return;
+    focusDigest.current = false;
+    digestBubble.current.focus();
+  }, [folded, readDigest]);
 
   // "New question from the agent", once per question, as it first shows in the bubble.
   const [announce, setAnnounce] = useState("");
@@ -183,8 +196,35 @@ export function AgentLauncher({
         <p className="sr-only" aria-live="polite" data-testid="ask-announcer">
           {announce}
         </p>
-        {current ? (
+        {current && folded ? (
           <section
+            aria-label={ASK_WORDS.region}
+            className="fixed right-[4.5rem] bottom-[1.375rem] z-30 flex items-center gap-1 rounded-full border border-border bg-card py-1 pr-1 pl-3 shadow-float motion-safe:animate-rise sm:right-20 sm:bottom-[1.875rem] max-w-[calc(100vw-5.5rem)] print:hidden"
+          >
+            <button
+              type="button"
+              aria-label={ASK_WORDS.digestRead}
+              onClick={() => {
+                focusDigest.current = true;
+                setReadDigest(current.id);
+              }}
+              className="min-w-0 cursor-pointer truncate text-small font-medium text-foreground underline-offset-4 hover:underline"
+            >
+              {ASK_WORDS.digestReady}
+            </button>
+            <button
+              type="button"
+              aria-label={ASK_WORDS.digestClose}
+              onClick={() => asks.dismiss(current.id)}
+              className="grid size-7 shrink-0 cursor-pointer place-items-center rounded-full text-foreground-2 transition-colors duration-150 hover:bg-accent hover:text-foreground"
+            >
+              <X aria-hidden className="size-4" />
+            </button>
+          </section>
+        ) : current ? (
+          <section
+            ref={digestBubble}
+            tabIndex={current.kind === "digest" ? -1 : undefined}
             aria-label={ASK_WORDS.region}
             className="fixed right-4 bottom-[4.75rem] left-4 z-30 motion-safe:animate-rise sm:right-6 sm:bottom-[5.25rem] sm:left-auto sm:w-[360px] print:hidden"
           >

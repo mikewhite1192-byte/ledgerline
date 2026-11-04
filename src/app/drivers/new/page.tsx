@@ -38,7 +38,7 @@ export default async function NewDriverPage() {
     <SignedInPage tenant={view.shell} current="/drivers" title="Add a driver">
       <PageHeader
         title="Add a driver"
-        description="Who they are, how they are paid and when they start. Nothing is paid until an admin adds a card and arms them."
+        description="Who they are, how they are paid and when they start. Nothing is paid until an admin adds a card and clears them to be paid."
       />
       {!on ? (
         <FeatureOff name="Adding drivers" />

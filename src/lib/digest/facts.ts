@@ -74,11 +74,11 @@ const SPECS: Record<FactId, Spec> = {
   advance_cards: { id: "advance_cards", label: "Advance cards waiting for a person", kind: "int", needsPerson: true },
   advances_paid: { id: "advances_paid", label: "Advances paid yesterday", kind: "int", needsPerson: false },
   advances_paid_cents: { id: "advances_paid_cents", label: "Advances paid yesterday, total", kind: "cents", needsPerson: false },
-  send: { id: "send", label: "SEND: invoices posted and not yet sent", kind: "int", needsPerson: true },
-  fix: { id: "fix", label: "FIX: delivered loads the invoice check refuses", kind: "int", needsPerson: true },
-  add: { id: "add", label: "ADD: delivered loads ready to invoice", kind: "int", needsPerson: false },
-  past_due: { id: "past_due", label: "FYI: invoices past due", kind: "int", needsPerson: false },
-  past_due_cents: { id: "past_due_cents", label: "FYI: past due balance", kind: "cents", needsPerson: false },
+  send: { id: "send", label: "Invoices posted and not yet sent", kind: "int", needsPerson: true },
+  fix: { id: "fix", label: "Delivered loads the invoice check refuses (loads to fix)", kind: "int", needsPerson: true },
+  add: { id: "add", label: "Delivered loads ready to invoice (loads to bill)", kind: "int", needsPerson: false },
+  past_due: { id: "past_due", label: "Invoices past due", kind: "int", needsPerson: false },
+  past_due_cents: { id: "past_due_cents", label: "Past due balance", kind: "cents", needsPerson: false },
   paystubs_paid: { id: "paystubs_paid", label: "Paystubs paid this past week", kind: "int", needsPerson: false },
   paystubs_net_cents: { id: "paystubs_net_cents", label: "Paystubs paid this past week, net total", kind: "cents", needsPerson: false },
   month_invoices: { id: "month_invoices", label: "Last month: invoices issued", kind: "int", needsPerson: false },
@@ -188,7 +188,7 @@ const GROUPS: Group[] = [
     ids: ["card_check"],
     async read(q) {
       const run = await readLatestRun(q);
-      if (!run) return { card_check: "no check yet" };
+      if (!run) return { card_check: "not run yet" };
       if (run.status === "running") return { card_check: "check running" };
       if (run.status === "failed") return { card_check: "last check failed" };
       const verdict = statementVerdict(run);

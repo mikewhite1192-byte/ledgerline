@@ -481,6 +481,17 @@ describe("pinned rates (database)", () => {
     const boss = await app.withTenant(A.tenantId, (q) => readRatesPage(q, adminA.sub, NOW));
     expect(boss?.canPin).toBe(true);
     expect(boss?.states[0].pinned?.byYou).toBe(true);
+    // A demo visitor (the judge role) reads the same page and pins nothing.
+    const judgeSub = `sub-judge-${A.tenantId}`;
+    await admin.withTenant(A.tenantId, (q) =>
+      q.query(
+        `INSERT INTO memberships (tenant_id, cognito_sub, email, role)
+         VALUES (current_tenant_id(), $1, 'judge@rates.example', 'judge')`,
+        [judgeSub],
+      ),
+    );
+    const visitor = await app.withTenant(A.tenantId, (q) => readRatesPage(q, judgeSub, NOW));
+    expect(visitor).toMatchObject({ canPin: false, states: [{ code: "IL", pinned: { id: typed.id } }] });
     // Not a member here: no page.
     expect(await app.withTenant(B.tenantId, (q) => readRatesPage(q, A.session.sub, NOW))).toBeNull();
   });

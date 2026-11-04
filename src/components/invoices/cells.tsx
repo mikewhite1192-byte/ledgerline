@@ -15,8 +15,9 @@ export function RecordLink({ table, id, children }: { table: string; id: string;
   );
 }
 
-export function Day({ value }: { value: string | null }) {
-  return value ? <span className="tabular-nums whitespace-nowrap">{formatLocalDate(value)}</span> : <span>None</span>;
+// A date, or the word for none yet ("Not yet" on a load still on its way).
+export function Day({ value, empty = "None" }: { value: string | null; empty?: string }) {
+  return value ? <span className="tabular-nums whitespace-nowrap">{formatLocalDate(value)}</span> : <span>{empty}</span>;
 }
 
 // A label and its value, for a record's header facts. A trucking or pay word names its help, so
