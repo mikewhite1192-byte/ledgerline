@@ -133,10 +133,13 @@ describe("priorLine", () => {
   it("labels each earlier step by its registry tier and drops a name the registry does not hold", () => {
     expect(
       priorLine({ seq: 3, summary: "A card is ready.", tools: "get_advances propose_advance remember_note" }),
-    ).toBe("- Read get_advances; proposed propose_advance; noted remember_note; answered: A card is ready.");
+    ).toBe("- Read get_advances; tried to propose propose_advance; tried to note remember_note; answered: A card is ready.");
     expect(priorLine({ seq: 4, summary: "Done.", tools: "propose_advance" })).toBe(
-      "- Proposed propose_advance; answered: Done.",
+      "- Tried to propose propose_advance; answered: Done.",
     );
+    expect(
+      priorLine({ seq: 6, summary: "Ok.", tools: "get_loads get_driver get_advances get_invoices propose_advance" }),
+    ).toBe("- Read get_loads, get_driver, get_advances, get_invoices; more steps not listed; answered: Ok.");
     expect(priorLine({ seq: 5, summary: "Ok.", tools: "made_up_tool" })).toBe("- Ok.");
   });
 });
