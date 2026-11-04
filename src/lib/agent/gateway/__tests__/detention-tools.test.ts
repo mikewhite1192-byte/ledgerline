@@ -91,16 +91,16 @@ describe("find_unbilled_detention", () => {
 
   // Production, Nov 4: "Find detention we never billed last month" found the three charges, then
   // spent a response on the checklist alone and answered that it could not make the cards. The
-  // result asks for every card in the next response, beside the checklist; each is still a card a
+  // result asks for up to two cards in the next response, beside the checklist; each is still a card a
   // person approves.
-  it("tells the model to propose every ready row in its next response, beside the checklist", async () => {
+  it("tells the model to propose the first two ready rows in its next response, beside the checklist", async () => {
     flags.detentionEnabled = true;
     const { out } = await run("find_unbilled_detention", { month: "2026-10" });
     if (out.decision !== "allowed") throw new Error(`not allowed: ${out.reason}`);
     expect((out.result as { note: string }).note).toBe(DETENTION_NEXT);
-    expect(DETENTION_NEXT).toContain("call propose_detention_charge once for each of the first four rows with canPropose true");
+    expect(DETENTION_NEXT).toContain("call propose_detention_charge once for each of the first two rows with canPropose true");
     expect(DETENTION_NEXT).toContain("all in that one response beside set_checklist, then answer");
-    expect(DETENTION_NEXT).toContain("Never more than four in one answer");
+    expect(DETENTION_NEXT).toContain("Never more than two in one answer");
     expect(DETENTION_NEXT).not.toContain("every row");
     expect(DETENTION_NEXT).toContain("a person's approval");
     expect(DETENTION_NEXT).not.toMatch(/[\u2013\u2014]/);
@@ -127,6 +127,28 @@ describe("find_unbilled_detention", () => {
     if (out.decision !== "allowed") throw new Error("not allowed");
     const row = (out.result.rows as FoundRow[]).find((r) => r.loadId === ids[0])!;
     expect(row).toMatchObject({ canPropose: false, blockedBy: "invoice_posted", postedToAccounting: true });
+  });
+
+  // A second ask after two cards were made: the loads with a waiting card are not proposed again,
+  // so the steer's first two ready rows are the ones still waiting for a card.
+  it("marks a found load whose detention card already waits for a person, with that card", async () => {
+    flags.detentionEnabled = true;
+    const proposalId = "7d1c2b3a-4f5e-4a6b-8c7d-9e0f1a2b3c4d";
+    const waiting = {
+      ...plan,
+      rows: {
+        ...plan.rows,
+        proposals: [{ id: proposalId, kind: "detention_charge", subject_table: "loads", subject_id: ids[0], status: "proposed" }],
+      },
+    } as unknown as CarrierPlan;
+    const { out } = await run("find_unbilled_detention", { month: "2026-10" }, waiting);
+    if (out.decision !== "allowed") throw new Error(`not allowed: ${out.reason}`);
+    const byLoad = new Map((out.result.rows as FoundRow[]).map((r) => [r.loadId, r]));
+    expect(byLoad.get(ids[0])).toMatchObject({ canPropose: false, blockedBy: "card_waiting", proposalId, amountCents: GOLDEN[0] });
+    for (const id of ids.slice(1)) {
+      expect(byLoad.get(id)).toMatchObject({ canPropose: true, blockedBy: null, proposalId: null });
+    }
+    expect(DETENTION_NEXT).toContain("card_waiting means a card for that load already waits for a person");
   });
 
   it("refuses a month that is not YYYY-MM", async () => {

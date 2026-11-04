@@ -306,6 +306,14 @@ export const CHECKLIST_ALONE_NOTE =
 // Schema failures on one tool before the loop escalates, and the failure that ends the turn.
 export const ESCALATE_AFTER_INVALID = 2;
 
+// Detention cards one response may draft, so the cards and the answer fit the turn's clock; a call
+// past it is answered as skipped and the row waits for a next ask. find_unbilled_detention's note
+// asks for the same.
+export const DETENTION_PROPOSE_TOOL = "propose_detention_charge";
+export const DETENTION_CARDS_PER_RESPONSE = 2;
+export const DETENTION_SKIPPED =
+  "Not run: at most two detention cards in one answer. Name this row as waiting for the next ask.";
+
 // The text the loop writes itself. Fixed, never a raw error.
 export const LOOP_TEXT = {
   stopped: "I stopped before finishing this answer. Here is what I found so far.",

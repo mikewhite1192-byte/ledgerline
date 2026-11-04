@@ -7,7 +7,7 @@ import { CASH_PROMPT, CHECKLIST_RULE, OPERATOR_PROMPT, operatorPrompt } from "..
 import { callTool, MAX_RESULT_CHARS } from "../index";
 import { toolsFor } from "../registry";
 import { centsIn, maskFigures } from "../../operator/figures";
-import { CASH_LINES_MAX, getCashFriday } from "../tools/read/get-cash-friday";
+import { CASH_LINES_MAX, cashFridaySummary, getCashFriday } from "../tools/read/get-cash-friday";
 import type { GatewayContext } from "../types";
 import { context, fixedClock, type Handler } from "./fake-db";
 import { PLAN_ANCHOR, planDb, shortFridayPlan } from "./plan-db";
@@ -74,6 +74,19 @@ describe("get_cash_friday", () => {
     const allowed = centsIn(out.result);
     const answer = `Against a ${dollars(want.payRunCents)} pay run plus ${dollars(r.fuelAndBillsDueCents as number)} in fuel loads and bills due.`;
     expect(maskFigures(answer, allowed)).toEqual({ text: answer, masked: 0 });
+    // The summary is written from the result's own figures, so read as it is, it stays verified.
+    expect(r.summary).toBe(
+      cashFridaySummary({
+        payDay: r.payDay as string,
+        gapCents: want.gapCents,
+        cashByPayDayCents: r.cashByPayDayCents as number,
+        dueByPayDayCents: r.dueByPayDayCents as number,
+        payRunCents: r.figures.payRunCents,
+        fuelAndBillsDueCents: r.fuelAndBillsDueCents as number,
+      }),
+    );
+    expect(maskFigures(r.summary as string, allowed)).toEqual({ text: r.summary, masked: 0 });
+    expect(getCashFriday.description).toContain("summary is one sentence written from those figures");
     expect(getCashFriday.description).toContain("never add, subtract or round figures yourself");
     const options = r.options as { kind: string; billRef?: string }[];
     expect(options.map((o) => o.kind).sort()).toEqual([
@@ -124,5 +137,21 @@ describe("get_cash_friday", () => {
     flags.cashFridayEnabled = true;
     const on = toolsFor("operator").map((t) => t.name);
     expect(operatorPrompt(on, false)).toBe(`${OPERATOR_PROMPT}\n${CASH_PROMPT}\n${CHECKLIST_RULE}`);
+  });
+});
+
+describe("cashFridaySummary", () => {
+  const figures = { payDay: "2026-11-06", cashByPayDayCents: 13_694_457, dueByPayDayCents: 11_022_091, payRunCents: 2_793_344, fuelAndBillsDueCents: 8_228_747 };
+
+  it("says covered by the gap and names both sides, to the cent", () => {
+    expect(cashFridaySummary({ ...figures, gapCents: 2_672_366 })).toBe(
+      "Covered by $26,723.66 for pay day Nov 6, 2026. What comes in by pay day is $136,944.57 and what goes out " +
+        "is $110,220.91: the pay run of $27,933.44 plus $82,287.47 in fuel loads and bills due.",
+    );
+  });
+
+  it("says short by the gap without a minus sign, and a zero gap reads covered", () => {
+    expect(cashFridaySummary({ ...figures, gapCents: -50_000 })).toMatch(/^Short by \$500\.00 for pay day Nov 6, 2026\. /);
+    expect(cashFridaySummary({ ...figures, gapCents: 0 })).toMatch(/^Covered by \$0\.00 for pay day/);
   });
 });

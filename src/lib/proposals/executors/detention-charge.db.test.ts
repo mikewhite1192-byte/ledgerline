@@ -454,8 +454,9 @@ describe("approving a detention charge", () => {
     const foundIds = out.found.rows.map((r) => r.loadId);
     expect(foundIds).toContain(october.loadId);
     expect(foundIds).not.toContain(september.loadId);
-    // Two reads of five tables, then the tool's five: every one filtered by the delivered date.
-    expect(sent).toHaveLength(15);
+    // Two reads of five tables, then the tool's five and its open card read: every one filtered by
+    // the delivered date.
+    expect(sent).toHaveLength(16);
     for (const sql of sent) expect(sql).toContain("delivered_on BETWEEN CAST($1 AS date) AND CAST($2 AS date)");
   });
 

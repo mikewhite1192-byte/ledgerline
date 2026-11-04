@@ -31,6 +31,9 @@ import {
   verifyAttempts,
   operatorCacheKey,
   operatorPrompt,
+  DETENTION_CARDS_PER_RESPONSE,
+  DETENTION_PROPOSE_TOOL,
+  DETENTION_SKIPPED,
 } from "../policy";
 import { verificationNote } from "../verify/note";
 import { AiError, runTurn, turnRequest, type TurnDeps } from "./turn";
@@ -839,6 +842,44 @@ describe("runTurn with a checklist", () => {
     );
     expect(out.text).not.toContain("Done: nothing yet");
     expect(out.text).not.toMatch(/\$/);
+  });
+
+  // Production, Nov 4: three detention cards in one response left no time for the answer. A call
+  // past the limit is answered as skipped: never run, no card, no step, and the item in hand is
+  // not checked beside the card that was not made.
+  it("runs at most two detention cards from one response and answers the rest as skipped", async () => {
+    const detention = (id: string, amountCents: number) => call(id, DETENTION_PROPOSE_TOOL, { amountCents });
+    const gw = (c: Call): Outcome => {
+      if (c.name === "set_checklist") return listOutcome(c);
+      if (c.name !== DETENTION_PROPOSE_TOOL) return allowed(c.name, {});
+      const { amountCents } = JSON.parse(c.argumentsJson) as { amountCents: number };
+      const draft = { ...ADVANCE_DRAFT, amountCents, args: { driverId: DRIVER, amountCents } } as unknown as Draft;
+      return allowed(DETENTION_PROPOSE_TOOL, { amountCents }, { tier: "propose", draft, refs: [{ table: "drivers", id: TYPED }] });
+    };
+    const h = harness(
+      [
+        result({
+          toolCalls: [
+            list("l1", [{ text: "Bill the detention", state: "doing" }]),
+            detention("d1", 10_000),
+            detention("d2", 11_000),
+            detention("d3", 12_000),
+          ],
+        }),
+        result({ text: "Drafted two cards; the third waits for the next ask." }),
+      ],
+      gw,
+    );
+    expect(await h.run()).toMatchObject({ status: "done" });
+    expect(DETENTION_CARDS_PER_RESPONSE).toBe(2);
+    expect(DETENTION_SKIPPED).toContain("at most two detention cards in one answer");
+    expect(h.calls.map((c) => c.id)).toEqual(["l1", "d1", "d2"]);
+    expect(h.proposals.size).toBe(2);
+    const sent = h.requests[1].request.messages.filter((m) => m.role === "tool");
+    expect(sent.map((m) => (m as { toolCallId: string }).toolCallId)).toEqual(["l1", "d1", "d2", "d3"]);
+    expect(JSON.parse((sent[3] as { content: string }).content)).toEqual({ skipped: true, note: DETENTION_SKIPPED });
+    // The skipped card was never made, so the item in hand is not checked.
+    expect(states(h.finished()?.checklist)).toEqual(["not_done"]);
   });
 
   it("leaves the item in hand not finished when a call after the last list was refused or made no card", async () => {

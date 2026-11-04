@@ -31,6 +31,7 @@ import { DEMO_CARRIERS } from "../../../seed/carriers";
 import { withShortFriday } from "../../../seed/test-short-friday.test-util";
 import { PAY_RUN_DRIVERS_SQL, SETTLEMENT_ROWS } from "../../../settlements/list";
 import { FIND_DRIVER_CAP, FIND_DRIVER_SQL } from "../tools/read/find-driver";
+import { OPEN_DETENTION_CARDS_SQL } from "../tools/read/find-unbilled-detention";
 import { FakeDb, TENANT, type Handler, type Row } from "./fake-db";
 
 // A FakeDb that serves one synthetic carrier's seed plan through the record readers' own SQL, so
@@ -289,6 +290,24 @@ export function planDb(plan: CarrierPlan, extra?: Handler): FakeDb {
           (params[0] === null || r.subject_id === params[0]),
       );
       return [...new Set(cards.map((r) => String(r.subject_id)))].map((load_id) => ({ load_id }));
+    }
+    // The open detention cards on the loads delivered in a window (find_unbilled_detention). The
+    // plan holds no cards, so this answers from a proposals list a test adds, or none.
+    if (sql === OPEN_DETENTION_CARDS_SQL) {
+      const delivered = new Set(
+        plan.rows.loads
+          .filter((l) => l.delivered_on !== null && l.delivered_on >= String(params[0]) && l.delivered_on <= String(params[1]))
+          .map((l) => l.id),
+      );
+      return (tables.proposals ?? [])
+        .filter(
+          (r) =>
+            r.kind === "detention_charge" &&
+            r.subject_table === "loads" &&
+            ["proposed", "approved", "executing"].includes(String(r.status)) &&
+            delivered.has(String(r.subject_id)),
+        )
+        .map((r) => ({ id: String(r.id), load_id: String(r.subject_id) }));
     }
     // get_pinned_rates: the live pins of one kind. A seed plan pins none, so this answers from rows
     // a test adds, or none.
