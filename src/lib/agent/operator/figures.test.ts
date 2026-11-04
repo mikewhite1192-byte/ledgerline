@@ -49,6 +49,14 @@ describe("figures", () => {
     expect([...typedCentsIn("Send $1,234.56.")]).toEqual([123_456]);
   });
 
+  it("reads as plain words where a figure matched no record", () => {
+    expect(WITHHELD).toBe("an amount I could not check");
+    expect(maskFigures("The total is $999.99", new Set())).toEqual({
+      text: "The total is an amount I could not check",
+      masked: 1,
+    });
+  });
+
   it("leaves text with no money alone", () => {
     expect(maskFigures("BR-D07 drove 2,400 miles", new Set())).toEqual({ text: "BR-D07 drove 2,400 miles", masked: 0 });
   });

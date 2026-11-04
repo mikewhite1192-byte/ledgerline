@@ -15,7 +15,9 @@ export const COLLECTIONS_TOOL_MAX = 12;
 export const getCollections = defineTool({
   name: "get_collections",
   description:
-    "List invoices 30 or more days past due on today's carrier date, most overdue first, as the " +
+    "ONLY the 30+ day reminder list: invoices 30 or more days past due on today's carrier date. " +
+    "For all overdue invoices, or how many invoices are past due, use get_ar_aging instead; this " +
+    "list leaves out every invoice 1 to 29 days late. Rows come most overdue first, as the " +
     "rules engine plans payment reminders: each with its balance in integer cents, days late, the " +
     "reminder stage (30, 60 or 90), the tone the customer's payment history sets (friendly, direct " +
     "or firm), and whether a reminder is drafted for that stage (status none, drafting, drafted, " +
