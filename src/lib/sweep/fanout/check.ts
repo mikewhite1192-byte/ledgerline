@@ -100,8 +100,9 @@ export const CHECK_PROMPT =
   "them (drivers, pay_items, loads, advances, or the table a pay item's ref names). A load's own " +
   "pay is not a pay item: it is computed at settlement from the load's rate, so a load with no pay " +
   "item is never an issue. These records let you judge only two categories: newer_is_duplicate, " +
-  "two approved or paid advances of the same amount requested on the same day (cite both " +
-  "advances); and rate_missing, a delivered or invoiced load whose linehaulCents is null. Every " +
+  "two approved or paid advances of the same amount requested on the same day (cite the newer " +
+  "advance first, then the older); and rate_missing, a delivered or invoiced load whose " +
+  "linehaulCents is null. Every " +
   "other category needs records you are not given (insurance days, fuel purchases, the extras a " +
   "driver paid, which load an advance was for, the carrier's limits), so never report one. Use " +
   "other_for_review only for a clear record-level problem neither of the two " +
