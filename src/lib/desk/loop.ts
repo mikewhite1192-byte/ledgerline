@@ -440,7 +440,9 @@ export async function wakeDesk(
       counts[kind] += 1;
     }
 
-    if (reason === null && steppedAside) reason = "deadline";
+    // Only a piece that stepped aside is left: it waits for a wake with its time, never a wake now.
+    const asideOnly = reason === null && steppedAside;
+    if (asideOnly) reason = "deadline";
     if (reason === null) reason = dayCapped ? "events_per_day" : wakeCapped ? "events_per_wake" : "no_work";
     // What is still open for a later wake: the events not reached and those carried on. One whose
     // try did not come back is not counted.
@@ -472,7 +474,7 @@ export async function wakeDesk(
     // a try that threw, and spent caps wait for the next scheduled wake, so a piece that keeps
     // coming back running (a model that is down) does not spend its carries in one kick's run.
     const progressed = counts.seen + counts.done + counts.skipped + counts.failed > 0;
-    const more = progressed && (reason === "events_per_wake" || reason === "deadline");
+    const more = progressed && !asideOnly && (reason === "events_per_wake" || reason === "deadline");
     return { ok: true, wakeId, status: more ? "more" : "done", reason, counts };
   } catch (err) {
     log(`desk wake tenant=${session.tenantId} wake=${wakeId} failed=${errorName(err)}`);

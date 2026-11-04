@@ -642,7 +642,8 @@ describe("wakeDesk", () => {
     const out = await wake(handlers, uuid(700));
     expect(run).toHaveBeenCalledTimes(1);
     expect(run.mock.calls[0][1]).toMatchObject({ eventKey: cardKey(1) });
-    expect(out).toMatchObject({ ok: true, reason: "deadline" });
+    // The card was found and done this wake, but only the sweep is left: no wake now.
+    expect(out).toMatchObject({ ok: true, status: "done", reason: "deadline" });
     expect(out.ok && out.counts.left).toBe(1);
     // The sweep spent no carry and no try, and is still open for a wake with its time.
     expect(ofKind("carried")).toHaveLength(1);
