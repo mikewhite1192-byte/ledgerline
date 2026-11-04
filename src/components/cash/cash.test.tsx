@@ -107,7 +107,7 @@ describe("the home Friday card", () => {
   it("says not checked yet when there is no check", () => {
     render(<FridayPay home={null} today="2026-11-07" />);
     expect(card().textContent).toContain("Not checked yet");
-    expect(screen.getByRole("link", { name: "Check it on the Cash page" }).getAttribute("href")).toBe("/cash");
+    expect(screen.getByRole("link", { name: "Check it on Friday's cash" }).getAttribute("href")).toBe("/cash");
   });
 });
 

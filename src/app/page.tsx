@@ -381,7 +381,7 @@ export default async function Home({
                 cashHome.ok ? (
                   <FridayPay home={cashHome.value} today={today} className="mt-0 max-w-none" />
                 ) : (
-                  <HomeCard title="Friday's pay run" link={{ href: "/cash", label: "Open the Cash page" }}>
+                  <HomeCard title="Friday's pay run" link={{ href: "/cash", label: "Open Friday's cash" }}>
                     <Unavailable>Could not read the last check of Friday&apos;s pay run.</Unavailable>
                   </HomeCard>
                 )

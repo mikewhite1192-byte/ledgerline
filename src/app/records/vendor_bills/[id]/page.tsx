@@ -31,7 +31,7 @@ export default async function VendorBillRecord({ params }: { params: Promise<{ i
   const b = page.record;
   const status =
     b.status === "deferred" && b.deferredTo
-      ? `Moved to ${formatLocalDate(b.deferredTo)} after a person approved it on the Cash page`
+      ? `Moved to ${formatLocalDate(b.deferredTo)} after a person approved it on Friday's cash`
       : b.status === "paid" && b.paidOn
         ? `Paid ${formatLocalDate(b.paidOn)}`
         : BILL_STATUS_WORDS[b.status];

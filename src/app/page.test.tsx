@@ -335,7 +335,7 @@ describe("home's order and cards", () => {
       const card = region("Friday's pay run");
       expect(within(card).getByRole("status").textContent).toBe("Could not read the last check of Friday's pay run.");
       expect(card.textContent).not.toContain("Not checked yet");
-      expect(within(card).getByRole("link", { name: "Open the Cash page" }).getAttribute("href")).toBe("/cash");
+      expect(within(card).getByRole("link", { name: "Open Friday's cash" }).getAttribute("href")).toBe("/cash");
       expect(region("Today")).toBeTruthy();
       // Only the error's name reaches the log.
       expect(log.mock.calls).toContainEqual(["home card read failed:", "cash home", "DbError"]);

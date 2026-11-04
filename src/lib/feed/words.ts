@@ -381,7 +381,10 @@ function doneWords(r: FeedRow): string | null {
   const title = r.title ?? "a card";
   switch (r.event) {
     case "proposal_proposed":
-      return `Drafted for you to approve: ${title}${moving ? sum(r.cents) : ""}.`;
+      // A card's title starts with its own verb ("Approve weekly pay"), so the line does not add one.
+      return r.title === null
+        ? `Drafted a card for you to approve${moving ? sum(r.cents) : ""}.`
+        : `Drafted a card for you: ${r.title}${moving ? sum(r.cents) : ""}.`;
     case "proposal_decided":
       return r.actor === "autopilot" && r.code !== "rejected"
         ? `Approved within your limit: ${title}${moving ? sum(r.cents) : ""}.`

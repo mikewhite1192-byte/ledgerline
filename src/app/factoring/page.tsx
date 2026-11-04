@@ -48,7 +48,7 @@ export default async function FactoringPage() {
         rowKey={(r) => r.id}
         empty={{
           title: "No invoices factored yet",
-          body: "The Cash page offers factoring when a pay run is short.",
+          body: "Friday's cash offers factoring when a pay run is short.",
         }}
         columns={[
           {

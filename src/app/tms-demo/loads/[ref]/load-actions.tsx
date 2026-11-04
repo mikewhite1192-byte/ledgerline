@@ -115,7 +115,8 @@ export function SetStatusForm({ reference, current, choices }: { reference: stri
       <input type="hidden" name="reference" value={reference} />
       <Field id="set-status" label="Status">
         {(c) => (
-          <select {...c} name="status" className={controlClass} defaultValue={choices.find((x) => x.label === current)?.value ?? ""}>
+          // Keyed by the saved status, so the refreshed page shows the new one after a change.
+          <select key={current} {...c} name="status" className={controlClass} defaultValue={choices.find((x) => x.label === current)?.value ?? ""}>
             {choices.map((x) => (
               <option key={x.value} value={x.value}>
                 {x.label}
