@@ -8,7 +8,8 @@ import { buildCopyAction } from "./actions";
 // The build action's last step: once the copy is marked ready, the copy's own pay check starts
 // once, as the copy's session, while its switch is on and the copies' day has room; off, past the
 // day, refused or throwing, the answer is still ready. A copy not built or not marked starts
-// nothing. The visit read, the build, the purge, the ready mark, the sweep and the database are
+// nothing. The purge of ended visits' copies runs only after the ready mark, never between slices.
+// The visit read, the build, the purge, the ready mark, the sweep and the database are
 // fakes; the story (src/lib/visit-copy/story.ts) is the real one.
 
 const HOME = "00000000-0000-4000-8000-0000000000a1";
@@ -32,6 +33,10 @@ const state = vi.hoisted(() => ({
   startHangs: false,
   starts: [] as { session: unknown; input: unknown }[],
   counts: [] as { tenant: string; params: unknown[] }[],
+  setup: false,
+  purgeThrows: false,
+  steps: [] as string[],
+  purges: [] as unknown[],
 }));
 
 vi.mock("@/lib/auth/session", () => ({
@@ -40,20 +45,33 @@ vi.mock("@/lib/auth/session", () => ({
 }));
 vi.mock("@/lib/auth/demo-visit", async (importOriginal) => ({
   ...(await importOriginal<typeof import("@/lib/auth/demo-visit")>()),
-  markCopyReady: async () => state.ready,
+  markCopyReady: async () => {
+    state.steps.push("ready");
+    return state.ready;
+  },
 }));
 vi.mock("@/lib/seed/reset", () => ({ demoCarrierOf: async () => ({ slug: "blue-ridge" }) }));
 vi.mock("@/lib/visit-copy/build", () => ({
-  buildCopySlice: async () => ({
-    done: state.done,
-    setup: false,
-    tablesDone: state.done ? 10 : 4,
-    tablesTotal: 10,
-    statements: 1,
-    ms: 1,
-  }),
+  buildCopySlice: async () => {
+    state.steps.push("slice");
+    return {
+      done: state.done,
+      setup: state.setup,
+      tablesDone: state.done ? 10 : 4,
+      tablesTotal: 10,
+      statements: 1,
+      ms: 1,
+    };
+  },
 }));
-vi.mock("@/lib/visit-copy/purge", () => ({ purgeExpired: async () => ({ purged: 0, gone: 0, failed: 0 }) }));
+vi.mock("@/lib/visit-copy/purge", () => ({
+  purgeExpired: async (_db: unknown, home: unknown, input: unknown) => {
+    state.steps.push("purge");
+    state.purges.push({ home, input });
+    if (state.purgeThrows) throw new Error("boom");
+    return { purged: 1, gone: 0, failed: 0 };
+  },
+}));
 vi.mock("@/lib/sweep/run", () => ({
   startSweep: async (session: unknown, input: unknown) => {
     state.starts.push({ session, input });
@@ -88,9 +106,13 @@ beforeEach(() => {
     others: 0,
     start: { ok: true, runId: COPY_VISIT, existing: false },
     startThrows: false,
-  startHangs: false,
+    startHangs: false,
     starts: [],
     counts: [],
+    setup: false,
+    purgeThrows: false,
+    steps: [],
+    purges: [],
   });
   Object.assign(flags.visitCopies, { enabled: true, startSweep: true, sweepDayCents: 3000 });
   flags.sweepEnabled = true;
@@ -201,5 +223,40 @@ describe("buildCopyAction's pay check", () => {
     state.ready = false;
     expect(await buildCopyAction()).toEqual({ state: "failed" });
     expect(state.starts).toEqual([]);
+  });
+});
+
+describe("buildCopyAction's purge of ended visits' copies", () => {
+  it("never runs between slices, even on the slice that wrote the copy's setup rows", async () => {
+    state.done = false;
+    state.setup = true;
+    expect(await buildCopyAction()).toMatchObject({ state: "building" });
+    state.setup = false;
+    expect(await buildCopyAction()).toMatchObject({ state: "building" });
+    expect(state.steps).toEqual(["slice", "slice"]);
+    expect(state.purges).toEqual([]);
+  });
+
+  it("runs once the copy is marked ready, in the demo carrier, at most purgePerCall copies", async () => {
+    state.setup = true;
+    expect(await buildCopyAction()).toEqual({ state: "ready" });
+    expect(state.steps).toEqual(["slice", "ready", "purge"]);
+    expect(state.purges).toEqual([
+      { home: HOME, input: { graceMinutes: flags.visitCopies.graceMinutes, limit: flags.visitCopies.purgePerCall } },
+    ]);
+    expect(console.info).toHaveBeenCalledWith("visit copy: purged 1, gone 0, failed 0");
+  });
+
+  it("does not run when the copy could not be marked ready", async () => {
+    state.ready = false;
+    expect(await buildCopyAction()).toEqual({ state: "failed" });
+    expect(state.purges).toEqual([]);
+  });
+
+  it("is still ready, its pay check started, when the purge throws", async () => {
+    state.purgeThrows = true;
+    expect(await buildCopyAction()).toEqual({ state: "ready" });
+    expect(state.starts).toHaveLength(1);
+    expect(console.error).toHaveBeenCalledWith("visit copy: the purge could not run (Error)");
   });
 });

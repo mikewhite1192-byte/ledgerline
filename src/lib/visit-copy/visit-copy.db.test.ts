@@ -15,7 +15,7 @@ import {
 } from "../auth/demo-visit";
 import { countTenantRows } from "../data/read";
 import { TENANT_TABLES } from "../data/tables";
-import { WIPE_MARK_SQL } from "../data/writer";
+import { COPY_INSERT_LIMITS, insertRows, WIPE_MARK_SQL } from "../data/writer";
 import { createPgDb } from "../db/pg";
 import { adminUrl, appUrl } from "../db/test-urls";
 import type { Db } from "../db/types";
@@ -25,7 +25,7 @@ import golden from "../seed/golden.json";
 import { DEMO_ANCHOR } from "../seed/anchor";
 import { demoCarrierOf, demoTemplateOf, heroNet } from "../seed/reset";
 import { countRows } from "../seed/summary";
-import { buildCopySlice, copyPlan, copySlug, templatePlan, type CopyTarget } from "./build";
+import { buildCopySlice, buildStatements, copyPlan, copySlug, templatePlan, type CopyTarget } from "./build";
 import { NotACopy, PURGED_TOTALS_SQL, purgeCopy, purgeExpired } from "./purge";
 import { startCopySweep } from "./story";
 import { VISIT_EMAIL } from "./visitor";
@@ -299,6 +299,9 @@ describe("building a copy", () => {
     console.info(
       `visit copy build ${template.slug}: ${run.slices} slices, ${run.statements} statements, ${run.ms} ms (local Postgres)`,
     );
+    // The inserts went in the copy's batches: the plan's statements, then each slice's lock and
+    // count reads, each later slice's setup check, and the last slice's two read backs.
+    expect(run.statements).toBe(buildStatements(copyPlan(template, A.copy.copyTenantId)) + 3 * run.slices + 1);
     const counts = await app.withTenant(A.copy.copyTenantId, (q) => countTenantRows(q));
     const goldenCounts = (golden.carriers as Record<string, { counts: Record<string, number> }>)[template.slug].counts;
     expect(golden.anchor).toBe(DEMO_ANCHOR);
@@ -324,6 +327,48 @@ describe("building a copy", () => {
       countRows(templatePlan(template).rows),
     );
   }, 120_000);
+
+  it("writes exactly the rows it is given in the copy's batches, a long one included, and a rerun adds none", async () => {
+    const W = randomUUID();
+    built.push(W);
+    await admin.withTenant(W, (q) =>
+      q.execute(
+        "INSERT INTO tenants (id, slug, name, timezone) VALUES (current_tenant_id(), $1, 'Writer carrier', 'America/New_York')",
+        [`vc-writer-${tag}`],
+      ),
+    );
+    const customer = (i: number, name = `Invented Customer ${i}`) => ({
+      id: `${W.slice(0, 24)}${String(i).padStart(12, "0")}`,
+      code: `C${i}`,
+      name,
+      terms_days: 30,
+      city: "Springfield",
+      state: "MO",
+      detention_free_minutes: 120,
+      detention_hourly_cents: 5000 + i,
+      pod_required: i % 2 === 0,
+      billing_email: `ar@c${i}.example`,
+    });
+    const rows = Array.from({ length: 40 }, (_, i) => customer(i, i === 7 ? "x".repeat(50_000) : undefined));
+    const read = () =>
+      app.withTenant(W, (q) =>
+        q.query<Record<string, unknown>>(
+          `SELECT CAST(id AS text) AS id, code, name, terms_days, city, state, detention_free_minutes,
+                  CAST(detention_hourly_cents AS integer) AS detention_hourly_cents, pod_required, billing_email
+             FROM customers ORDER BY id`,
+        ),
+      );
+    // The copy's batches, then batches of seven rows: several statements, the long row in one.
+    const narrow = { ...COPY_INSERT_LIMITS, rows: 7 };
+    expect(await app.withTenant(W, (q) => insertRows(q, "customers", rows.slice(0, 20), COPY_INSERT_LIMITS))).toBe(20);
+    expect(await app.withTenant(W, (q) => insertRows(q, "customers", rows.slice(20), narrow))).toBe(20);
+    expect(await read()).toEqual(rows);
+    // A rerun of the same rows is refused whole and leaves the table as it was.
+    await expect(app.withTenant(W, (q) => insertRows(q, "customers", rows, COPY_INSERT_LIMITS))).rejects.toThrow();
+    expect(await read()).toEqual(rows);
+    // Only the writer's carrier holds them.
+    expect(await app.withTenant(OTHER, (q) => q.query("SELECT id FROM customers"))).toEqual([]);
+  });
 
   it("is a carrier of its own built from the demo carrier: its slug, demo_copy_of, the logins and the visit row", async () => {
     const tenant = await app.withTenant(A.copy.copyTenantId, (q) =>
