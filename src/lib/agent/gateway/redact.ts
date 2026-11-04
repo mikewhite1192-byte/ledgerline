@@ -30,9 +30,20 @@ export function redactValue(value: unknown, enums: ReadonlySet<string>, depth = 
 }
 
 // Args are parsed by a strict schema before they are redacted, so every key is a schema key.
-export function redactArgs(args: unknown, enums: ReadonlySet<string>): Record<string, unknown> {
+// freeText names the top-level keys a tool declares as free text: their strings become their
+// length whatever they read as, so a name that looks like a date or an enum value never passes.
+export function redactArgs(
+  args: unknown,
+  enums: ReadonlySet<string>,
+  freeText: readonly string[] = [],
+): Record<string, unknown> {
   if (args === null || typeof args !== "object" || Array.isArray(args)) return {};
-  return redactValue(args, enums) as Record<string, unknown>;
+  const out = redactValue(args, enums) as Record<string, unknown>;
+  for (const key of freeText) {
+    const v = (args as Record<string, unknown>)[key];
+    if (typeof v === "string" && Object.hasOwn(out, key)) out[key] = { len: v.length } satisfies RedactedString;
+  }
+  return out;
 }
 
 // Every enum and const value a JSON schema declares, at any depth.

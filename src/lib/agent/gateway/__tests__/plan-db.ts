@@ -97,19 +97,25 @@ export function planDb(plan: CarrierPlan, extra?: Handler): FakeDb {
         .filter((r) => r.subject_table === params[0] && r.subject_id === params[1])
         .map((r) => ({ ...r }));
     }
-    // find_driver: a contains match, ignoring case, on first, last or full name or code, by last
-    // name, one more than the cap. The pattern is the tool's own (%text% with LIKE escapes).
+    // find_driver: a contains match, ignoring case, on first, last or full name or code, an
+    // exact code then an exact full name first, then by last name, one more than the cap. The
+    // pattern is the tool's own (%text% with LIKE escapes); the second param is the text itself.
     if (sql === FIND_DRIVER_SQL) {
       const text = String(params[0]).slice(1, -1).replace(/\\(.)/g, "$1").toLowerCase();
+      const exact = String(params[1]).toLowerCase();
       const hit = (v: string) => v.toLowerCase().includes(text);
+      const rank = (d: { code: string; first_name: string; last_name: string }) =>
+        d.code.toLowerCase() === exact ? 0 : `${d.first_name} ${d.last_name}`.toLowerCase() === exact ? 1 : 2;
       return plan.rows.drivers
         .filter((d) => hit(d.first_name) || hit(d.last_name) || hit(`${d.first_name} ${d.last_name}`) || hit(d.code))
         .sort((a, b) =>
-          a.last_name !== b.last_name
-            ? a.last_name < b.last_name ? -1 : 1
-            : a.first_name !== b.first_name
-              ? a.first_name < b.first_name ? -1 : 1
-              : a.code < b.code ? -1 : a.code > b.code ? 1 : 0,
+          rank(a) !== rank(b)
+            ? rank(a) - rank(b)
+            : a.last_name !== b.last_name
+              ? a.last_name < b.last_name ? -1 : 1
+              : a.first_name !== b.first_name
+                ? a.first_name < b.first_name ? -1 : 1
+                : a.code < b.code ? -1 : a.code > b.code ? 1 : 0,
         )
         .slice(0, FIND_DRIVER_CAP + 1)
         .map((d) => ({

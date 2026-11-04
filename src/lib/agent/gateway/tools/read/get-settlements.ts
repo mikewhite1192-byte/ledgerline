@@ -10,6 +10,30 @@ import { OPERATOR } from "../shared";
 // the whole result. payableDriversTotal says how many there are.
 export const PAYABLE_DRIVERS_CAP = 40;
 
+// The most characters of JSON the list may take, whatever the names' lengths: about 5,000 of the
+// gateway's 8,000, leaving the rest for readNext and the week (a test holds the whole result
+// under the cap with long names). The list stops at the driver that would cross it.
+export const PAYABLE_DRIVERS_CHARS = 5_000;
+
+type PayableDriver = { driverId: string; driverCode: string; driverName: string };
+
+// The payable drivers in order, at most the cap and at most the character budget as JSON.
+export function payableDriversList(
+  payable: readonly { id: string; code: string; first_name: string; last_name: string }[],
+): PayableDriver[] {
+  const out: PayableDriver[] = [];
+  // The empty list's brackets; each entry adds itself and, after the first, a comma.
+  let chars = 2;
+  for (const d of payable.slice(0, PAYABLE_DRIVERS_CAP)) {
+    const entry = { driverId: d.id, driverCode: d.code, driverName: nameOf(d.first_name, d.last_name) };
+    const size = JSON.stringify(entry).length + (out.length > 0 ? 1 : 0);
+    if (chars + size > PAYABLE_DRIVERS_CHARS) break;
+    chars += size;
+    out.push(entry);
+  }
+  return out;
+}
+
 // What to read next on an open week with pay and no paystubs yet, as the result says it.
 export const READ_NEXT =
   "No paystubs yet does not mean no problems or no pay: run_checks with this periodId lists " +
@@ -36,7 +60,7 @@ export const getSettlements = defineTool({
     "periodId, and for one driver's pay call explain_paystub with this periodId and the " +
     "driver's id (from run_checks, or from get_settlements for a week that has paystubs), then answer from what they find. " +
     "Such a week lists payableDrivers, the drivers Run the week would draft a paystub for (driverId, " +
-    "driverCode, driverName; at most 40, payableDriversTotal counting them all): a question about " +
+    "driverCode, driverName; at most 40, fewer when the names are long, payableDriversTotal counting them all): a question about " +
     "one driver takes that driver's driverId from it to explain_paystub. " +
     "Never call report_driver_pay_summary or report_driver_insights for that week's problems " +
     "or one driver's pay: the summary has no rows before paystubs and the ranking explains no " +
@@ -91,11 +115,7 @@ export const getSettlements = defineTool({
       // driver has their id for explain_paystub without another read.
       const payable = hasPay ? await readPayRunDrivers(q, period) : [];
       const drivers = {
-        payableDrivers: payable.slice(0, PAYABLE_DRIVERS_CAP).map((d) => ({
-          driverId: d.id,
-          driverCode: d.code,
-          driverName: nameOf(d.first_name, d.last_name),
-        })),
+        payableDrivers: payableDriversList(payable),
         payableDriversTotal: payable.length,
       };
       empty =

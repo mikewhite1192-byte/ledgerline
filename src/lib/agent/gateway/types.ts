@@ -212,6 +212,9 @@ export interface ToolDef<A> {
   limit?: (q: Queryable, ctx: GatewayContext, args: A) => Promise<LimitResult>;
   // The untrusted input this call shows a model; the gateway screens it before run.
   screens?: (args: A) => string;
+  // Top-level arg keys that hold free text a person wrote (a name, say): the decision log keeps
+  // only their length, never the id, date and enum exemptions every other string gets.
+  freeTextArgs?: readonly string[];
   // A tool behind a release switch: read on every offer and every call. False means the tool is
   // not offered to any role and a call to it is blocked as disabled before its args are read.
   // The tool's own limit and run check the same switch again.

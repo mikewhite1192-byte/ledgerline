@@ -1,7 +1,13 @@
 import { describe, expect, it } from "vitest";
 import type { CarrierPlan } from "../../../seed/plan";
 import { MAX_RESULT_CHARS } from "../index";
-import { getSettlements, PAYABLE_DRIVERS_CAP, READ_NEXT } from "../tools/read/get-settlements";
+import {
+  getSettlements,
+  PAYABLE_DRIVERS_CAP,
+  PAYABLE_DRIVERS_CHARS,
+  payableDriversList,
+  READ_NEXT,
+} from "../tools/read/get-settlements";
 import { context, TENANT } from "./fake-db";
 import { blueRidgePlan, planDb } from "./plan-db";
 
@@ -130,6 +136,48 @@ describe("get_settlements", () => {
     expect(JSON.stringify(out).length).toBeLessThan(MAX_RESULT_CHARS);
     expect(getSettlements.description).toContain("takes that driver's driverId from it to explain_paystub");
     expect(READ_NEXT).toContain("takes that driver's driverId from payableDrivers here to explain_paystub");
+  });
+
+  // Long names: 40 entries of the list alone would cross the gateway's cap and drop the whole
+  // result, so the list stops at its character budget and the total still counts every driver.
+  it("cuts the payable list at its character budget when the names are long, and still counts them all", async () => {
+    const long = (n: string) => `${n} ${"x".repeat(240)}`;
+    const p: CarrierPlan = {
+      ...rolled,
+      rows: {
+        ...rolled.rows,
+        drivers: rolled.rows.drivers.map((d) => ({ ...d, first_name: long(d.first_name), last_name: long(d.last_name) })),
+      },
+    };
+    const out = (await run({}, p)).result as Out & {
+      payableDrivers: { driverId: string; driverCode: string; driverName: string }[];
+      payableDriversTotal: number;
+    };
+    const full = (await run({}, rolled)).result as Out & { payableDriversTotal: number };
+    expect(out.payableDriversTotal).toBe(full.payableDriversTotal);
+    expect(out.payableDrivers.length).toBeGreaterThan(0);
+    expect(out.payableDrivers.length).toBeLessThan(out.payableDriversTotal);
+    expect(JSON.stringify(out.payableDrivers).length).toBeLessThanOrEqual(PAYABLE_DRIVERS_CHARS);
+    expect(out.payableDrivers[0].driverName.length).toBeGreaterThan(480);
+    expect(JSON.stringify(out).length).toBeLessThan(MAX_RESULT_CHARS);
+    expect(PAYABLE_DRIVERS_CHARS).toBeLessThan(MAX_RESULT_CHARS);
+  });
+
+  it("keeps 40 as the most entries, and the budget holds to the character", () => {
+    const short = Array.from({ length: 60 }, (_, i) => ({
+      id: `00000000-0000-4000-8000-0000000000${String(10 + i)}`,
+      code: `D${String(i)}`,
+      first_name: "A",
+      last_name: "B",
+    }));
+    expect(payableDriversList(short)).toHaveLength(PAYABLE_DRIVERS_CAP);
+    const wide = short.map((d) => ({ ...d, first_name: "y".repeat(400) }));
+    const list = payableDriversList(wide);
+    expect(JSON.stringify(list).length).toBeLessThanOrEqual(PAYABLE_DRIVERS_CHARS);
+    // One more entry would have crossed the budget.
+    expect(list.length).toBeLessThan(PAYABLE_DRIVERS_CAP);
+    expect(JSON.stringify([...list, list[0]]).length).toBeGreaterThan(PAYABLE_DRIVERS_CHARS);
+    expect(payableDriversList([])).toEqual([]);
   });
 
   it("lists no drivers for a week with no pay", async () => {
