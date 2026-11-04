@@ -420,13 +420,15 @@ describe("runChildCheck", () => {
     expect(h.complete).not.toHaveBeenCalled();
   });
 
-  it("tells the check what each category means, so a load with no pay item is never flagged", () => {
+  it("lets the check judge only the categories its records show, so a load with no pay item is never flagged", () => {
     expect(CHECK_PROMPT).toContain("a load with no pay item is never an issue");
-    expect(CHECK_PROMPT).toContain("never report no_reimbursement");
-    // Every snake_case word the meanings name, other than the pay_items table, is a real category.
-    const meanings = CHECK_PROMPT.slice(CHECK_PROMPT.indexOf("What each category means"), CHECK_PROMPT.indexOf("Never state"));
-    const named = (meanings.match(/\b[a-z]+(?:_[a-z]+)+\b/g) ?? []).filter((w) => w !== "pay_items");
-    expect(named).toEqual(expect.arrayContaining(["newer_is_duplicate", "rate_missing", "over_load_cap", OTHER_CATEGORY]));
+    expect(CHECK_PROMPT).toContain("let you judge only two categories: newer_is_duplicate");
+    expect(CHECK_PROMPT).toContain("and rate_missing, a delivered or invoiced load");
+    expect(CHECK_PROMPT).toContain("so never report one");
+    // Every snake_case word the rule names, other than the pay_items table, is a real category.
+    const rule = CHECK_PROMPT.slice(CHECK_PROMPT.indexOf("These records let you judge"), CHECK_PROMPT.indexOf("Never state"));
+    const named = (rule.match(/\b[a-z]+(?:_[a-z]+)+\b/g) ?? []).filter((w) => w !== "pay_items");
+    expect(named).toEqual(["newer_is_duplicate", "rate_missing", OTHER_CATEGORY]);
     for (const w of named) expect(CHECK_CATEGORIES).toContain(w);
   });
 
