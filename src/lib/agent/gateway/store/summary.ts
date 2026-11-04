@@ -66,6 +66,9 @@ function wholeLinesOfLast(sections: readonly SummarySection[], cap: number): str
   return kept < joined.length && joined[kept] !== "\n" ? lines.slice(0, -1) : lines;
 }
 
+// The longest carrier name the Carrier section shows.
+const CARRIER_NAME_MAX = 120;
+
 const DOW = ["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"];
 
 // The week paid next as the turn read it (store/index.ts readTurnDueWeek): the week, null when no
@@ -251,7 +254,9 @@ export async function buildStateSummary(
   const zone = tenant?.timezone ?? "UTC";
   const today = localDateOf(now.toISOString(), zone);
   const header: string[] = [];
-  if (tenant) header.push(`Carrier: ${tenant.name}`);
+  // The name is cut to its own length, so the section's worst case (about 450 characters with
+  // the week paid next line) stays under its 480 cap and the cap never reaches the periodId.
+  if (tenant) header.push(`Carrier: ${cut(tenant.name, CARRIER_NAME_MAX)}`);
   header.push(`Time zone: ${zone}`, `Today: ${today}`);
 
   const rules: string[] = [];
@@ -273,7 +278,7 @@ export async function buildStateSummary(
   }
   const next = paidNextLine(paidNext);
   if (next !== null) header.push(next);
-  // 300 held the four lines; the week paid next line (about 160) rides under the same cap.
+  // 300 held the four lines; the week paid next line (about 170) rides under the same cap.
   sections.push({ title: "Carrier", lines: header, maxChars: 480 });
   sections.push({ title: "Pay rules", lines: rules, maxChars: 600 });
   // One line on the dispatch feed while the mirror is on: the system, its last full pass, today's

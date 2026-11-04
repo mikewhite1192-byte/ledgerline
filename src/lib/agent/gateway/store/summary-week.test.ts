@@ -8,7 +8,8 @@ import { buildStateSummary, paidNextLine, payWeekLine } from "./summary";
 
 // The week paid next in the agent's summary: the week the pay check and the sweep read, named on
 // its own line so "this week" in a pay question means it, not the calendar week the roll opens
-// empty. Read once per operator question, beside the carrier notes, in its own transaction.
+// empty. Read once per operator question, in its own transaction (beside the carrier notes' own
+// while their switch is on).
 
 const CONVERSATION = "55555555-5555-4555-8555-555555555555";
 // Tuesday Nov 3, 2026, mid-day in the carrier's zone: today's week is Nov 2 to Nov 8.
@@ -73,6 +74,24 @@ describe("the summary's week paid next", () => {
     expect(carrier.endsWith(`\nPay week: Monday to Sunday, today's week 2026-11-02 to 2026-11-08\n${LINE}`)).toBe(true);
   });
 
+  it("keeps the periodId whole under a 300 character carrier name, which is cut instead", async () => {
+    const name = "N".repeat(300);
+    const db = planDb(plan, (sql, params) => {
+      if (sql === "SELECT id, slug, name, timezone, demo_copy_of FROM tenants WHERE id = current_tenant_id()") {
+        return [{ id: TENANT, slug: plan.carrier.slug, name, timezone: plan.carrier.timezone }];
+      }
+      return turnStatements(sql, params);
+    });
+    const out = await db.withTenant(TENANT, (q) =>
+      buildStateSummary(q, SESSION, CONVERSATION, NOW, CAP, "", [], null, PAID_NEXT),
+    );
+    const carrier = out.text.split("\n\n").find((s) => s.startsWith("Carrier:"))!;
+    expect(carrier.endsWith(`\n${LINE}`)).toBe(true);
+    expect(carrier).toContain(`periodId ${due.id};`);
+    expect(carrier).toContain(`\nCarrier: ${"N".repeat(117)}...\n`);
+    expect(carrier).not.toContain("N".repeat(118));
+  });
+
   it("follows the pay week line on the week's first day", async () => {
     const db = planDb(plan, turnStatements);
     const monday = new Date("2026-11-02T17:00:00Z");
@@ -102,7 +121,7 @@ describe("openAgentTurn and the week paid next", () => {
     );
     if ("refused" in opened) throw new Error(`refused ${opened.refused}`);
     expect(opened.summary).toContain(LINE);
-    // The notes, the week paid next and the turn: three transactions, the periods read once.
+    // Memory on: the notes, the week paid next and the turn, the periods read once.
     expect(db.transactions).toBe(3);
     expect(db.statements.filter((s) => /FROM settlement_periods WHERE tenant_id/.test(s.sql))).toHaveLength(1);
   });
@@ -123,6 +142,20 @@ describe("openAgentTurn and the week paid next", () => {
     expect(opened.summary).toContain("Week paid next: not available");
     expect(opened.summary).not.toContain("10.0.0.7");
     expect(log).toHaveBeenCalledWith("summary: week paid next unreadable for turn 77777777-7777-4777-8777-777777777777");
+  });
+
+  it("reads it in its own one transaction while the notes switch is off", async () => {
+    flags.carrierMemoryEnabled = false;
+    const db = planDb(plan, turnStatements);
+    const opened = await openAgentTurn(
+      SESSION,
+      { conversationId: null, turnId: "99999999-9999-4999-8999-999999999999", text: "Why is pay short this week?", now: NOW, summaryChars: CAP, readNotes: true },
+      { db, clock: () => NOW },
+    );
+    if ("refused" in opened) throw new Error(`refused ${opened.refused}`);
+    expect(opened.summary).toContain(LINE);
+    // No notes transaction: the week paid next and the turn.
+    expect(db.transactions).toBe(2);
   });
 
   it("reads nothing for a turn that does not read the notes", async () => {

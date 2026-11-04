@@ -40,6 +40,7 @@ export const getSettlements = defineTool({
       // oldest open week with a paystub or a day that carries pay, else the newest open week.
       weeks = await readDueWeekAndPay(q);
       const due = weeks.due;
+      // Status open is right: dueWeek picks only from open weeks.
       period = due ? { id: due.id, start: due.period_start, end: due.period_end, status: "open" } : null;
     }
     if (!period) return { result: { period: null, settlements: [], awaitingAuditor: 0 } };

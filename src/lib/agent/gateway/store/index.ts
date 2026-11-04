@@ -94,8 +94,9 @@ export function dbTurnStore(session: Session, deps: StoreDeps = {}): TurnStore {
 
 // What a caller of openAgentTurn passes: the turn, and readNotes for one of the operator's own
 // questions (the chat, the advance desk, a voice note's hand-off), whose model reads the summary.
-// Only those read the carrier notes; a sweep or fan-out check turn leaves it out and gets no notes
-// section and no extra transaction.
+// Only those read the carrier notes (while carrierMemoryEnabled is on) and the week paid next
+// (always), each in its own transaction; a sweep or fan-out check turn leaves it out and gets no
+// notes section, no week paid next line and no extra transaction.
 export type AgentTurnInput = Omit<OpenTurnInput, "notes" | "paidNext"> & { readNotes?: boolean };
 
 // The carrier notes for a turn, in their own short read-only transaction before the turn opens:
@@ -119,9 +120,10 @@ async function readTurnNotes(
 }
 
 // The week paid next for a turn's summary (readDueWeek, the week the pay check and the sweep read),
-// in its own short read-only transaction, for the same turns that read the notes and at the same
-// time, so it adds no wait of its own past the longer of the two. A failed read says so in the
-// summary (unavailable) with one log line holding the turn id only, and never stops the question.
+// in its own short read-only transaction, for every turn with readNotes, whether or not the notes
+// switch is on. With the notes read too, the two run at the same time, so it adds no wait past the
+// longer of the two; with the switch off it is the one extra transaction. A failed read says so in
+// the summary (unavailable) with one log line holding the turn id only, and never stops the question.
 async function readTurnDueWeek(
   db: TenantDb,
   session: Session,
