@@ -2,13 +2,14 @@ import { describe, expect, it, vi } from "vitest";
 import { flags } from "@/config/flags";
 import type { OpenedTurn, StepFinish, StepStart } from "@/lib/agent/gateway/store/types";
 import type { StepView } from "@/lib/agent/view";
-import type { GatewayOutcome } from "@/lib/agent/gateway/types";
-import { AiError, type AiRequest, type AiResult, type AiTool } from "@/lib/ai";
+import type { GatewayContext, GatewayOutcome, ToolCall } from "@/lib/agent/gateway/types";
+import { MAX_RESULT_CHARS } from "@/lib/agent/gateway";
+import { AiError, type AiRequest, type AiResult } from "@/lib/ai";
 import { estimateReserve, NANOCENTS_PER_CENT, priceFor, type TokenPrice } from "@/lib/ai/prices";
 import { metaBody } from "@/lib/ai/providers/meta";
 import { FINDING_CATEGORIES } from "@/lib/rules-engine/types";
 import { DbError, type Queryable } from "@/lib/db";
-import { CHECK_TOOLS, runChildCheck, sourcesFrom, validateCheck, type ChildDeps, type ChildInput } from "./check";
+import { CHECK_PROMPT, CHECK_READS, runChildCheck, sourcesFrom, validateCheck, type ChildDeps, type ChildInput } from "./check";
 import { fanoutLimits, refusedByProvider } from "./limits";
 import { defaultOrder, PLAN_PROMPT, planInput, validatePlan, type Roster } from "./plan";
 import {
@@ -25,8 +26,8 @@ import { MAX_ISSUES, MAX_SOURCES, OTHER_CATEGORY, PLAN_FORMAT, RECONCILE_FORMAT,
 import { treeOf, type FanoutCheckRow, type FanoutRow } from "./tree";
 
 // The second opinion's server rules, without a database or a model: the plan, check and
-// comparison validators, the child loop's caps on a fake clock and a fake model, and the page
-// tree's figure guard.
+// comparison validators, the child check's reads and caps on a fake clock, gateway and model,
+// and the page tree's figure guard.
 
 const A = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa";
 const B = "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb";
@@ -152,15 +153,11 @@ describe("sourcesFrom and validateCheck", () => {
   });
 });
 
-// ---- The child loop on a fake clock and a fake model ----
+// ---- The child check on a fake clock, a fake gateway and a fake model ----
 
 const LIMITS = { ...flags.fanoutLimits };
 const SESSION = { sub: "service:sweep:t", email: "sweep@example.test", tenantId: "11111111-1111-4111-8111-111111111111" };
-const TOOLS: AiTool[] = [...CHECK_TOOLS, "propose_pay_correction"].map((name) => ({
-  name,
-  description: name,
-  parameters: { type: "object", properties: {} },
-}));
+const WEEK = { start: "2026-10-26", end: "2026-11-01" };
 
 function input(over: Partial<ChildInput> = {}): ChildInput {
   return {
@@ -169,7 +166,7 @@ function input(over: Partial<ChildInput> = {}): ChildInput {
     traceId: "trace-1",
     timeZone: "America/Chicago",
     driverId: A,
-    week: { start: "2026-10-26", end: "2026-11-01" },
+    week: WEEK,
     focus: [],
     brief: null,
     limits: LIMITS,
@@ -192,9 +189,30 @@ const result = (over: Partial<AiResult>): AiResult => ({
   ...over,
 });
 
-const toolCall = (name: string, driverId = A, n = 0) => ({ id: `tc-${name}-${n}`, name, argumentsJson: JSON.stringify({ driverId }) });
+// What the fake gateway returns for each read: the driver, one pay item, one load, no advances.
+const READ_RESULTS: Record<string, Record<string, unknown>> = {
+  get_driver: { driver: { id: A } },
+  get_pay_items: { driverId: A, rows: [{ id: ITEM, ref: null }] },
+  get_loads: { driverId: A, rows: [{ id: LOAD }] },
+  get_advances: { driverId: A, rows: [] },
+};
 
-function harness(answers: ((req: AiRequest) => AiResult | Promise<AiResult>)[], opts: { stepMs?: number } = {}) {
+const allowed = (tool: string): GatewayOutcome =>
+  ({
+    decision: "allowed",
+    decisionId: `d-${tool}`,
+    tool,
+    tier: "read",
+    reason: "ok",
+    result: READ_RESULTS[tool] ?? {},
+    refs: [],
+    latencyMs: 1,
+  }) as GatewayOutcome;
+
+function harness(
+  answers: ((req: AiRequest) => AiResult | Promise<AiResult>)[],
+  opts: { stepMs?: number; readMs?: number; read?: (tool: string) => GatewayOutcome | Promise<GatewayOutcome> } = {},
+) {
   let now = 0;
   let n = 0;
   const requests: AiRequest[] = [];
@@ -205,18 +223,10 @@ function harness(answers: ((req: AiRequest) => AiResult | Promise<AiResult>)[], 
     now += opts.stepMs ?? 0;
     return next(req);
   });
-  const callTool = vi.fn(
-    async (_ctx: unknown, call: { name: string }): Promise<GatewayOutcome> => ({
-      decision: "allowed",
-      decisionId: `d-${call.name}`,
-      tool: call.name,
-      tier: "read",
-      reason: "ok",
-      result: { rows: [{ id: LOAD }] },
-      refs: [],
-      latencyMs: 1,
-    }) as GatewayOutcome,
-  );
+  const callTool = vi.fn(async (_ctx: GatewayContext, call: ToolCall): Promise<GatewayOutcome> => {
+    now += opts.readMs ?? 0;
+    return (opts.read ?? allowed)(call.name);
+  });
   let step = 0;
   const steps = {
     startStep: vi.fn<(turnId: string, s: StepStart) => Promise<StepView>>(async () => ({ id: `s${++step}` }) as StepView),
@@ -224,9 +234,8 @@ function harness(answers: ((req: AiRequest) => AiResult | Promise<AiResult>)[], 
   };
   const deps: ChildDeps = {
     complete: complete as unknown as ChildDeps["complete"],
-    callTool: callTool as unknown as ChildDeps["callTool"],
+    callTool,
     steps,
-    tools: TOOLS,
     clock: () => now,
     switchOn: () => true,
   };
@@ -237,73 +246,200 @@ const answer = (issues: unknown[] = []) =>
   result({ text: JSON.stringify({ driverId: A, checkedAll: true, confidence: "high", issues }) });
 
 describe("runChildCheck", () => {
-  it("reads, then answers with only the records it read; it is offered the five reads only", async () => {
+  it("reads the driver's four records in order through the gateway, then asks once with no tools and the records in the message", async () => {
     const h = harness([
-      () => result({ toolCalls: [toolCall("get_loads")] }),
       () => answer([{ category: "no_load_that_day", sources: [{ table: "loads", id: LOAD }], note: "A day with no load." }]),
     ]);
     const out = await runChildCheck(input(), h.deps);
     expect(out.status).toBe("done");
     expect(out.answer?.issues).toEqual([{ category: "no_load_that_day", sources: [{ table: "loads", id: LOAD }], note: "A day with no load." }]);
-    expect(out.modelCalls).toBe(2);
-    expect(out.toolSteps).toBe(1);
-    expect(h.requests[0].tools?.map((t) => t.name)).toEqual([...CHECK_TOOLS]);
-    expect(h.requests.every((r) => r.purpose === "fanout_check" && (r.maxCostCents ?? Infinity) <= LIMITS.callCents)).toBe(true);
+    expect(out).toMatchObject({ toolSteps: CHECK_READS.length, modelCalls: 1, stepCount: CHECK_READS.length + 1, costKnown: true });
+
+    // The reads: this driver only, the week's bounds on pay items and loads, as the operator in
+    // the check's own turn and trace.
+    const calls = h.callTool.mock.calls;
+    expect(calls.map((c) => c[1].name)).toEqual(["get_driver", "get_pay_items", "get_loads", "get_advances"]);
+    const args = calls.map((c) => JSON.parse(c[1].argumentsJson) as Record<string, unknown>);
+    expect(args.every((a) => a.driverId === input().driverId)).toBe(true);
+    expect(args[1]).toEqual({ driverId: A, periodStart: WEEK.start, periodEnd: WEEK.end });
+    expect(args[2]).toEqual({ driverId: A, from: WEEK.start, to: WEEK.end });
+    for (const [ctx] of calls) {
+      expect(ctx).toMatchObject({ session: SESSION, role: "operator", turnId: "turn-1", traceId: "trace-1" });
+    }
+
+    // Each read is a tool step with the gateway's label and decision, then the one model step.
+    expect(h.steps.startStep.mock.calls.map((c) => [c[1].kind, c[1].label])).toEqual([
+      ["tool", "Reading the driver"],
+      ["tool", "Reading pay items"],
+      ["tool", "Reading loads"],
+      ["tool", "Reading advances"],
+      ["model", "Thinking it through"],
+    ]);
+    expect(h.steps.finishStep.mock.calls.slice(0, 4).map((c) => c[2].gatewayDecisionId)).toEqual([
+      "d-get_driver",
+      "d-get_pay_items",
+      "d-get_loads",
+      "d-get_advances",
+    ]);
+
+    // One call, no tools, no replay, the records in the user message.
+    expect(h.complete).toHaveBeenCalledTimes(1);
+    const req = h.requests[0];
+    expect(req.tools).toBeUndefined();
+    expect(req.replay).toBeUndefined();
+    expect(req).toMatchObject({ purpose: "fanout_check", reasoningEffort: "low" });
+    expect(req.maxCostCents).toBe(Math.min(LIMITS.callCents, LIMITS.driverCents));
+    const user = JSON.parse(req.messages.find((m) => m.role === "user")?.content ?? "{}") as Record<string, unknown>;
+    expect(user).toMatchObject({ driverId: A, week: WEEK, focus: [], brief: "" });
+    expect(user.records).toEqual({
+      driver: READ_RESULTS.get_driver,
+      payItems: READ_RESULTS.get_pay_items,
+      loads: READ_RESULTS.get_loads,
+      advances: READ_RESULTS.get_advances,
+    });
   });
 
-  it("stops at three model calls: tool calls on the third end it unanswered, never run", async () => {
-    const h = harness([() => result({ toolCalls: [toolCall("get_loads")] })]);
-    const out = await runChildCheck(input(), h.deps);
-    expect(out.status).toBe("unparsed");
-    expect(h.complete).toHaveBeenCalledTimes(LIMITS.maxCallsPerDriver);
-    expect(h.callTool).toHaveBeenCalledTimes(LIMITS.maxCallsPerDriver - 1);
-  });
-
-  it("runs at most four tool steps, then asks for the answer", async () => {
-    const three = () => result({ toolCalls: [0, 1, 2].map((n) => toolCall("get_loads", A, n)) });
-    const h = harness([three, three, () => answer()]);
-    const out = await runChildCheck(input(), h.deps);
-    expect(out.status).toBe("done");
-    expect(h.callTool).toHaveBeenCalledTimes(LIMITS.maxToolSteps);
-    expect(out.toolSteps).toBe(LIMITS.maxToolSteps);
-    const last = h.requests[2].messages.at(-1);
-    expect(last?.role).toBe("system");
-  });
-
-  it("stops at the driver's cents", async () => {
-    const h = harness([() => result({ toolCalls: [toolCall("get_loads")], costNanocents: 5 * NANOCENTS_PER_CENT })]);
-    const out = await runChildCheck(input(), h.deps);
-    expect(out.status).toBe("budget");
-    expect(h.complete).toHaveBeenCalledTimes(2);
-    expect(out.costNanocents).toBe(10 * NANOCENTS_PER_CENT);
-  });
-
-  it("caps one check call with room for about 55 KB of request beside its 3,000 output tokens, inside the driver's cents", () => {
-    // The wrapper's reserve for a Muse Spark call (src/lib/ai/prices.ts estimateReserve); 3,000 is
-    // check.ts's MAX_OUTPUT_TOKENS.
-    const price = priceFor("spark", "meta", "muse-spark-1.3") as TokenPrice;
-    expect(estimateReserve(price, 55_000, 3_000)).toBeLessThanOrEqual(LIMITS.callCents * NANOCENTS_PER_CENT);
-    expect(LIMITS.callCents).toBeLessThanOrEqual(LIMITS.driverCents);
-  });
-
-  it("stops at the check's own clock and never asks for longer than is left", async () => {
-    const h = harness([() => result({ toolCalls: [toolCall("get_loads")] })], { stepMs: 10_000 });
-    const out = await runChildCheck(input(), h.deps);
-    expect(out.status).toBe("timed_out");
-    expect(h.complete).toHaveBeenCalledTimes(2);
-    expect(h.requests[0].timeoutMs).toBeLessThanOrEqual(LIMITS.childTimeoutMs);
-    expect(h.requests[1].timeoutMs).toBeLessThanOrEqual(LIMITS.childTimeoutMs - 10_000);
-  });
-
-  it("refuses a write tool and another driver's records without asking the gateway", async () => {
+  it("keeps only the sources the reads returned", async () => {
     const h = harness([
-      () => result({ toolCalls: [toolCall("propose_pay_correction"), toolCall("get_loads", B)] }),
-      () => answer(),
+      () =>
+        answer([
+          {
+            category: "no_reimbursement",
+            sources: [
+              { table: "loads", id: LOAD },
+              { table: "loads", id: UNKNOWN },
+              { table: "pay_items", id: ITEM },
+            ],
+            note: "Look at the load.",
+          },
+          { category: "rate_missing", sources: [{ table: "advances", id: UNKNOWN }], note: "Look at the advance." },
+        ]),
     ]);
     const out = await runChildCheck(input(), h.deps);
     expect(out.status).toBe("done");
-    expect(h.callTool).not.toHaveBeenCalled();
-    expect(h.steps.finishStep.mock.calls.filter((c) => c[2].state === "failed")).toHaveLength(2);
+    expect(out.droppedSources).toBe(2);
+    expect(out.answer?.issues).toEqual([
+      {
+        category: "no_reimbursement",
+        sources: [
+          { table: "loads", id: LOAD },
+          { table: "pay_items", id: ITEM },
+        ],
+        note: "Look at the load.",
+      },
+    ]);
+  });
+
+  it("never says it checked everything when a read came back cut at the size cap", async () => {
+    const cut = harness([() => answer()], {
+      read: (tool) =>
+        tool === "get_loads" ? ({ ...allowed(tool), reason: "result_truncated" } as GatewayOutcome) : allowed(tool),
+    });
+    const out = await runChildCheck(input(), cut.deps);
+    expect(out.status).toBe("done");
+    expect(out.answer?.checkedAll).toBe(false);
+    const whole = await runChildCheck(input(), harness([() => answer()]).deps);
+    expect(whole.answer?.checkedAll).toBe(true);
+  });
+
+  it("ends as an error with no model call when a read is refused, fails or throws", async () => {
+    const refused = (decision: "blocked" | "failed" | "denied", reason: string) => (tool: string) =>
+      (tool === "get_loads"
+        ? { decision, decisionId: `d-${tool}`, tool, reason, result: { blocked: true }, latencyMs: 0 }
+        : allowed(tool)) as GatewayOutcome;
+    const reads: ((tool: string) => GatewayOutcome | Promise<GatewayOutcome>)[] = [
+      refused("blocked", "unknown_record"),
+      refused("failed", "tool_failed"),
+      refused("denied", "role_not_allowed"),
+      async (tool) => {
+        if (tool === "get_loads") throw new Error("lost");
+        return allowed(tool);
+      },
+    ];
+    for (const read of reads) {
+      const h = harness([() => answer()], { read });
+      const out = await runChildCheck(input(), h.deps);
+      expect(out).toMatchObject({ status: "error", costKnown: true, costNanocents: 0, modelCalls: 0, toolSteps: 3, stepCount: 3 });
+      expect(h.complete).not.toHaveBeenCalled();
+      expect(h.callTool).toHaveBeenCalledTimes(3);
+      const last = h.steps.finishStep.mock.calls.at(-1)?.[2];
+      expect(last?.state).toBe("failed");
+    }
+  });
+
+  it("ends as timed out with no model call when the clock runs out during the reads", async () => {
+    const h = harness([() => answer()], { readMs: 8_000 });
+    const out = await runChildCheck(input(), h.deps);
+    expect(out).toMatchObject({ status: "timed_out", costKnown: true, modelCalls: 0 });
+    expect(h.callTool).toHaveBeenCalledTimes(3);
+    expect(h.complete).not.toHaveBeenCalled();
+  });
+
+  it("ends as timed out when a read fails because the clock ran out inside it, and as an error when time is left", async () => {
+    const failed = (tool: string) =>
+      (tool === "get_loads"
+        ? { decision: "failed", decisionId: `d-${tool}`, tool, reason: "tool_failed", result: { error: "tool_failed" }, latencyMs: 0 }
+        : allowed(tool)) as GatewayOutcome;
+    // The third read takes the rest of the check's clock and fails, as the gateway's timeout does.
+    let now = 0;
+    const late = harness([() => answer()], { read: failed });
+    late.callTool.mockImplementation(async (_ctx, call) => {
+      now += call.name === "get_loads" ? LIMITS.childTimeoutMs : 1_000;
+      return failed(call.name);
+    });
+    const out = await runChildCheck(input(), { ...late.deps, clock: () => now });
+    expect(out).toMatchObject({ status: "timed_out", costKnown: true, modelCalls: 0, toolSteps: 3 });
+    expect(late.complete).not.toHaveBeenCalled();
+    // The same failure with time left is an error.
+    const early = harness([() => answer()], { read: failed, readMs: 1_000 });
+    expect(await runChildCheck(input(), early.deps)).toMatchObject({ status: "error", modelCalls: 0 });
+    expect(early.complete).not.toHaveBeenCalled();
+  });
+
+  it("never asks for longer than is left after the reads", async () => {
+    const h = harness([() => answer()], { readMs: 2_000 });
+    const out = await runChildCheck(input(), h.deps);
+    expect(out.status).toBe("done");
+    expect(h.requests[0].timeoutMs).toBeLessThanOrEqual(LIMITS.childTimeoutMs - CHECK_READS.length * 2_000);
+  });
+
+  it("reads nothing when the check has fewer tool steps than reads, or no model call", async () => {
+    for (const over of [{ maxToolSteps: CHECK_READS.length - 1 }, { maxCallsPerDriver: 0 }]) {
+      const h = harness([() => answer()]);
+      const out = await runChildCheck(input({ limits: { ...LIMITS, ...over } }), h.deps);
+      expect(out).toMatchObject({ status: "error", costKnown: true, stepCount: 0 });
+      expect(h.callTool).not.toHaveBeenCalled();
+      expect(h.complete).not.toHaveBeenCalled();
+    }
+  });
+
+  it("stops at the driver's cents", async () => {
+    const h = harness([() => answer()]);
+    const out = await runChildCheck(input({ limits: { ...LIMITS, driverCents: 0 } }), h.deps);
+    expect(out.status).toBe("budget");
+    expect(h.complete).not.toHaveBeenCalled();
+  });
+
+  it("caps one check call with room for every read at its cap beside its 3,000 output tokens, inside the driver's cents", () => {
+    // The wrapper's reserve for a Muse Spark call (src/lib/ai/prices.ts estimateReserve); 3,000 is
+    // check.ts's MAX_OUTPUT_TOKENS. The request at its largest: every read at the gateway's result
+    // cap, the prompt, and 1,000 for the driver, week, focus and brief around them.
+    const price = priceFor("spark", "meta", "muse-spark-1.3") as TokenPrice;
+    const request = CHECK_READS.length * MAX_RESULT_CHARS + CHECK_PROMPT.length + 1_000;
+    expect(request).toBeLessThanOrEqual(55_000);
+    expect(estimateReserve(price, 55_000, 3_000)).toBeLessThanOrEqual(LIMITS.callCents * NANOCENTS_PER_CENT);
+    expect(LIMITS.callCents).toBeLessThanOrEqual(LIMITS.driverCents);
+    expect(LIMITS.maxToolSteps).toBeGreaterThanOrEqual(CHECK_READS.length);
+  });
+
+  it("ends as unparsed when the answer is not the JSON, or names a tool call", async () => {
+    for (const reply of [result({ text: "Looks fine." }), result({ toolCalls: [{ id: "tc-1", name: "get_ledger", argumentsJson: "{}" }] })]) {
+      const h = harness([() => reply]);
+      const out = await runChildCheck(input(), h.deps);
+      expect(out).toMatchObject({ status: "unparsed", modelCalls: 1 });
+      expect(h.complete).toHaveBeenCalledTimes(1);
+      expect(h.callTool).toHaveBeenCalledTimes(CHECK_READS.length);
+    }
   });
 
   it("counts a lost answer's cost as unknown, and a refusal before sending as nothing", async () => {
@@ -356,11 +492,23 @@ describe("runChildCheck", () => {
     expect(refusedByProvider("timeout", 504)).toBe(false);
   });
 
-  it("makes no call when the switch is off", async () => {
+  it("makes no read and no call when the switch is off, and no call when it goes off during the reads", async () => {
     const h = harness([() => answer()]);
     const out = await runChildCheck(input(), { ...h.deps, switchOn: () => false });
     expect(out.status).toBe("error");
+    expect(h.callTool).not.toHaveBeenCalled();
     expect(h.complete).not.toHaveBeenCalled();
+
+    const later = harness([() => answer()]);
+    let reads = 0;
+    later.callTool.mockImplementation(async (_ctx, call) => {
+      reads += 1;
+      return allowed(call.name);
+    });
+    const off = await runChildCheck(input(), { ...later.deps, switchOn: () => reads === 0 });
+    expect(off.status).toBe("error");
+    expect(later.callTool).toHaveBeenCalledTimes(CHECK_READS.length);
+    expect(later.complete).not.toHaveBeenCalled();
   });
 });
 

@@ -110,7 +110,7 @@ export const CheckAnswer = z.strictObject({
 export type CheckAnswer = z.infer<typeof CheckAnswer>;
 
 // The shape the check's last message must take, spelled out in its prompt: the check's request
-// offers tools, so its answer is a plain message the server parses, never a forced format.
+// offers no tools and names no format, so its answer is a plain message the server parses.
 export const CHECK_SHAPE =
   '{"driverId": "<the driver id>", "checkedAll": true|false, "confidence": "high"|"medium"|"low", ' +
   '"issues": [{"category": "<one of: ' +

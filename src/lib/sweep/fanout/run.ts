@@ -1,6 +1,6 @@
 import { randomUUID } from "node:crypto";
 import { flags } from "../../../config/flags";
-import { AiError, type AiFormat, type AiResult, type AiTool } from "../../ai";
+import { AiError, type AiFormat, type AiResult } from "../../ai";
 import { NANOCENTS_PER_CENT } from "../../ai/prices";
 import type { OpenedTurn, OpenTurnRefusal, TurnStore } from "../../agent/gateway/store";
 import type { CompleteFn, GatewayContext, GatewayOutcome, ToolCall } from "../../agent/gateway/types";
@@ -54,7 +54,6 @@ export type FanoutDeps = {
     input: { conversationId: string | null; turnId: string; text: string; now: Date; summaryChars: number },
   ) => Promise<OpenedTurn | { refused: OpenTurnRefusal }>;
   steps: (session: Session) => Pick<TurnStore, "startStep" | "finishStep" | "finishTurn">;
-  tools: () => AiTool[];
 };
 
 export type FanoutCtx = {
@@ -607,7 +606,6 @@ export async function checkPhase(fx: FanoutCtx): Promise<"check" | "reconcile" |
     }
     return opened;
   });
-  const tools = fx.deps.tools();
   const steps = fx.deps.steps(fx.service);
   const startedAt = fx.clock().getTime();
   const childDeadline = Math.min(startedAt + l.childTimeoutMs, fx.deadlineAt + MODEL_OVERRUN_MS);
@@ -633,7 +631,6 @@ export async function checkPhase(fx: FanoutCtx): Promise<"check" | "reconcile" |
           complete: fx.deps.complete,
           callTool: fx.deps.callTool,
           steps,
-          tools,
           clock: () => fx.clock().getTime(),
           switchOn: fanoutOn,
         },

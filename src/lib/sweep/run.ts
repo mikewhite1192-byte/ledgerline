@@ -1,7 +1,7 @@
 import { randomUUID } from "node:crypto";
 import { flags } from "../../config/flags";
 import { runAudit as auditorRun, type AuditResult } from "../agent/auditor/run";
-import { callTool as gatewayCallTool, toolsFor } from "../agent/gateway";
+import { callTool as gatewayCallTool } from "../agent/gateway";
 import {
   dbTurnStore,
   openAgentTurn,
@@ -14,7 +14,7 @@ import type { CompleteFn, GatewayContext, GatewayOutcome, ToolCall } from "../ag
 import { CLEAN_SQL } from "../agent/proposals/clean";
 import { codeToWords } from "../format/labels";
 import { EXPLAIN_TIMEOUT_MS, explainFix, type Explained, type ExplainInput } from "../agent/sweep/explain";
-import { complete as aiComplete, type AiTool } from "../ai";
+import { complete as aiComplete } from "../ai";
 import { NANOCENTS_PER_CENT } from "../ai/prices";
 import type { Session } from "../auth/claims";
 import { readCheckInput, readDueWeek, readReceivablesInput, readRowsWhereId } from "../data/read";
@@ -116,10 +116,9 @@ export type SweepDeps = {
   store?: (session: Session) => Pick<TurnStore, "persistProposal" | "finishTurn">;
   explain?: (session: Session, input: ExplainInput) => Promise<Explained>;
   runAudit?: (session: Session, proposalId: string) => Promise<AuditResult>;
-  // The second opinion's model calls, turn steps and the tools its checks are offered.
+  // The second opinion's model calls and turn steps.
   complete?: CompleteFn;
   steps?: (session: Session) => Pick<TurnStore, "startStep" | "finishStep" | "finishTurn">;
-  tools?: () => AiTool[];
 };
 
 // The find and draft lease. A draft step may start just over STOP_BEFORE_MS before the slice's
@@ -232,7 +231,6 @@ function defaults(db: TenantDb, clock: () => Date, deps: SweepDeps): Ctx["deps"]
     runAudit: deps.runAudit ?? ((s, id) => auditorRun(s, id, { db, clock })),
     complete: deps.complete ?? ((target, request, s) => aiComplete(target, request, s, { db })),
     steps: deps.steps ?? ((s) => dbTurnStore(s, { db, clock })),
-    tools: deps.tools ?? (() => toolsFor("operator")),
   };
 }
 
@@ -443,7 +441,6 @@ function fanoutCtx(ctx: Ctx): FanoutCtx {
       callTool: ctx.deps.callTool,
       openTurnIn: ctx.deps.openTurnIn,
       steps: ctx.deps.steps,
-      tools: ctx.deps.tools,
     },
   };
 }

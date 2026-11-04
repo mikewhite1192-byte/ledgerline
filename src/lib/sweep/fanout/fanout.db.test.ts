@@ -5,7 +5,7 @@ import type { AuditResult } from "../../agent/auditor/run";
 import { openAgentTurnIn, readSweepTurnTrace } from "../../agent/gateway/store";
 import { reasonSentence } from "../../agent/reasons";
 import type { Explained } from "../../agent/sweep/explain";
-import { AiError, type AiRequest, type AiResult, type AiToolCall } from "../../ai";
+import { AiError, type AiRequest, type AiResult } from "../../ai";
 import { NANOCENTS_PER_CENT } from "../../ai/prices";
 import type { Session } from "../../auth/claims";
 import { createPgDb } from "../../db/pg";
@@ -20,7 +20,7 @@ import { reserveRunCents, settleRunCents } from "./limits";
 
 // The sweep's second opinion against the real database, as the app's role, with the real
 // gateway, turn store and record reads. Only the model is a stand-in: it orders the roster as
-// given, reads each driver's loads once and flags the first load it read, which the engine never
+// given and flags the first of each driver's loads the check read for it, which the engine never
 // does, so every flag is one only a check raised. One tenant seeded with the demo plan, and a
 // second, empty carrier for the walls between them; both removed after.
 
@@ -60,11 +60,11 @@ async function storePass(proposalId: string): Promise<AuditResult> {
 }
 const runAudit = vi.fn(async (_s: Session, id: string) => storePass(id));
 
-const answer = (text: string, toolCalls: AiToolCall[] = []): AiResult => ({
+const answer = (text: string): AiResult => ({
   callId: randomUUID(),
   status: "ok",
   text,
-  toolCalls,
+  toolCalls: [],
   usage: { input: 10, cached: 0, output: 10, reasoning: 0 },
   costNanocents: NANOCENTS_PER_CENT,
   upstreamId: null,
@@ -75,15 +75,18 @@ const answer = (text: string, toolCalls: AiToolCall[] = []): AiResult => ({
 // The stand-in model, one cent a call.
 const model = vi.fn(async (target: string, req: AiRequest): Promise<AiResult> => {
   const user = req.messages.find((m) => m.role === "user");
-  const sent = JSON.parse(user?.content ?? "{}") as { roster?: { driverId: string }[]; driverId?: string };
+  const sent = JSON.parse(user?.content ?? "{}") as {
+    roster?: { driverId: string }[];
+    driverId?: string;
+    records?: { loads?: { rows?: { id: string }[] } };
+  };
   if (req.purpose === "fanout_plan" && target === "wonder") {
     const order = (sent.roster ?? []).map((r, n) => ({ driverId: r.driverId, priority: n === 0 ? 1 : 3, focus: [], brief: "Look at the loads." }));
     return answer(JSON.stringify({ summary: "The busiest drivers first.", order, skipped: [] }));
   }
   if (req.purpose === "fanout_check" && target === "spark") {
-    const tool = req.messages.find((m) => m.role === "tool");
-    if (!tool) return answer("", [{ id: `tc-${randomUUID()}`, name: "get_loads", argumentsJson: JSON.stringify({ driverId: sent.driverId }) }]);
-    const rows = ((JSON.parse(tool.content) as { rows?: { id: string }[] }).rows ?? []).slice(0, 1);
+    if (req.tools?.length) throw new Error("a check is offered no tools");
+    const rows = (sent.records?.loads?.rows ?? []).slice(0, 1);
     const issues = rows.map((r) => ({ category: "other_for_review", sources: [{ table: "loads", id: r.id }], note: "Worth a second look." }));
     return answer(JSON.stringify({ driverId: sent.driverId, checkedAll: true, confidence: "medium", issues }));
   }
@@ -229,7 +232,7 @@ describe("the sweep's second opinion", () => {
     const rows = await checks(runId);
     const n = rows.length;
     expect(n).toBeGreaterThan(1);
-    expect(rows.every((c) => c.status === "done" && c.attempts === 1 && c.cost_cents === 2 && c.turn_id !== null)).toBe(true);
+    expect(rows.every((c) => c.status === "done" && c.attempts === 1 && c.cost_cents === 1 && c.turn_id !== null)).toBe(true);
     // The plan's first driver is checked first.
     expect(rows[0].priority).toBe(1);
 
@@ -244,13 +247,13 @@ describe("the sweep's second opinion", () => {
     const proposals = await read<{ n: string }>("SELECT COUNT(*) AS n FROM proposals WHERE kind = 'pay_correction'");
     expect(Number(proposals[0].n)).toBe(5);
 
-    // One plan call, two calls a driver, one comparison; each held and settled against the cap.
+    // One plan call, one call a driver, one comparison; each held and settled against the cap.
     const purposes = model.mock.calls.map((c) => (c[1] as AiRequest).purpose);
     expect(purposes.filter((p) => p === "fanout_plan")).toHaveLength(1);
-    expect(purposes.filter((p) => p === "fanout_check")).toHaveLength(2 * n);
+    expect(purposes.filter((p) => p === "fanout_check")).toHaveLength(n);
     expect(purposes.filter((p) => p === "fanout_reconcile")).toHaveLength(1);
     // The sweep's own part of it: the five explanations at two cents each.
-    expect(await runRow(runId)).toMatchObject({ spent_cents: 10 + 1 + 2 * n + 1, own_spent_cents: 10, reserved_cents: 0, fanout: true });
+    expect(await runRow(runId)).toMatchObject({ spent_cents: 10 + 1 + n + 1, own_spent_cents: 10, reserved_cents: 0, fanout: true });
 
     // Every turn the fan-out opened is closed.
     const open = await read<{ n: string }>("SELECT COUNT(*) AS n FROM turns WHERE status = 'running'");
@@ -262,7 +265,7 @@ describe("the sweep's second opinion", () => {
     expect(page?.fanout?.checks).toHaveLength(n);
     expect(page?.fanout?.reconcile.summary).toBe("The two checks mostly agree.");
     const trace = await readSweepTurnTrace(SESSION, runId, rows[0].turn_id as string, { db: app });
-    expect(trace?.steps.map((s) => s.kind)).toEqual(["model", "tool", "model"]);
+    expect(trace?.steps.map((s) => s.kind)).toEqual(["tool", "tool", "tool", "tool", "model"]);
     expect(await readSweepTurnTrace(SESSION, randomUUID(), rows[0].turn_id as string, { db: app })).toBeNull();
     // The run's checklist lists the second look and ticks it with the rest.
     expect(page?.run.checklist?.items.map((i) => `${i.key}:${i.state}`)).toEqual([
@@ -522,7 +525,7 @@ describe("the sweep's second opinion", () => {
     const purposes = model.mock.calls.map((c) => (c[1] as AiRequest).purpose);
     expect(purposes.filter((p) => p === "fanout_plan")).toHaveLength(0);
     expect(purposes.filter((p) => p === "fanout_reconcile")).toHaveLength(0);
-    expect(purposes.filter((p) => p === "fanout_check")).toHaveLength(2);
+    expect(purposes.filter((p) => p === "fanout_check")).toHaveLength(1);
     const rows = await checks(runId);
     expect(rows.filter((c) => c.status === "done")).toHaveLength(1);
     expect(rows.filter((c) => c.status === "budget")).toHaveLength(rows.length - 1);
@@ -532,8 +535,8 @@ describe("the sweep's second opinion", () => {
     expect(explain).toHaveBeenCalledTimes(5);
     const row = await runRow(runId);
     expect(row).toMatchObject({ own_spent_cents: 10, reserved_cents: 0 });
-    // The second opinion stayed within its part: the one check at two cents.
-    expect(row.spent_cents - row.own_spent_cents).toBe(row.cap_cents - own - left + 2);
+    // The second opinion stayed within its part: the one check at one cent.
+    expect(row.spent_cents - row.own_spent_cents).toBe(row.cap_cents - own - left + 1);
     expect(row.spent_cents - row.own_spent_cents).toBeLessThanOrEqual(row.cap_cents - own);
   });
 
@@ -604,7 +607,7 @@ describe("the sweep's second opinion", () => {
     const purposes = model.mock.calls.map((c) => (c[1] as AiRequest).purpose);
     expect(purposes.filter((p) => p === "fanout_plan")).toHaveLength(0);
     expect(purposes.filter((p) => p === "fanout_reconcile")).toHaveLength(0);
-    expect(purposes.filter((p) => p === "fanout_check")).toHaveLength(2);
+    expect(purposes.filter((p) => p === "fanout_check")).toHaveLength(1);
     const rows = await checks(runId);
     expect(rows.filter((c) => c.status === "done")).toHaveLength(1);
     expect(rows.filter((c) => c.status === "budget")).toHaveLength(rows.length - 1);
@@ -614,9 +617,9 @@ describe("the sweep's second opinion", () => {
     expect(explain).toHaveBeenCalledTimes(5);
     const row = await runRow(runId);
     expect(row).toMatchObject({ own_spent_cents: 10, reserved_cents: 0 });
-    // The second opinion's spend stayed within the day's room: the one check at two cents.
-    expect(row.spent_cents - row.own_spent_cents).toBe(2);
-    expect(await dayTotal()).toBe(100 - l.driverCents + 2 + 10);
+    // The second opinion's spend stayed within the day's room: the one check at one cent.
+    expect(row.spent_cents - row.own_spent_cents).toBe(1);
+    expect(await dayTotal()).toBe(100 - l.driverCents + 1 + 10);
   });
 
   it.each([
@@ -681,7 +684,7 @@ describe("the sweep's second opinion", () => {
     const extra = counted === "hold" ? flags.fanoutLimits.planCents : counted;
     // No second try: the run goes on in the server's own order, and the refused call counts
     // nothing, or its whole hold.
-    expect(await runRow(runId)).toMatchObject({ spent_cents: 10 + 2 * n + 1 + extra, reserved_cents: 0 });
+    expect(await runRow(runId)).toMatchObject({ spent_cents: 10 + n + 1 + extra, reserved_cents: 0 });
   });
 
   it("keeps the sweep's own calls within its own budget inside the second opinion's larger cap: room for one", async () => {

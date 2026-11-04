@@ -7,6 +7,7 @@ import { assertMoneyEnvSafe, MoneyEnvRefused } from "../lib/money/guard";
 import { payoutSwitchOn } from "../lib/money/ledger";
 import { DEMO_CARRIERS } from "../lib/seed/carriers";
 import { isLocalDate } from "../lib/time/local-date";
+import { CHECK_READS } from "../lib/sweep/fanout/check";
 import { CHECK_LEASE_S, MODEL_OVERRUN_MS } from "../lib/sweep/fanout/run";
 import { MAX_HISTORY_PAGES } from "../lib/tms/sync";
 import { flags, stepThroughShown, type Flags } from "./flags";
@@ -1009,6 +1010,9 @@ describe("flags", () => {
     // calls together never pass driverCents), and the sweep's own spend still fits inside the run's.
     expect(l.callCents).toBeLessThanOrEqual(l.driverCents);
     expect(l.runCapCents).toBeGreaterThan(flags.sweepLimits.maxRunCents);
+    // Each check makes every one of its reads as a tool step before its one call; with fewer
+    // steps than reads it reads nothing (src/lib/sweep/fanout/check.ts CHECK_READS).
+    expect(l.maxToolSteps).toBeGreaterThanOrEqual(CHECK_READS.length);
     // A check stops by the sooner of its own clock and its slice's deadline plus MODEL_OVERRUN_MS
     // (the min() for childDeadline in src/lib/sweep/fanout/run.ts). The real bound, the slice plus
     // the overrun, ends inside the check's lease and inside both routes that run a slice.
