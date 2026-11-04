@@ -1741,6 +1741,27 @@ describe("runTurn near the end of its clock", () => {
     expect(out).toMatchObject({ status: "partial", endedReason: "clock" });
   });
 
+  it("keeps a whole answer sent with only a checklist write, and drops the write", async () => {
+    const now = { t: 1_000_000 };
+    const h = harness(
+      [
+        result({ toolCalls: [call("c1", "get_pay_items")] }),
+        result({
+          text: "Pay is $1,500.00 this week.",
+          toolCalls: [call("l1", "set_checklist", { items: [{ text: "Read the week", state: "done" }] })],
+        }),
+      ],
+      (c) => {
+        now.t += LIMITS.wallClockMs - CALL_MARGIN_MS - ANSWER_NOW_MS + 1;
+        return gateway(c);
+      },
+      { now },
+    );
+    const out = await h.run();
+    expect(h.calls.map((c) => c.id)).toEqual(["c1"]);
+    expect(out).toMatchObject({ status: "done", endedReason: null, text: "Pay is $1,500.00 this week." });
+  });
+
   it("tells the model to read next after a checklist sent alone, and only then", async () => {
     const h = harness(
       [
@@ -1760,7 +1781,7 @@ describe("runTurn near the end of its clock", () => {
   });
 
   it("writes the answer without dashes and with plain dates", async () => {
-    const h = harness([result({ text: "Overdue as of 2026-11-03 — four invoices." })], gateway);
+    const h = harness([result({ text: "Overdue as of 2026-11-03 \u2014 four invoices." })], gateway);
     expect((await h.run()).text).toBe("Overdue as of Nov 3, 2026, four invoices.");
   });
 });

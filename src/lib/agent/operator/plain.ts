@@ -16,21 +16,32 @@ function plainDate(match: string, y: string, m: string, d: string): string {
   return `${MONTHS[month - 1]} ${day}, ${y}`;
 }
 
+// Code spans and web links are kept as written: no dash or date inside them is changed.
+const KEPT = /(`[^`]*`|https?:\/\/[^\s`]+)/;
+
+function plainProse(part: string, first: boolean, last: boolean): string {
+  const dated = part.replace(ISO_DATE, plainDate);
+  if (!DASH.test(dated)) return dated;
+  let out = dated
+    // Written tight between two figures (10\u201320) it is a range.
+    .replace(/(\d)[\u2013\u2014](?=\d|\$)/g, "$1 to ")
+    // Directly before any other figure or "$" it is a minus sign.
+    .replace(/[\u2013\u2014](?=[\d$])/g, "-");
+  // A dash that starts a line is a list bullet.
+  if (first) out = out.replace(/^(\s*)[\u2013\u2014]\s*/, "$1- ");
+  // Anywhere else it is a pause.
+  out = out.replace(/\s*[\u2013\u2014]+\s*/g, ", ").replace(/,\s*([,.;:!?])/g, "$1");
+  return last ? out.replace(/,\s*$/, "") : out;
+}
+
 function plainLine(line: string): string {
-  if (!DASH.test(line)) return line;
-  return (
-    line
-      // A dash that starts a line is a list bullet.
-      .replace(/^(\s*)[\u2013\u2014]\s*/, "$1- ")
-      // Written tight between two figures (10\u201320) it is a range.
-      .replace(/(\d)[\u2013\u2014](?=\d|\$)/g, "$1 to ")
-      // Anywhere else it is a pause.
-      .replace(/\s*[\u2013\u2014]+\s*/g, ", ")
-      .replace(/,\s*([,.;:!?])/g, "$1")
-      .replace(/,\s*$/, "")
-  );
+  // Split on the kept spans: prose sits at even indexes, kept text at odd ones, prose last.
+  const parts = line.split(KEPT);
+  return parts
+    .map((part, i) => (i % 2 === 1 ? part : plainProse(part, i === 0, i === parts.length - 1)))
+    .join("");
 }
 
 export function plainAnswer(text: string): string {
-  return text.split("\n").map(plainLine).join("\n").replace(ISO_DATE, plainDate);
+  return text.split("\n").map(plainLine).join("\n");
 }

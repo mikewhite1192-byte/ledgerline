@@ -632,8 +632,14 @@ export async function runTurn(input: TurnInput, deps: TurnDeps): Promise<TurnOut
         },
       });
       if (shown.text) lastText = shown.text;
-      // The answer call's tool calls are never run: there is no time left to answer after them.
-      if (answerNow && result.toolCalls.length > 0) return stopped("clock");
+      // The answer call's tool calls are never run: there is no time left to answer after them. A
+      // whole answer (not cut off) sent with only a checklist write is still the answer; the write
+      // is dropped.
+      if (answerNow && result.toolCalls.length > 0) {
+        const checklistOnly = result.toolCalls.every((c) => c.name === CHECKLIST_TOOL);
+        if (shown.text && checklistOnly && result.status === "ok") return { status: "done", endedReason: null, text: shown.text };
+        return stopped("clock");
+      }
       if (result.toolCalls.length === 0) {
         if (!shown.text) {
           const reason = result.status === "incomplete" ? "incomplete" : "empty";

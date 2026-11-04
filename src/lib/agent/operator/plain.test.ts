@@ -2,8 +2,8 @@ import { describe, expect, it } from "vitest";
 import { plainAnswer } from "./plain";
 
 // The dashes are written as escapes so this file holds none itself.
-const EM = "—";
-const EN = "–";
+const EM = "\u2014";
+const EN = "\u2013";
 
 describe("plainAnswer", () => {
   it("writes a pause dash as a comma and a leading one as a bullet", () => {
@@ -15,6 +15,17 @@ describe("plainAnswer", () => {
 
   it("writes a tight dash between figures as a range", () => {
     expect(plainAnswer(`10${EN}20 days late`)).toBe("10 to 20 days late");
+  });
+
+  it("writes a dash used as a minus sign as a hyphen-minus", () => {
+    expect(plainAnswer(`Net: ${EN}$50.00`)).toBe("Net: -$50.00");
+    expect(plainAnswer(`${EM}$175.00`)).toBe("-$175.00");
+  });
+
+  it("leaves code spans and web links as written", () => {
+    expect(plainAnswer(`see https://x.io/a${EN}b ${EM} today`)).toBe(`see https://x.io/a${EN}b, today`);
+    expect(plainAnswer(`run \`a${EM}b 2026-11-03\` ${EM} then wait`)).toBe(`run \`a${EM}b 2026-11-03\`, then wait`);
+    expect(plainAnswer(`Then ${EM} \`x\``)).toBe("Then, `x`");
   });
 
   it("writes whole ISO dates as a month and day, and leaves ids alone", () => {
