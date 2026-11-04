@@ -299,11 +299,12 @@ describe("the agent launcher", () => {
     fireEvent.click(launcher());
     const thread = await within(panel()).findByRole("list", { name: "Conversation" });
     expect(within(thread).getByText(EARLIER.userText)).toBeTruthy();
-    expect(storage.getItem("pc-conversation")).toBe("c-1");
+    // Stored after the thread shows, so a slow runner can read it a beat later (CI, Nov 4).
+    await waitFor(() => expect(storage.getItem("pc-conversation")).toBe("c-1"));
 
     await startOver();
     expect(within(panel()).queryByRole("list", { name: "Conversation" })).toBeNull();
-    expect(storage.getItem("pc-conversation")).toBe("left:c-1");
+    await waitFor(() => expect(storage.getItem("pc-conversation")).toBe("left:c-1"));
 
     // The next page, while the newest conversation is still the one left: it is not brought back.
     first.unmount();
