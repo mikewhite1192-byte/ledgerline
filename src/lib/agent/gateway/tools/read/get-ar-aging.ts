@@ -30,7 +30,9 @@ export const getArAging = defineTool({
     "(currentCents, days1To30Cents, days31To60Cents, days61To90Cents, over90Cents), per customer " +
     "and in total, in integer cents. asOf defaults to today in the carrier's zone; minBucket " +
     "(current, 1_30, 31_60, 61_90 or over_90) keeps only customers with a balance in that bucket " +
-    "or a later one. This only reads.",
+    "or a later one. A past asOf still shows today's open balances (payments and invoices since " +
+    "then included), only aged as of that date; it is not what was owed on that date. This only " +
+    "reads.",
   tier: "read",
   roles: OPERATOR,
   label: "Aging the receivables",

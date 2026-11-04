@@ -3,7 +3,7 @@ import type { AgingView, PaymentsView } from "../../../invoices/aging";
 import { cents, type AgingBucket, type Cents } from "../../../rules-engine";
 import type { LocalDate } from "../../../time/local-date";
 import { centsIn, maskFigures, WITHHELD } from "../../operator/figures";
-import { agingResult } from "../tools/read/get-ar-aging";
+import { agingResult, getArAging } from "../tools/read/get-ar-aging";
 import { paymentsResult } from "../tools/read/get-payments-in";
 
 const day = (s: string) => s as LocalDate;
@@ -47,6 +47,10 @@ describe("get_ar_aging result", () => {
       over90Cents: 1_234_500,
     });
     expect(out.rows[0]).not.toHaveProperty("buckets");
+  });
+
+  it("says a past asOf is today's balances aged as of that date, not what was owed then", () => {
+    expect(getArAging.description).toContain("it is not what was owed on that date");
   });
 
   it("lets an answer quote each bucket total", () => {
