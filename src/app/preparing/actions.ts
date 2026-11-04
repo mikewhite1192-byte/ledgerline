@@ -3,7 +3,7 @@
 import { flags } from "@/config/flags";
 import { markCopyReady } from "@/lib/auth/demo-visit";
 import { getPreparingVisit, visitLanding } from "@/lib/auth/session";
-import { getDb } from "@/lib/db";
+import { getDb, type TenantDb } from "@/lib/db";
 import { demoCarrierOf } from "@/lib/seed/reset";
 import { buildCopySlice } from "@/lib/visit-copy/build";
 import { purgeExpired } from "@/lib/visit-copy/purge";
@@ -16,11 +16,11 @@ import { startCopySweep } from "@/lib/visit-copy/story";
 // its copy claimed by the sign-in, not built and not purged). Anything else gets where the request
 // belongs instead, with nothing written. The demo carrier the copy is built from is the visit's
 // own carrier, matched exactly (a copy is never copied). The build writes only the copy's own
-// carrier, under its own tenant; then, in the demo carrier, only the visit's copy_ready_at. The
-// slice that writes the copy's setup rows also purges up to flags.visitCopies.purgePerCall copies
-// of ended visits. Once the copy is marked ready, its own pay check starts while its switch is on
-// (src/lib/visit-copy/story.ts, which never throws): the answer is ready whatever it did. The log
-// gets counts and the error's name only.
+// carrier, under its own tenant; then, in the demo carrier, only the visit's copy_ready_at. Once
+// the copy is marked ready, its own pay check starts while its switch is on
+// (src/lib/visit-copy/story.ts, which never throws), and beside that start the action purges up to
+// flags.visitCopies.purgePerCall copies of ended visits, off the slices the visitor waits on: the
+// answer is ready whatever either did. The log gets counts and the error's name only.
 
 export type BuildState =
   | { state: "building"; tablesDone: number; tablesTotal: number }
@@ -54,16 +54,6 @@ export async function buildCopyAction(): Promise<BuildState> {
     console.info(
       `visit copy: slice ${report.tablesDone}/${report.tablesTotal} tables, ${report.statements} statements, ${report.ms} ms`,
     );
-    if (report.setup) {
-      const purged = await purgeExpired(db, home, {
-        graceMinutes: flags.visitCopies.graceMinutes,
-        limit: flags.visitCopies.purgePerCall,
-      }).catch((err: unknown) => {
-        console.error(`visit copy: the purge could not run (${err instanceof Error ? err.name : "non-error"})`);
-        return null;
-      });
-      if (purged) console.info(`visit copy: purged ${purged.purged}, gone ${purged.gone}, failed ${purged.failed}`);
-    }
     if (!report.done) return { state: "building", tablesDone: report.tablesDone, tablesTotal: report.tablesTotal };
     const ready = await db.withTenant(home, (q) =>
       markCopyReady(q, { visitId: visit.ticketId, sub: visit.token.sub, copyTenantId: visit.copy.tenantId }),
@@ -73,7 +63,10 @@ export async function buildCopyAction(): Promise<BuildState> {
       return { state: "failed" };
     }
     console.info("visit copy: ready");
-    await startWithin(startCopySweep(db, visit), STORY_START_MS);
+    await Promise.all([
+      startWithin(startCopySweep(db, visit), STORY_START_MS, "visit copy: sweep skipped timed_out"),
+      startWithin(purgeEnded(db, home), PURGE_WAIT_MS, "visit copy: purge left running"),
+    ]);
     return { state: "ready" };
   } catch (err) {
     console.error(`visit copy: a slice failed (${err instanceof Error ? err.name : "non-error"})`);
@@ -81,16 +74,33 @@ export async function buildCopyAction(): Promise<BuildState> {
   }
 }
 
+// The copies of this demo carrier's ended visits, up to purgePerCall of them. Never throws: a purge
+// that cannot run is logged, and the visit is ready all the same.
+async function purgeEnded(db: TenantDb, home: string): Promise<void> {
+  const purged = await purgeExpired(db, home, {
+    graceMinutes: flags.visitCopies.graceMinutes,
+    limit: flags.visitCopies.purgePerCall,
+  }).catch((err: unknown) => {
+    console.error(`visit copy: the purge could not run (${err instanceof Error ? err.name : "non-error"})`);
+    return null;
+  });
+  if (purged) console.info(`visit copy: purged ${purged.purged}, gone ${purged.gone}, failed ${purged.failed}`);
+}
+
 // The copy's pay check start may take this long before the visit is told it is ready anyway; a
 // start still going on is left to finish or fail on its own, and Home reads back what it made.
 const STORY_START_MS = 5_000;
 
-async function startWithin(start: Promise<unknown>, ms: number): Promise<void> {
+// The purge may take this long beside it; a purge still going on is left to finish or fail on its
+// own, and the next ready visit purges whatever it left.
+const PURGE_WAIT_MS = 5_000;
+
+async function startWithin(start: Promise<unknown>, ms: number, lateLine: string): Promise<void> {
   let timer: ReturnType<typeof setTimeout> | undefined;
   const late = new Promise<"late">((resolve) => {
     timer = setTimeout(() => resolve("late"), ms);
   });
   const won = await Promise.race([start.then(() => "done" as const, () => "done" as const), late]);
   clearTimeout(timer);
-  if (won === "late") console.info("visit copy: sweep skipped timed_out");
+  if (won === "late") console.info(lateLine);
 }

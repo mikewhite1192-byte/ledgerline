@@ -2,7 +2,7 @@ import { DEFAULT_RULES } from "../autopilot/defaults";
 import { visitSub } from "../auth/claims";
 import { countTenantRows } from "../data/read";
 import { TENANT_TABLES, type TenantTable } from "../data/tables";
-import { insertRows, insertStatements } from "../data/writer";
+import { COPY_INSERT_LIMITS, insertRows, insertStatements } from "../data/writer";
 import type { Queryable, TenantDb } from "../db/types";
 import { DEMO_ANCHOR } from "../seed/anchor";
 import { HERO_OPEN_WEEK } from "../seed/assert-plan";
@@ -28,11 +28,12 @@ export { VISIT_EMAIL };
 // row lock (two slices of one copy never run at once; the second waits, then finds the first's
 // work). The first slice writes the setup rows; every slice then counts the copy's rows and
 // inserts each table that is still empty, in TENANT_TABLES order (parents first), whole, and stops
-// once a table finishes past the slice's time. A table is only ever written whole inside one
-// committed transaction, so a table that holds some rows but not the plan's count was not written
-// by this build: the slice fails closed instead of adding to it. Once every count equals the
-// plan's, the hero's open-week net is read back through the engine (as the demo reset does), and
-// only then is the copy done. The caller marks the visit ready in the demo carrier.
+// once a table finishes past the slice's time. The inserts go in the writer's fuller copy batches
+// (COPY_INSERT_LIMITS): the same rows as the demo reset's, in fewer statements. A table is only
+// ever written whole inside one committed transaction, so a table that holds some rows but not the
+// plan's count was not written by this build: the slice fails closed instead of adding to it. Once
+// every count equals the plan's, the hero's open-week net is read back through the engine (as the
+// demo reset does), and only then is the copy done. The caller marks the visit ready in the demo carrier.
 //
 // Idempotent: the counts are the progress, and the row lock is the dedupe.
 
@@ -106,7 +107,7 @@ export function pendingTables(have: Record<TenantTable, number>, plan: CarrierPl
     if (have[table] === want[table]) continue;
     if (have[table] !== 0) throw new CopyBuildFailed(`${table}: the copy holds rows this build did not write`);
     const rows = plan.rows[table] as readonly Record<string, unknown>[];
-    out.push({ table, rows: rows.length, statements: insertStatements(table, rows).length });
+    out.push({ table, rows: rows.length, statements: insertStatements(table, rows, COPY_INSERT_LIMITS).length });
   }
   return out;
 }
@@ -144,7 +145,7 @@ export function sliceCount(plan: CarrierPlan, msPerStatement: number, sliceMs: n
 export function buildStatements(plan: CarrierPlan): number {
   let n = SETUP_STATEMENTS;
   for (const table of TENANT_TABLES) {
-    n += insertStatements(table, plan.rows[table] as readonly Record<string, unknown>[]).length;
+    n += insertStatements(table, plan.rows[table] as readonly Record<string, unknown>[], COPY_INSERT_LIMITS).length;
   }
   return n;
 }
@@ -225,7 +226,7 @@ export async function buildCopySlice(db: TenantDb, target: CopyTarget, opts: Sli
     let wrote = 0;
     while (pending.length > 0 && (wrote === 0 || clock() - started < opts.sliceMs)) {
       const step = pending[0];
-      await insertRows(q, step.table, plan.rows[step.table] as readonly Record<string, unknown>[]);
+      await insertRows(q, step.table, plan.rows[step.table] as readonly Record<string, unknown>[], COPY_INSERT_LIMITS);
       statements += step.statements;
       pending = pending.slice(1);
       wrote += 1;

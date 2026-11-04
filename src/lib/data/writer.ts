@@ -13,14 +13,32 @@ import {
 // write tenant_id = current_tenant_id() and deletes are bounded by it, so even a login that
 // bypasses row-level security (a cluster admin) touches one tenant only.
 //
-// Inserts go in batches: at most 100 rows and 1,500 parameters per statement, and the SQL plus
-// its parameter text stays under the Data API's 65,536 characters. Ids come from the plan (the
-// Data API returns no rows for INSERT ... RETURNING), and each statement must report every row
-// it was given as inserted.
+// Inserts go in batches, each bounded by rows, parameters and characters, whichever binds first:
+// by default at most 100 rows and 1,500 parameters per statement, and the SQL plus its parameter
+// text stays under the Data API's 65,536 characters (its limit on the SQL alone). The characters
+// counted are the SQL as sent: the Data API path turns each $n into :pn, one character longer.
+// Ids come from the plan (the Data API returns no rows for INSERT ... RETURNING), and each
+// statement must report every row it was given as inserted.
 
 export const MAX_ROWS_PER_INSERT = 100;
 export const MAX_PARAMS_PER_INSERT = 1500;
 export const MAX_STATEMENT_CHARS = 65536;
+
+export type InsertLimits = { rows: number; params: number; chars: number };
+
+// The seed's and the demo reset's batches.
+export const DEFAULT_INSERT_LIMITS: InsertLimits = {
+  rows: MAX_ROWS_PER_INSERT,
+  params: MAX_PARAMS_PER_INSERT,
+  chars: MAX_STATEMENT_CHARS,
+};
+
+// A visit copy's batches (src/lib/visit-copy/build.ts), which a judge waits on: about 92 ms a
+// statement, so fewer and fuller ones. The characters bind first on every demo table (no batch
+// of 60,000 characters holds more than about 2,000 parameters or 400 rows); the row and parameter
+// caps only stop a table of tiny rows from making one huge statement. 60,000 leaves 5,536
+// characters under the Data API's limit, counted with the parameter text.
+export const COPY_INSERT_LIMITS: InsertLimits = { rows: 1000, params: 3000, chars: 60_000 };
 
 const CAST_KINDS = new Set<ColumnKind>(["uuid", "date", "timestamptz", "jsonb"]);
 
@@ -53,11 +71,13 @@ export type InsertStatement = { sql: string; params: Param[]; rows: number };
 export function insertStatements(
   table: TenantTable,
   rows: readonly Record<string, unknown>[],
+  limits: InsertLimits = DEFAULT_INSERT_LIMITS,
 ): InsertStatement[] {
   const { columns } = TABLE_SPECS[table];
   const names = ["tenant_id", ...columns.map(([name]) => assertIdentifier(name))].join(", ");
   const head = `INSERT INTO ${assertIdentifier(table)} (${names}) VALUES `;
-  const perRow = Math.min(MAX_ROWS_PER_INSERT, Math.floor(MAX_PARAMS_PER_INSERT / columns.length));
+  const perRow = Math.min(limits.rows, Math.floor(limits.params / columns.length));
+  if (perRow < 1) throw new Error(`${table}: the insert limits allow no row`);
   const out: InsertStatement[] = [];
   let tuples: string[] = [];
   let params: Param[] = [];
@@ -78,9 +98,10 @@ export function insertStatements(
       return `(current_tenant_id(), ${marks.join(", ")})`;
     };
     const valueChars = values.reduce((n: number, v) => n + paramChars(v), 0);
-    const size = (start: number) => tupleOf(start).length + 2 + valueChars;
-    if (tuples.length === perRow || chars + size(params.length + 1) > MAX_STATEMENT_CHARS) flush();
-    if (head.length + size(1) > MAX_STATEMENT_CHARS) throw new Error(`${table}[${i}] is too large`);
+    // The tuple as sent (each $n one character longer as :pn), its ", " and its values.
+    const size = (start: number) => tupleOf(start).length + columns.length + 2 + valueChars;
+    if (tuples.length === perRow || chars + size(params.length + 1) > limits.chars) flush();
+    if (head.length + size(1) > limits.chars) throw new Error(`${table}[${i}] is too large`);
     chars += size(params.length + 1);
     tuples.push(tupleOf(params.length + 1));
     params.push(...values);
@@ -95,9 +116,10 @@ export async function insertRows(
   q: Queryable,
   table: TenantTable,
   rows: readonly Record<string, unknown>[],
+  limits: InsertLimits = DEFAULT_INSERT_LIMITS,
 ): Promise<number> {
   let inserted = 0;
-  for (const statement of insertStatements(table, rows)) {
+  for (const statement of insertStatements(table, rows, limits)) {
     const n = await q.execute(statement.sql, statement.params);
     if (n !== statement.rows) throw new Error(`${table}: inserted ${n} of ${statement.rows} rows`);
     inserted += n;
