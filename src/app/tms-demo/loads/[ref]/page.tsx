@@ -97,7 +97,7 @@ export default async function MockLoadPage({ params }: { params: Promise<{ ref: 
   const driverName = load.driverExternalId === null ? null : nameOf(load.driverExternalId);
 
   return (
-    <div className="grid gap-6">
+    <div className="grid grid-cols-1 gap-6">
       <div className="flex flex-wrap gap-4">
         <Link href="/tms-demo" className="text-body text-foreground underline">
           All loads
