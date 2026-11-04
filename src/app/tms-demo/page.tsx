@@ -63,9 +63,9 @@ export default async function TmsDemoBoard() {
                   <Th>Status</Th>
                   <Th>Customer</Th>
                   <Th>Driver</Th>
-                  <Th>Truck</Th>
-                  <Th>Lane</Th>
-                  <Th>Updated</Th>
+                  <Th className="hidden sm:table-cell">Truck</Th>
+                  <Th className="hidden sm:table-cell">Lane</Th>
+                  <Th className="hidden sm:table-cell">Updated</Th>
                 </Tr>
               </THead>
               <TBody>
@@ -79,9 +79,9 @@ export default async function TmsDemoBoard() {
                     <Td>{r.statusLabel}</Td>
                     <Td>{r.customerName ?? "Not set"}</Td>
                     <Td>{r.driverName ?? r.driverExternalId ?? "Not assigned"}</Td>
-                    <Td>{r.truckUnit ?? "Not assigned"}</Td>
-                    <Td>{r.lane}</Td>
-                    <Td>{formatInstant(r.updatedAt, view.zone)}</Td>
+                    <Td className="hidden sm:table-cell">{r.truckUnit ?? "Not assigned"}</Td>
+                    <Td className="hidden sm:table-cell">{r.lane}</Td>
+                    <Td className="hidden sm:table-cell">{formatInstant(r.updatedAt, view.zone)}</Td>
                   </Tr>
                 ))}
               </TBody>
