@@ -44,10 +44,10 @@ describe("MODEL_VERDICT", () => {
     expect(schema.additionalProperties).toBe(false);
     expect(AUDIT_CALL).toEqual({
       purpose: "audit_proposal",
-      reasoningEffort: "high",
+      reasoningEffort: "medium",
       maxOutputTokens: 2_400,
       maxCostCents: 10,
-      timeoutMs: 25_000,
+      timeoutMs: 20_000,
     });
   });
 });

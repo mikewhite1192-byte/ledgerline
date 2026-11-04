@@ -85,17 +85,18 @@ export const VERDICT_FORMAT = {
   } as Record<string, unknown>,
 } as const;
 
-// The one Muse Wonder call per proposal. Reasoning and the answer share maxOutputTokens, so high
+// The one Muse Wonder call per proposal, at medium effort with a 20 s timeout (owner, 2026-11-03,
+// D-107; it was high effort and 25 s). Reasoning and the answer share maxOutputTokens, so the
 // effort needs room. The worst case still fits maxCostCents: the gateway caps the evidence at 8,000
 // characters, so the request is at most 25,736 bytes (every character 3 bytes), reserved as 12,868
 // input tokens at $4.00 per million (5.15 cents), plus 2,400 output tokens at $20.00 per million
 // (4.80 cents): 9.95 cents.
 export const AUDIT_CALL = {
   purpose: "audit_proposal",
-  reasoningEffort: "high",
+  reasoningEffort: "medium",
   maxOutputTokens: 2_400,
   maxCostCents: 10,
-  timeoutMs: 25_000,
+  timeoutMs: 20_000,
 } as const;
 
 // The exact model the auditor runs on. Any other configured id is refused before a call.

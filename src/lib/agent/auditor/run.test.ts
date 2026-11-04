@@ -148,10 +148,10 @@ describe("runAudit", () => {
     expect(target).toBe("wonder");
     expect(request).toMatchObject({
       purpose: "audit_proposal",
-      reasoningEffort: "high",
+      reasoningEffort: "medium",
       maxOutputTokens: 2_400,
       maxCostCents: 10,
-      timeoutMs: 25_000,
+      timeoutMs: 20_000,
       format: { name: "audit_verdict", strict: true },
     });
     expect(JSON.parse(request.messages[1].content as string)).toEqual(PACK);
