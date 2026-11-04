@@ -35,6 +35,7 @@ const state = vi.hoisted(() => ({
   counts: [] as { tenant: string; params: unknown[] }[],
   setup: false,
   purgeThrows: false,
+  purgeHangs: false,
   steps: [] as string[],
   purges: [] as unknown[],
 }));
@@ -69,6 +70,7 @@ vi.mock("@/lib/visit-copy/purge", () => ({
     state.steps.push("purge");
     state.purges.push({ home, input });
     if (state.purgeThrows) throw new Error("boom");
+    if (state.purgeHangs) return new Promise(() => {});
     return { purged: 1, gone: 0, failed: 0 };
   },
 }));
@@ -111,6 +113,7 @@ beforeEach(() => {
     counts: [],
     setup: false,
     purgeThrows: false,
+    purgeHangs: false,
     steps: [],
     purges: [],
   });
@@ -258,5 +261,19 @@ describe("buildCopyAction's purge of ended visits' copies", () => {
     expect(await buildCopyAction()).toEqual({ state: "ready" });
     expect(state.starts).toHaveLength(1);
     expect(console.error).toHaveBeenCalledWith("visit copy: the purge could not run (Error)");
+  });
+
+  it("is ready after five seconds when the purge has not answered", async () => {
+    vi.useFakeTimers();
+    try {
+      state.purgeHangs = true;
+      const answer = buildCopyAction();
+      await vi.advanceTimersByTimeAsync(5_000);
+      expect(await answer).toEqual({ state: "ready" });
+      expect(state.starts).toHaveLength(1);
+      expect(console.info).toHaveBeenCalledWith("visit copy: purge left running");
+    } finally {
+      vi.useRealTimers();
+    }
   });
 });

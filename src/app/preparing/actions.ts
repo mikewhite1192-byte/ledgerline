@@ -63,7 +63,10 @@ export async function buildCopyAction(): Promise<BuildState> {
       return { state: "failed" };
     }
     console.info("visit copy: ready");
-    await Promise.all([startWithin(startCopySweep(db, visit), STORY_START_MS), purgeEnded(db, home)]);
+    await Promise.all([
+      startWithin(startCopySweep(db, visit), STORY_START_MS, "visit copy: sweep skipped timed_out"),
+      startWithin(purgeEnded(db, home), PURGE_WAIT_MS, "visit copy: purge left running"),
+    ]);
     return { state: "ready" };
   } catch (err) {
     console.error(`visit copy: a slice failed (${err instanceof Error ? err.name : "non-error"})`);
@@ -88,12 +91,16 @@ async function purgeEnded(db: TenantDb, home: string): Promise<void> {
 // start still going on is left to finish or fail on its own, and Home reads back what it made.
 const STORY_START_MS = 5_000;
 
-async function startWithin(start: Promise<unknown>, ms: number): Promise<void> {
+// The purge may take this long beside it; a purge still going on is left to finish or fail on its
+// own, and the next ready visit purges whatever it left.
+const PURGE_WAIT_MS = 5_000;
+
+async function startWithin(start: Promise<unknown>, ms: number, lateLine: string): Promise<void> {
   let timer: ReturnType<typeof setTimeout> | undefined;
   const late = new Promise<"late">((resolve) => {
     timer = setTimeout(() => resolve("late"), ms);
   });
   const won = await Promise.race([start.then(() => "done" as const, () => "done" as const), late]);
   clearTimeout(timer);
-  if (won === "late") console.info("visit copy: sweep skipped timed_out");
+  if (won === "late") console.info(lateLine);
 }
