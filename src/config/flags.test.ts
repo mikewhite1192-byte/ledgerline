@@ -159,6 +159,9 @@ const RELEASED_ON = [
   // Released by the owner (D-100, D-103, 2026-11-03): each demo visit builds its own copy of the
   // demo carrier. Visits are capped at 12 an hour and 60 a day (D3), since each one builds a copy.
   "visitCopies.enabled",
+  // Released by the owner (D-100, D-103, 2026-11-03): a visit's copy starts one real pay check as it
+  // opens. It spends model cents (30 dollars a day across copies) and only drafts fixes, never money.
+  "visitCopies.startSweep",
 ] as const;
 
 // What stays off, each waiting on a missing piece or an outside send the owner has not released.
@@ -177,9 +180,6 @@ const KEPT_OFF = [
   // Read only, but it changes where sign-in lands and adds a panel on Home: the owner turns it on in
   // its own PR.
   "signInTour.enabled",
-  // A visit's copy starts its own pay check, which spends model cents: the owner turns it on in its
-  // own PR.
-  "visitCopies.startSweep",
   // Sandbox posts with no button (D-104): the owner turns it on in its own PR.
   "books.enabled",
 ] as const;
@@ -458,7 +458,7 @@ describe("flags", () => {
       graceMinutes: 60,
       purgePerCall: 2,
       deskDayCents: 100,
-      startSweep: false,
+      startSweep: true,
       sweepDayCents: 3000,
     });
     for (const v of [
