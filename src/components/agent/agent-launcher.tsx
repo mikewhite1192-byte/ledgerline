@@ -202,7 +202,7 @@ export function AgentLauncher({
             </button>
             <button
               type="button"
-              aria-label={ASK_WORDS.close}
+              aria-label={ASK_WORDS.digestClose}
               onClick={() => asks.dismiss(current.id)}
               className="grid size-7 shrink-0 cursor-pointer place-items-center rounded-full text-foreground-2 transition-colors duration-150 hover:bg-accent hover:text-foreground"
             >

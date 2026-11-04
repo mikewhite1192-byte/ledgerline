@@ -4,7 +4,7 @@ import { centsOf, dollarsOf } from "./rules-form";
 describe("the autopilot limits in dollars", () => {
   it("shows whole cents as dollars the owner can type back", () => {
     expect(dollarsOf(30_000)).toBe("$300.00");
-    expect(dollarsOf(1_000_005)).toBe("$10000.05");
+    expect(dollarsOf(1_000_005)).toBe("$10,000.05");
     expect(dollarsOf(0)).toBe("$0.00");
     expect(centsOf(dollarsOf(1_000_005))).toBe(1_000_005);
   });

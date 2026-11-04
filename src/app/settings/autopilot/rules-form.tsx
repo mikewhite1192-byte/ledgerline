@@ -6,6 +6,7 @@ import { InlineAlert } from "@/components/ui/inline-alert";
 import { controlClass } from "@/components/ui/input";
 import { cn } from "@/lib/cn";
 import { postJson } from "@/components/invoices/post-json";
+import { formatCents } from "@/lib/format/money";
 import { LIMIT_LABELS, MODE_LABELS, RULE_SAVE_MESSAGES, messageFor, ruleKindLabel, ruleNote } from "./words";
 
 // One kind's rule as the page hands it over: plain values, whole cents.
@@ -26,8 +27,8 @@ export type RuleRowView = {
 
 type Draft = { mode: string; maxCents: string; dayMaxCents: string; dayMaxCount: string; driverDayMaxCents: string };
 
-// Whole cents as the owner types them: 30000 is "$300.00".
-export const dollarsOf = (cents: number): string => `$${Math.trunc(cents / 100)}.${String(cents % 100).padStart(2, "0")}`;
+// Whole cents as the owner types them, written like the rest of the app: 30000 is "$300.00".
+export const dollarsOf = (cents: number): string => formatCents(cents);
 
 const draftOf = (r: RuleRowView): Draft => ({
   mode: r.mode,
