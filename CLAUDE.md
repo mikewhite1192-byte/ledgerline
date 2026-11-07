@@ -17,8 +17,9 @@ review budget is shared with the owner's other projects.
    capacity. Reviews in the last 7 days set the rate: 0-39 = 8 an hour, 40-49 = 6, 50-59 = 4,
    60-69 = 2, 70 or more = 1. Before marking a PR ready, count across all repos with
    `gh search prs --author @me --created ">=YYYY-MM-DD" --limit 200` (7 days back; skip drafts and
-   `[skip-cr]`). Under 50, go. At 50 or more, only a production fix or a PR other work is waiting
-   on goes; the rest stay in draft. When the pool is tight, production repos go first.
+   `[skip-cr]`). That counts PRs, not reviews, so treat it as an estimate. Under 50, go. At 50 or
+   more, only a production fix, or a PR that other work is waiting on, may be marked ready; the
+   rest stay in draft. When the pool is tight, production repos go first.
 4. **Paid reviews only on the owner's say, for that PR.** At the limit a review pauses and shows
    the file count and maximum price. Wait for the slot the banner names ("Next included review
    available in N minutes"), then request that one review once; it is still the single round, not

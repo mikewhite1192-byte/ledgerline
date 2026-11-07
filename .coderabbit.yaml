@@ -9,7 +9,8 @@
 #   3. Add "Second read: <head sha>" to the body, then mark it ready. That is the ONE
 #      automatic review.
 #   4. Batch every fix into ONE commit, get a fresh read of the fix diff BEFORE the push, push
-#      once, reply on each thread saying what changed, comment "@coderabbitai resolve", and merge.
+#      once, reply on each thread saying what changed, comment "@coderabbitai resolve", and merge
+#      once CI is green.
 #   5. One round per PR, on every tier. Nobody requests another review, and no automation does
 #      either; only the owner can ask for one, for that PR. Rules: CLAUDE.md.
 #   6. Low-risk PRs skip this reviewer. A PR that touches only UI, copy, docs, tests or seed
