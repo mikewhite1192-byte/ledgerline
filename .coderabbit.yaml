@@ -8,13 +8,10 @@
 #   2. Push once and open the PR as a DRAFT; drafts are not reviewed (but CI minutes still bill).
 #   3. Add "Second read: <head sha>" to the body, then mark it ready. That is the ONE
 #      automatic review.
-#   4. Batch every fix from a round into ONE commit and one push, wait about a minute, then
-#      comment "@coderabbitai review" (a push right after the request cancels it).
-#   5. Rounds by tier. A PR in a danger zone (rules engine, ledger, money, agent tools and
-#      gateway, migrations and RLS, auth, infra) gets up to two rounds, a third only when round
-#      two flagged something Major or Critical. A PR that touches only UI, copy, docs, tests or
-#      seed data gets ONE round and is never re-requested. The reviewer answers any request
-#      comment, so the cap is enforced where requests start (a local hook), never here.
+#   4. Batch every fix into ONE commit, get a fresh read of the fix diff BEFORE the push, push
+#      once, reply on each thread saying what changed, comment "@coderabbitai resolve", and merge.
+#   5. One round per PR, on every tier. Nobody requests another review, and no automation does
+#      either; only the owner can ask for one, for that PR. Rules: CLAUDE.md.
 #   6. Low-risk PRs skip this reviewer. A PR that touches only UI, copy, docs, tests or seed
 #      data carries "[skip-cr]" in its title, and the author requests a GitHub Copilot review on
 #      it instead (billed per request, not per file). Never on a PR that touches a danger zone, a
